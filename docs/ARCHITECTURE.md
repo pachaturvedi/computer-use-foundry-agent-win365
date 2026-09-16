@@ -1,0 +1,99 @@
+# Architecture and code map
+
+## Request path
+
+`Program.cs` constructs an `AIProjectClient.AsAIAgent` with ordinary function
+tools, and registers the public hosting SDK's `AddFoundryResponses` /
+`MapFoundryResponses` ASP.NET Core integration. The model calls:
+
+| Function | Harness behavior |
+| --- | --- |
+| `open_desktop` | Initialize MCP, lock the shared slot, allocate once, persist identity, poll Ready, rediscover tools, return opaque viewer links. |
+| `list_desktop_tools` | Return only allowlisted tool names and their live schemas. |
+| `desktop_action` | Validate tool/arguments/ownership, wait if paused, persist in-flight marker, call W365 once, return text/image observations. |
+| `request_human_control` | Persist Paused and return control link. |
+| `wait_for_human` | Await explicit viewer resume without issuing W365 actions. |
+| `close_desktop` | End W365 session and clear the durable slot only after acceptance. |
+
+The generic `desktop_action` wrapper preserves W365's actual tool names and input
+shapes rather than maintaining guessed hand-written schemas. It is still a
+direct W365 function-tool agent, not a nested computer-use planner.
+`AllowedTools` is a static allowlist; the live catalog must also contain the name.
+Session lifecycle identifiers are supplied by the harness, never the model.
+`execute_shell_command`, `execute_python_code` and `browser_eval_js` are excluded.
+Pixel input can still launch powerful applications: an allowlist is not a desktop
+sandbox or a guarantee that the model follows safety instructions.
+
+## Session ownership and lifetime
+
+One slot per deployment is stored in a private file locally or a private Azure
+Blob when hosted. The record includes random link ID, task ID, human owner IDs,
+W365 session/link, deadline, phase and in-flight marker. It contains sensitive
+session metadata, but not OAuth tokens.
+
+The lock covers ownership checks, in-flight persistence, the remote operation and
+result persistence. The viewer uses that exact lock for pause/resume/token issuance.
+Therefore a control token is not minted between an action's ownership check and
+its execution. Each request gets a server-generated task ID; overlapping requests
+cannot adopt another task's desktop, even for the same operator.
+After closing, the same task cannot allocate a second desktop.
+
+Graph setup IDs, MCP transport-session ID, W365 desktop-session ID, hosted user
+partition, task ID and viewer link ID are distinct identifiers.
+
+Normal cleanup runs on explicit close and in request `finally`, with an independent
+75-second cleanup timeout. A task is limited to ten minutes. A crash may prevent
+EndSession; the system does not claim exactly-once remote effects. Unknown results
+remain blocked instead of replaying actions or allocating a replacement desktop.
+
+## Fail-closed recovery
+
+A Blob transaction uses an infinite lease so a process crash cannot allow another
+worker to execute concurrently with an operation of unknown status. This is an
+intentional availability tradeoff. It needs an operator:
+
+1. Stop/drain the old hosted worker and viewer. Ensure neither can execute again.
+2. Inspect the private state blob/file. End the known W365 session through the
+   authorized W365 service, or establish that it was reclaimed. If StartSession's
+   response was lost, inspect pool/session diagnostics with W365 support.
+3. Only after remote ownership is resolved, break the stale Blob lease (if any)
+   and clear the slot to JSON `null`, or remove the local state file.
+4. Restart and submit a fresh task. Never replay an uncertain desktop action.
+
+Do not automatically clear an expired slot: expiry is not evidence that the
+remote operation or screen-share connection ended. W365 idle reclamation is a
+fallback, not the sample's correctness mechanism. Active screen sharing may
+keep a remote session alive; verify release with W365.
+
+## Bounded observations
+
+The server caps each MCP response at 4 MiB and never automatically retries action
+POSTs. JSON and SSE are supported with matching response IDs and negotiated MCP
+version; empty initialized notifications are accepted. No general streaming
+subscription/resumption client is implemented.
+
+`Observations.cs` returns real `DataContent` image objects, not base64 text.
+Screenshots become JPEGs with maximum dimension 1280 and maximum encoded size
+128 KiB; four screenshots per task are allowed. Original/resized dimensions are
+included so the model can map click coordinates. Oversize images fail explicitly.
+Each textual observation is limited to 16000 characters; at most 40 desktop
+action calls are allowed. Prefer accessibility observations.
+
+`FreshTaskSessionStore` deliberately does not persist model history. New tasks
+create new Agent Framework sessions, avoiding cross-request image accumulation.
+This uses the SDK's public but experimental `AgentSessionStore` extension point:
+only diagnostic `MAAI001` at that inheritance boundary is acknowledged locally.
+No dependency-vulnerability or downgrade warnings are suppressed.
+
+## Source files
+
+| File | Responsibility |
+| --- | --- |
+| `Settings.cs`, `Program.cs`, `ResponseRequest.cs` | Configuration, hosted owner gate, 64 KiB fresh-request validation, tools, cleanup. |
+| `AgentUserTokens.cs` | Certificate-backed three-stage user-FIC and resource-scoped token cache. |
+| `McpConnection.cs` | MCP handshake/catalog/call transport; safe errors, no action replay. |
+| `SessionStore.cs` | Local exclusive file transactions or shared Blob leases. |
+| `DesktopRuntime.cs` | Desktop lifecycle, ownership, tool allowlist, pause and resume. |
+| `Observations.cs`, `FreshTaskSessionStore.cs` | Bounded image handling and fresh task history. |
+| `Viewer.cs`, `wwwroot` | OIDC owner authorization, CSRF, CSP, SDK integration. |
+| `scripts/Setup-W365.ps1` | Offline plan / explicit delegated Graph provisioning. |

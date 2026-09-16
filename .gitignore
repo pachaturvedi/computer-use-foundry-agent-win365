@@ -1,0 +1,16 @@
+**/bin/
+**/obj/
+.env
+.env.*
+!.env.example
+.azure/
+.vs/
+.local/
+*.pfx
+*.p12
+*.pem
+*.key
+**/appsettings.Development.json
+TestResults/
+viewer.parameters.json
+.checkpoints/

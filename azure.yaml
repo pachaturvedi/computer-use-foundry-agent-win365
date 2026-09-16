@@ -1,0 +1,45 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+name: computer-use-foundry-agent-win365
+requiredVersions:
+  azd: '>=1.27.1'
+  extensions:
+    azure.ai.agents: '>=1.0.0-beta.9'
+services:
+  ai-project:
+    host: azure.ai.project
+  win365-desktop-agent:
+    host: azure.ai.agent
+    project: src/Win365Agent
+    language: csharp
+    codeConfiguration:
+      runtime: dotnet_10
+      entryPoint: Win365Agent.dll
+    uses:
+      - ai-project
+    kind: hosted
+    name: win365-desktop-agent
+    displayName: Windows 365 direct-tool agent
+    description: Single-operator, bounded desktop tasks using W365 tools through Agent Framework.
+    protocols:
+      - protocol: responses
+        version: 2.0.0
+    env:
+      SAMPLE_LOCAL_MODE: 'false'
+      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
+      W365_TENANT_ID: ${W365_TENANT_ID}
+      W365_BLUEPRINT_ID: ${W365_BLUEPRINT_ID}
+      W365_AGENT_ID: ${W365_AGENT_ID}
+      W365_AGENT_USER_ID: ${W365_AGENT_USER_ID}
+      W365_KEY_VAULT_URL: ${W365_KEY_VAULT_URL}
+      W365_CERTIFICATE_SECRET_NAME: ${W365_CERTIFICATE_SECRET_NAME}
+      SESSION_BLOB_URI: ${SESSION_BLOB_URI}
+      OPERATOR_TENANT_ID: ${OPERATOR_TENANT_ID}
+      OPERATOR_OBJECT_ID: ${OPERATOR_OBJECT_ID}
+      HOSTED_ALLOWED_USER_ID: ${HOSTED_ALLOWED_USER_ID}
+      VIEWER_PUBLIC_URL: ${VIEWER_PUBLIC_URL}
+    container:
+      resources:
+        cpu: '1'
+        memory: 2Gi
+infra:
+  provider: microsoft.foundry

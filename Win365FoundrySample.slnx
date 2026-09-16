@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Win365Agent/Win365Agent.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Win365Agent.Tests/Win365Agent.Tests.csproj" />
+  </Folder>
+</Solution>

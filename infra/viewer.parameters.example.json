@@ -1,0 +1,26 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "appName": { "value": "win365-viewer" },
+    "environmentName": { "value": "YOUR-EXISTING-ACA-ENVIRONMENT" },
+    "registryName": { "value": "YOUR-EXISTING-ACR" },
+    "imageName": { "value": "win365-sample:v1" },
+    "keyVaultName": { "value": "YOUR-EXISTING-VAULT" },
+    "certificateSecretName": { "value": "w365-blueprint" },
+    "oidcSecretName": { "value": "w365-viewer-client-secret" },
+    "storageAccountName": { "value": "YOUR-EXISTING-STORAGE" },
+    "stateContainerName": { "value": "desktop-state" },
+    "viewerPublicUrl": { "value": "https://YOUR-VIEWER-HOST" },
+    "viewerClientId": { "value": "YOUR-OIDC-WEB-APP-CLIENT-ID" },
+    "operatorTenantId": { "value": "YOUR-HUMAN-OPERATOR-TENANT-ID" },
+    "operatorObjectId": { "value": "YOUR-HUMAN-OPERATOR-OBJECT-ID" },
+    "hostedAllowedUserId": { "value": "YOUR-BOUND-FOUNDRY-OPERATOR-PARTITION" },
+    "w365TenantId": { "value": "YOUR-W365-TENANT-ID" },
+    "blueprintId": { "value": "YOUR-W365-BLUEPRINT-APP-ID" },
+    "agentId": { "value": "YOUR-W365-AGENT-ID" },
+    "agentUserId": { "value": "YOUR-W365-AGENT-USER-OBJECT-ID" },
+    "screenShareSdkUrl": { "value": "https://YOUR-ONBOARDING-HOST/sdk.js" },
+    "screenShareFrameOrigins": { "value": "https://YOUR-ONBOARDING-FRAME-HOST" }
+  }
+}

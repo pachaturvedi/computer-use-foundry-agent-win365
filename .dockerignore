@@ -1,0 +1,12 @@
+**
+!NuGet.Config
+!src/
+!src/Win365Agent/
+!src/Win365Agent/**
+**/bin
+**/obj
+**/.env*
+**/*.pfx
+**/*.pem
+**/*.key
+**/appsettings.Development.json
