@@ -3,36 +3,80 @@
 The same application runs as the companion viewer with `--viewer`. It does not
 host the model or expose an agent `/responses` endpoint in this mode.
 
-## Local
+## Bootstrap and local mode
 
 `Run-Local.ps1 -Mode viewer` binds `http://localhost:5050` and loads the same
-`.env` and user-secrets as the agent. Both use the same absolute `SESSION_FILE`.
-Local mode trusts the local OS user and has no Entra sign-in. Keep it on a private
-development host; never tunnel these ports.
+`.env` as the agent. `SAMPLE_LOCAL_MODE=true` remains unauthenticated and
+loopback-only, for bootstrap/offline use; **enabled local W365 is refused**.
+Live W365 needs the deployed managed identity endpoint, not CLI credentials.
+Keep the local host private; never tunnel these ports.
 
-Get `SCREENSHARE_SDK_URL` and `SCREENSHARE_FRAME_ORIGINS` from W365 onboarding.
-The latter is a space-separated list of exact HTTPS origins, without paths,
-wildcards or trailing slashes. These configure CSP's iframe allowlist. Do not
-substitute an arbitrary CDN or weaken CSP to `*` to make an error disappear.
+With `W365_ENABLED=false` (default, strictly `true`/`false`), `/health` is healthy
+and other routes return a phase-2-required 503. No OIDC, W365 or state configuration
+or credential access is required. This applies to local and ACA bootstrap.
 
-## Hosted
+Deploy [phase-1 viewer bootstrap](DEPLOYMENT.md#optional-phase-1-viewer-bootstrap)
+to create the UAMI with ACR pull and Blob roles. Record the outputs:
+`viewerIdentityClientId` selects the UAMI with `AZURE_CLIENT_ID`;
+`viewerIdentityPrincipalId` is its object ID for optional federation.
+`infra/viewer.bicep` defaults `w365Enabled` to `false`; it references the OIDC
+Key Vault secret and grants secret access only when enabled.
+
+## Enable the hosted viewer
+
+First obtain explicit administrator approval and use
+[setup's optional FIC](W365-SETUP.md#optional-viewer-federation) to trust the
+**existing viewer UAMI object ID** on the Foundry blueprint. Its issuer is
+`https://login.microsoftonline.com/<tenant>/v2.0` and audience is
+`api://AzureADTokenExchange`. This authorizes **blueprint impersonation,
+potentially including sibling agent identities**, not ARI-only access. Do not
+grant it if shared-blueprint or administrator policy disallows it. The viewer
+may remain disabled; agent links may then be unavailable. Configure only an
+approved viewer and avoid workflows requiring handoff without one.
+
+The viewer selects its UAMI using `AZURE_CLIENT_ID`, obtains a managed identity
+token, and uses the FIC plus `fmi_path` for the agent to authenticate the blueprint
+for T1, then the same T2/user-FIC T3 exchanges as the agent. There is no DAC,
+CLI-token, certificate or secret fallback for W365. See
+[authentication](AUTHENTICATION.md).
 
 Create a **single-tenant web application** in Entra for the viewer. This is not
 the W365 agent blueprint. Set its web redirect URI to
 `https://<your-viewer-host>/signin-oidc` and record `VIEWER_CLIENT_ID`.
 Create a short-lived client credential for this web app and store it as a Key
 Vault secret; `infra/viewer.bicep` uses a Key Vault secret reference, not a literal
-secret parameter. OIDC uses code flow with PKCE and a secure HttpOnly cookie.
+secret parameter. Key Vault is used only for this OIDC secret, never a blueprint
+credential. OIDC uses code flow with PKCE and a secure HttpOnly cookie.
 
 Set `OPERATOR_TENANT_ID` and `OPERATOR_OBJECT_ID` to the **human operator's** Entra
-tenant and object ID. Both claims must match before any viewer page or API is
-accessible. Possession of a random URL alone is insufficient.
+tenant and object ID. Both claims must match before any protected viewer page or
+API is accessible; `/health` remains public. Possession of a random URL alone
+is insufficient. Token endpoints use CSRF protection and `no-store` responses;
+the browser holds tokens in memory, not localStorage or links.
 
 Configure `VIEWER_PUBLIC_URL` with the exact HTTPS origin used by the browser.
 OIDC redirect and token redemption use this configured origin, not untrusted
 forwarded headers. The ACA template allows HTTPS-only ingress. The viewer can
-have a different human sign-in tenant from W365; its Azure identity must still
-have access to the configured Key Vault and Blob resource.
+have a different human sign-in tenant from W365, but its **Azure UAMI, Foundry
+and W365 must share the same tenant**. Its Azure identity must have access to
+the configured Key Vault and Blob resource.
+
+Agent and viewer must share the same valid W365 blueprint/agent/user IDs and
+the exact `SESSION_BLOB_URI`. Both require `W365_AGENT_OBJECT_ID` when active;
+set Bicep `agentObjectId` to the agent object/principal ID, not `agentId`
+(app/client ID). `HOSTED_ALLOWED_USER_ID` belongs only to Foundry, not the
+viewer; Bicep has no `hostedAllowedUserId` parameter. Get `SCREENSHARE_SDK_URL` and
+`SCREENSHARE_FRAME_ORIGINS` from W365 onboarding. The latter is a space-separated
+list of exact HTTPS origins, without paths, wildcards or trailing slashes,
+for CSP's iframe allowlist. Do not substitute an arbitrary CDN or weaken CSP.
+
+Fill the [viewer parameter example](../infra/viewer.parameters.example.json),
+set `w365Enabled=true` only after FIC/OIDC/state configuration, and redeploy the
+same app/UAMI. For the default ACA hostname, use `viewerHostname` from phase 1;
+make `viewerPublicUrl`, the web-app callback and the agent's `VIEWER_PUBLIC_URL`
+agree. A custom domain needs its own binding/certificate. Bicep manages the
+viewer UAMI's `AZURE_CLIENT_ID`; do not set Foundry's platform-owned identity
+variables on the viewer.
 
 Keep one viewer replica. Data-protection keys are intentionally ephemeral:
 restart or deployment signs users out; reauthenticate rather than sharing a
@@ -64,6 +108,11 @@ Client/model streaming may buffer links; the viewer root page is the independent
 way to find the active task.
 
 ## Troubleshooting
+
+503: bootstrap is still disabled; finish phase 2 rather than trying local
+credentials. Identity failures: check ID types, same-tenant UAMI, exact FIC
+subject/issuer/audience and administrator approval. There is no credential
+fallback. Health alone does not verify OIDC, FIC, W365 or shared state.
 
 401/redirect loops: check single-tenant app settings, public URL and exact callback
 URI. 404: no active task, wrong link, owner mismatch or expiry. 409: desktop not

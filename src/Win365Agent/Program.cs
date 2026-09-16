@@ -12,7 +12,7 @@ var viewerMode = args.Contains("--viewer", StringComparer.Ordinal);
 var cleanArgs = args.Where(a => a != "--viewer").ToArray();
 var builder = WebApplication.CreateBuilder(cleanArgs);
 var settings = new Settings(builder.Configuration);
-settings.Validate();
+settings.Validate(viewerMode);
 if (settings.Local)
 {
     builder.WebHost.UseUrls(viewerMode ? "http://localhost:5050" : "http://localhost:8088");
@@ -22,16 +22,35 @@ builder.Logging.SetMinimumLevel(LogLevel.Warning);
 builder.Logging.AddFilter("Azure", LogLevel.Warning);
 builder.Logging.AddFilter("System.Net.Http.HttpClient", LogLevel.Warning);
 builder.Logging.AddFilter("Microsoft.Agents", LogLevel.Warning);
+if (!viewerMode && !settings.Local && string.IsNullOrEmpty(Environment.GetEnvironmentVariable("FOUNDRY_HOSTING_ENVIRONMENT")))
+    throw new InvalidOperationException("Agent mode must run behind Foundry hosting. Use explicit loopback local mode for development.");
+if (!settings.Enabled)
+{
+    // Bootstrap does not register the Responses SDK, so honor the runtime's port contract here.
+    if (!viewerMode && !settings.Local) builder.WebHost.UseUrls($"http://0.0.0.0:{settings.HostedPort}");
+    var bootstrap = builder.Build();
+    bootstrap.MapGet("/health", () => Results.Ok(new { status = "healthy", w365Enabled = false }));
+    bootstrap.MapGet("/readiness", () => Results.Ok(new { status = "ready", w365Enabled = false }));
+    bootstrap.MapGet("/liveness", () => Results.Ok(new { status = "alive" }));
+    bootstrap.MapFallback(() => Results.Json(new
+    {
+        error = "w365_not_configured",
+        message = "Phase 1 is ready. Complete Setup-W365.ps1 for the Foundry identity, then deploy the same agent with W365_ENABLED=true."
+    }, statusCode: 503));
+    bootstrap.Run();
+    return;
+}
 builder.Services.AddSingleton(settings);
 builder.Services.AddSingleton<TokenCredential>(new DefaultAzureCredential());
 builder.Services.AddSingleton(new HttpClient(new SocketsHttpHandler
 {
     AllowAutoRedirect = false, PooledConnectionLifetime = TimeSpan.FromMinutes(5)
 }) { Timeout = TimeSpan.FromSeconds(60) });
+builder.Services.AddSingleton<IBlueprintTokens>(services => new BlueprintTokens(
+    services.GetRequiredService<HttpClient>(), settings, viewerMode));
 builder.Services.AddSingleton<IAgentUserTokens, AgentUserTokens>();
-builder.Services.AddSingleton<ISessionStore>(services => settings.Local
-    ? new FileSessionStore(settings.Required("SESSION_FILE"))
-    : new BlobSessionStore(settings.Https("SESSION_BLOB_URI"), services.GetRequiredService<TokenCredential>()));
+builder.Services.AddSingleton<ISessionStore>(services =>
+    new BlobSessionStore(settings.Https("SESSION_BLOB_URI"), services.GetRequiredService<TokenCredential>()));
 builder.Services.AddHttpContextAccessor();
 
 if (viewerMode)
@@ -42,9 +61,6 @@ if (viewerMode)
     viewer.Run();
     return;
 }
-
-if (!settings.Local && string.IsNullOrEmpty(Environment.GetEnvironmentVariable("FOUNDRY_HOSTING_ENVIRONMENT")))
-    throw new InvalidOperationException("Agent mode must run behind Foundry hosting. Use explicit loopback local mode for development.");
 
 var accessor = new HttpContextAccessor();
 DesktopRuntime Current() => (DesktopRuntime)(accessor.HttpContext?.Items["desktop"]

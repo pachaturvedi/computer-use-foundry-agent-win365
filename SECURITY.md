@@ -10,16 +10,61 @@ permissions. Do not point it at a desktop with production credentials/data.
   This is not safe behind an arbitrary proxy that allows header spoofing.
 - The hosted viewer requires single-tenant OIDC and exact human tenant/object
   claims. Opaque links are not bearer authorization.
-- Local mode is unauthenticated, restricted to loopback, and unsuitable for
-  shared machines, tunnels or public ingress.
+- `W365_ENABLED=false` is the default bootstrap: healthy readiness, phase-2 503
+  requests, startup before any model initialization and no W365/model/state
+  credential access. Viewer bootstrap needs no
+  OIDC configuration. The switch accepts only `true` or `false`.
+- Local mode is unauthenticated, restricted to loopback and bootstrap/offline
+  use, and unsuitable for shared machines, tunnels or public ingress. Enabled
+  local W365 is refused; live W365 requires a deployed identity endpoint.
 - W365 tokens are held in memory, not included in links/model output/logs.
   The authorized browser must receive the ARI token to use the official SDK.
-- Blueprint certificates live in encrypted local PFX or Key Vault. The sample
-  does not implement non-exportable remote signing or instant token revocation.
-- Blob state contains W365 session metadata. Protect it with private access,
+- W365 reuses Foundry's blueprint and agent identity through deployed managed
+  identity token exchange. There is no DAC/CLI, certificate or secret fallback,
+  no logged token-exchange bodies and no IdentityRM auxiliary token. Key Vault
+  stores only the viewer's separate OIDC secret. Agent-user IDs are not credentials.
+- Enabled identity IDs must be valid and Foundry/W365/viewer Azure identities
+  must share a tenant (the human OIDC tenant can differ). Foundry's injected
+  blueprint client ID must match configuration; never set reserved variables
+  yourself. Object/principal IDs are not interchangeable with app/client IDs.
+- Live runtime requires Blob state; file state is only an offline-test helper.
+  Blob state contains W365 session metadata. Protect it with private access,
   Entra RBAC, TLS, encryption, and an organizational retention policy.
 - CSRF protection covers viewer POSTs. CSP uses exact onboarding SDK/frame
   origins. Do not weaken it to permit arbitrary scripts or iframes.
+
+## Administrator and hosting trust
+
+Setup must find the exact supplied existing blueprint and agent identity, then
+validate the agent parent and any existing agent-user parent before mutations.
+Existing grant/inheritance ambiguity is also rejected before writes; setup does
+not look up `/me` or take over ownership.
+It never creates a blueprint, blueprint principal, agent identity, certificate
+or secret. It preserves unrelated declarations/consent and refuses takeover of
+different inheritance policies. Reusing Foundry identities does not authorize
+changing administrator-managed policy.
+
+Inherited blueprint grants may affect sibling agents. Optional viewer federation
+trusts an existing UAMI object ID with the tenant v2.0 issuer and
+`api://AzureADTokenExchange` audience. This grants **blueprint impersonation,
+potentially including sibling identities, not ARI-only access**. Explicit
+administrator approval is required; a dedicated blueprint is recommended.
+Do not add the FIC if shared-blueprint or tenant policy disallows it. Keep the
+viewer disabled instead, recognizing that viewer links/handoff may be unavailable.
+
+The public managed-identity helper is an activity/autopilot reference; ordinary
+Responses hosting support must be proven in the actual host. No live deployment
+has been performed for this implementation. If blueprint selection is unsupported,
+stop without a token/secret fallback. This sample does not require autopilot
+publication or a hiring workflow and is not a production identity guarantee.
+Use an approved identity SDK when the host offers one for production.
+
+Preserve the same agent name across deployments, rediscover the new version's
+IDs and reject unexpected identity replacement. For migration, stop tasks and
+rebind to the verified Foundry identities; do not automatically delete old
+resources or reparent an old agent user. Choose a different correctly bound UPN,
+and retire old separate identities/certificates only after checking consumers.
+See [setup and migration](docs/W365-SETUP.md).
 
 ## Computer-use risks
 

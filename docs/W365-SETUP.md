@@ -1,6 +1,9 @@
 # Windows 365 setup
 
 An Azure subscription and Foundry model do **not** imply that W365 is ready.
+This is **phase 2**: first [deploy bootstrap and discover the Foundry
+identity](DEPLOYMENT.md#phase-1-deploy-bootstrap). Setup reuses the exact
+Foundry-provisioned blueprint and agent identity; it does not create replacements.
 
 ## Prerequisites
 
@@ -10,9 +13,10 @@ An Azure subscription and Foundry model do **not** imply that W365 is ready.
 | Windows entitlement | Windows Enterprise E3 or higher, plus Intune and Entra ID P1. |
 | Billing | Activate a W365 for Agents pay-as-you-go billing plan; the script does not buy licenses or activate billing. |
 | Pool | Create a provisioning policy **(Agents)** in Intune. Explicitly select billing plan, geography, image and capacity. Record the pool ID. |
-| Administrator | Agent ID Administrator for certificates/agent users; consent administrator for delegated grants; Cloud PC/Intune administrative privileges for pool assignment. |
+| Foundry identities | Record the discovered blueprint app/client ID and agent object/principal ID. W365, Foundry and viewer Azure identities must share the tenant. |
+| Administrator | Verify current tenant roles and consent policy for blueprint updates, agent users, grants and pool assignment. Use PIM where required. |
 | Tooling | PowerShell 7.5+ and Microsoft.Graph.Authentication. |
-| Viewer | Obtain the SDK bundle URL and allowed iframe origins from W365 onboarding. |
+| Optional viewer | Existing deployed UAMI, explicit administrator approval for blueprint federation, and the SDK URL/frame origins from W365 onboarding. |
 
 W365 for Agents does not require a per-user Windows 365 Cloud PC seat for this
 consumption model. Pool capacity can incur charges while the sample is idle.
@@ -22,65 +26,119 @@ A task timeout is not a billing cap. Stop/delete unneeded pools in Intune.
 [billing](https://learn.microsoft.com/windows-365/agents/billing-w365a),
 [pool creation](https://github.com/microsoft/windows-365-for-agents/blob/main/docs/cloud-pc-pools.md).
 
-## Certificate and identities
+## Bind the existing Foundry identities
+
+From the repository root, substitute the IDs returned by discovery:
 
 ```powershell
-.\scripts\New-DevCertificate.ps1
 Install-Module Microsoft.Graph.Authentication -Scope CurrentUser
 $setup = @{
-    TenantId = "<W365-tenant-GUID>"
-    Name = "foundry-w365-sample"
+    TenantId = "<same-W365-and-Foundry-tenant-GUID>"
+    BlueprintId = "<Foundry-blueprint-app-client-GUID>"
+    AgentIdentityId = "<Foundry-agent-object-principal-GUID>"
     AgentUserPrincipalName = "foundry-w365-agent@YOUR-TENANT.onmicrosoft.com"
-    CertificatePublicPath = ".local\blueprint.cer"
     PoolId = "<existing-agent-pool-GUID>"
 }
 .\scripts\Setup-W365.ps1 @setup -WhatIf
 .\scripts\Setup-W365.ps1 @setup -BillingConfirmed
 ```
 
-The certificate helper prompts for a password and creates a 90-day RSA encrypted
-PFX plus public CER in `.local`. It refuses to overwrite either file. Restrict
-the directory to your own account. Use an organizationally managed certificate
-for hosted deployment.
-
 `-WhatIf` is offline: no sign-in or network calls. A real run requires explicit
-confirmation and delegated Graph sign-in. The script validates the tenant,
-scopes, certificate, W365 resource metadata and existing pool; then:
+confirmation and delegated Graph sign-in. `-BillingConfirmed` acknowledges
+your completed billing prerequisites; it does not activate billing.
 
-1. Creates/reuses the uniquely named blueprint and its principal; registers only
-   the public certificate, preserving unrelated keys.
-2. Merges permission declarations, AllPrincipals consent and inheritance.
-3. Creates/reuses an agent identity and agent user, validating each parent ID.
-4. Assigns the agent user directly to the pool via
-   `cloudPcAgentPoolUserAssignment.userPrincipalId`, not through a group.
-5. Prints four non-secret W365 identifiers to copy into `.env`.
+The script **never creates a blueprint, blueprint service principal, agent
+identity, certificate or secret**. It finds the exact supplied existing entities,
+resolves the agent app ID from the supplied object ID, and validates the agent's
+blueprint parent and any existing agent user's parent **before any mutations**.
+Missing entities or a mismatched parent stop setup. Display-name matches are not
+authority to adopt an identity.
 
-Display names are not unique: multiple matches abort. Reuse requires the current
-user to own the blueprint; unrelated parents or different inheritance policies
-are not overwritten. No per-instance duplicate grants or blueprint secrets are
-created. Pool creation remains an explicit Intune step so the script never
-guesses billing, geography or image choices.
+Preflight also rejects ambiguous existing grants or inheritance and incompatible
+policies before writes. There is no `/me` lookup or owner takeover: setup operates
+on the supplied existing entities under the administrator's approved permissions.
+
+After preflight, setup merges resource declarations, consent and inheritance
+while preserving unrelated entries, creates or reuses the correctly parented
+agent user, and assigns it directly to the existing pool using
+`cloudPcAgentPoolUserAssignment.userPrincipalId`, not through a group. Different
+inheritance policies are not taken over. Pool creation remains an explicit
+Intune step; no purchasing, geography or image choices are automated.
+
+Copy these non-secret outputs to the phase-2 deployment configuration:
+
+| Output | Meaning |
+| --- | --- |
+| `W365_TENANT_ID` | Tenant shared by Foundry, W365 and viewer Azure identity. |
+| `W365_BLUEPRINT_ID` | Existing blueprint app/client ID. |
+| `W365_AGENT_ID` | Existing agent **app/client ID**, resolved from its object ID. |
+| `W365_AGENT_OBJECT_ID` | Existing agent **object/principal ID**, supplied as `AgentIdentityId`. |
+| `W365_AGENT_USER_ID` | Agent-user object ID assigned to the pool. |
+
+App IDs and object IDs are distinct identifiers and must not be substituted
+for one another. Both `W365_AGENT_ID` and `W365_AGENT_OBJECT_ID` are required
+when enabling either the Foundry agent or viewer. The agent-user ID is not a credential.
+
+## Offline setup tests
+
+From the repository root, run the mocked regression scripts with PowerShell 7.5+:
+
+```powershell
+pwsh -NoProfile -File .\scripts\Test-SetupOffline.ps1
+pwsh -NoProfile -File .\scripts\Test-DiscoveryOffline.ps1
+```
+
+These scripts mock Graph and Azure CLI respectively: they do not sign in,
+call a tenant, allocate a Cloud PC or incur W365 charges. The setup tests cover
+existing identity reuse, distinct client/object IDs, pre-mutation parent/policy
+rejection, preservation of unrelated configuration and optional idempotent
+viewer federation. The discovery tests cover the exact read-only version URL,
+ID types, tenant binding, missing metadata and untrusted endpoint rejection.
+This is separate from setup `-WhatIf`, which prints the offline plan for your
+supplied arguments. Neither proves live hosting compatibility.
+
+## Optional viewer federation
+
+First deploy the viewer in bootstrap mode to obtain its existing UAMI
+`viewerIdentityPrincipalId` output. Only after administrator approval, add:
+
+```powershell
+$setup.ViewerManagedIdentityObjectId = "<viewerIdentityPrincipalId-GUID>"
+.\scripts\Setup-W365.ps1 @setup -AuthorizeViewerFederation -WhatIf
+.\scripts\Setup-W365.ps1 @setup -AuthorizeViewerFederation -BillingConfirmed
+```
+
+This optional FIC trusts that **UAMI object/principal ID** as subject on the
+blueprint, with issuer `https://login.microsoftonline.com/<tenant>/v2.0` and
+audience `api://AzureADTokenExchange`. It is not the UAMI client ID and not
+the separate OIDC web application's ID.
+
+**This permits blueprint impersonation, potentially including sibling agents,
+not just ARI/screen sharing.** Do not authorize it when a shared blueprint or
+administrator policy disallows that trust. A dedicated blueprint is recommended.
+Leave the viewer disabled instead; the agent may return unavailable viewer
+links. Configure only an approved viewer and do not attempt human-handoff tasks
+without one.
 
 ## Setup permissions (delegated, not runtime)
 
 | Graph scope | Purpose |
 | --- | --- |
-| `User.Read` | Current owner/sponsor. |
-| `Application.Read.All` | Service metadata and existing configuration. |
-| `AgentIdentityBlueprint.Create` | Create blueprint. |
-| `AgentIdentityBlueprint.ReadWrite.All` | Blueprint reconciliation and inheritance. |
+| `Application.Read.All` | Existing entities and service metadata. |
+| `AgentIdentityBlueprint.ReadWrite.All` | Existing blueprint reconciliation and inheritance. |
 | `AgentIdentityBlueprint.UpdateAuthProperties.All` | Auth properties / resource declarations. |
-| `AgentIdentityBlueprint.AddRemoveCreds.All` | Certificate registration. |
-| `AgentIdentityBlueprintPrincipal.Create` | Blueprint principal. |
-| `AgentIdentity.Create.All`, `AgentIdentity.Read.All` | Create/find agent identity. |
-| `AgentIdUser.ReadWrite.All` | Create/find agent user and validate parent. |
 | `DelegatedPermissionGrant.ReadWrite.All` | Admin consent. |
+| `AgentIdentity.Read.All` | Read existing agent identity and validate parent. |
+| `AgentIdUser.ReadWrite.All` | Create/find agent user and validate parent. |
 | `CloudPC.ReadWrite.All` | Pool validation and assignment. |
+| `AgentIdentityBlueprint.AddRemoveCreds.All` | **Optional FIC only**, with explicit viewer federation authorization. |
 
-Scopes and Entra roles are different checks. Requesting a scope does not activate
-a role. Use PIM and your organization's consent procedures; do not permanently
-grant Global Administrator just to run this sample. Runtime identities do not
-receive these Graph setup permissions.
+No `User.Read`, blueprint, blueprint-principal or agent-identity creation scopes
+are required.
+Scopes and Entra roles are separate checks: requesting a scope does not activate
+a role. Verify tenant roles, scopes and organizational approval for the actual
+operations; use PIM and consent procedures, not permanent Global Administrator.
+Runtime identities do not receive these Graph setup permissions.
 
 ## W365 runtime permissions
 
@@ -92,32 +150,56 @@ receive these Graph setup permissions.
 
 Each resource is declared/consented on the blueprint and inherited by the agent.
 `allAllowed` inherits already granted scopes; `noRoles` avoids application-role
-inheritance. The script preserves existing grants; use a dedicated blueprint.
+inheritance. **Blueprint inherited grants can affect sibling agents.** An
+administrator must explicitly approve that scope of change; use a dedicated
+blueprint where possible. Existing declarations, grants and unrelated scopes
+are preserved; a different policy is rejected rather than overwritten.
 
 ## Readiness and failures
 
 Wait for pool provisioning (often 20-30 minutes), confirm available sessions and
-the agent user assignment. The runtime allocates once and polls for Ready.
-403: inspect declaration, consent and inheritance separately. 401: inspect
-certificate validity, identity IDs and audience. Missing resource scopes: finish
-W365 onboarding rather than substituting another audience.
+the agent user assignment. The enabled runtime allocates once and polls for
+Ready. 403: inspect declaration, consent and inheritance separately. 401:
+inspect the deployed identity endpoint, blueprint selection, ID types, tenant,
+FIC (viewer only) and audience. Missing resource scopes: finish W365 onboarding,
+do not substitute another audience.
 
-Graph propagation errors stop the script. Inspect the printed IDs, wait, and
-rerun with the same names. Mutation requests are not blindly retried. A lost
-create response is reconciled by name/UPN and parent on the next run.
-Agent-user and pool APIs use Graph beta contracts, which can change and are not
-a production provisioning guarantee.
+Graph propagation errors stop the script. Inspect IDs, wait and rerun with
+the same supplied IDs and UPN. Mutation requests are not blindly retried.
+An uncertain agent-user create is reconciled by exact UPN and parent on rerun.
+Agent-user and pool APIs use Graph beta contracts; these may change and are
+not a production provisioning guarantee.
+
+## Migration from standalone identities
+
+Stop/drain tasks and resolve any active session/lease before rebinding. Deploy
+bootstrap, discover Foundry's identities, and run setup with those exact IDs.
+An old agent user bound to a separate identity **must not be automatically
+reparented**: choose a different UPN and create a user bound to the correct
+Foundry identity.
+
+Remove old certificate settings from deployment configuration.
+`scripts/New-DevCertificate.ps1` has been deleted and the standalone-identity
+quickstart is retired; there is
+no certificate fallback. Do not delete old resources automatically. After the
+new binding and hosting token flow are accepted, check all consumers before
+retiring separate identities, certificate registrations, private files and
+old Key Vault certificate secrets. Preserve the viewer's separate OIDC secret.
 
 ## Cleanup
 
 End active sessions first. In Intune remove the sample assignment and delete
-unneeded sample pools (deletion destroys their Cloud PCs). In Entra remove the
-agent user, agent identity, blueprint principal and blueprint only after checking
-for other consumers. Remove sample-only grants/certificates, Key Vault secrets,
-role assignments and local private files. Azure resource-group deletion does not
-delete Entra identities or cancel W365 billing.
+unneeded sample pools (deletion destroys their Cloud PCs). Remove only approved,
+sample-specific agent users, grants, viewer FICs and role assignments. Check
+other consumers and coordinate with the Foundry owner before deleting any
+Foundry-managed blueprint, principal or agent identity. Never treat reused
+identities as disposable script-owned resources.
 
-Sources: [blueprints](https://learn.microsoft.com/entra/agent-id/create-blueprint),
-[agent creation](https://learn.microsoft.com/graph/api/agentidentity-post),
+Retire unneeded OIDC secrets and private state according to policy. Azure
+resource-group deletion does not delete Entra identities or cancel W365 billing.
+
+Sources: [Foundry identity](https://learn.microsoft.com/azure/foundry/agents/concepts/agent-identity),
+[agent-user OAuth](https://learn.microsoft.com/entra/agent-id/agent-user-oauth-flow),
+[managed identity FIC](https://learn.microsoft.com/entra/workload-id/workload-identity-federation-config-app-trust-managed-identity),
 [agent users](https://learn.microsoft.com/powershell/module/microsoft.entra.users/new-entraagentuserforagentid),
 [pool assignment](https://learn.microsoft.com/graph/api/cloudpcpool-post-assignments?view=graph-rest-beta).

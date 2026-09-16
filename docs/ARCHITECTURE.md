@@ -2,8 +2,15 @@
 
 ## Request path
 
-`Program.cs` constructs an `AIProjectClient.AsAIAgent` with ordinary function
-tools, and registers the public hosting SDK's `AddFoundryResponses` /
+`W365_ENABLED` defaults to `false` and is strictly `true`/`false`. Bootstrap
+serves Foundry Responses with a phase-2-required 503 and healthy readiness,
+starting before any model initialization and without accessing W365, model or
+state credentials. Viewer bootstrap has
+`/health` and 503 routes, requiring no OIDC configuration. Local mode is
+loopback-only bootstrap/offline; enabled local desktop execution is refused.
+
+After phase 2 enables W365, `Program.cs` constructs an `AIProjectClient.AsAIAgent`
+with ordinary function tools, and registers the public hosting SDK's `AddFoundryResponses` /
 `MapFoundryResponses` ASP.NET Core integration. The model calls:
 
 | Function | Harness behavior |
@@ -26,8 +33,9 @@ sandbox or a guarantee that the model follows safety instructions.
 
 ## Session ownership and lifetime
 
-One slot per deployment is stored in a private file locally or a private Azure
-Blob when hosted. The record includes random link ID, task ID, human owner IDs,
+Live deployed agent/viewer state uses one slot in a private shared Azure Blob.
+`FileSessionStore` is an offline-test helper only; live runtime requires Blob,
+with no active local-file backend. The record includes random link ID, task ID, human owner IDs,
 W365 session/link, deadline, phase and in-flight marker. It contains sensitive
 session metadata, but not OAuth tokens.
 
@@ -46,6 +54,32 @@ Normal cleanup runs on explicit close and in request `finally`, with an independ
 EndSession; the system does not claim exactly-once remote effects. Unknown results
 remain blocked instead of replaying actions or allocating a replacement desktop.
 
+## Identity ownership
+
+Phase 1 lets Foundry provision the blueprint and agent identity. Read-only
+discovery returns `blueprint.client_id` (blueprint app ID) and
+`instance_identity.principal_id` (agent object ID). Phase 2 validates the existing
+parents and existing grant/inheritance ambiguity before mutations, resolves the agent app ID, and reconciles W365 grants,
+inheritance, agent user and pool assignment without creating separate identities.
+Use the same Foundry agent name for new versions and reject unexpected identity
+replacement after rediscovery.
+
+The process selects `AgentUserTokens` mode, not the model; there is no separate
+W365-auth mode setting. Foundry selects
+the platform-injected blueprint client ID for `ManagedIdentityCredential` T1;
+the viewer selects its UAMI and uses an explicitly approved blueprint FIC with
+agent `fmi_path` for T1. Both then exchange T1 -> T2 -> user-FIC T3 for ATG/ARI.
+No DAC/CLI/certificate fallback or IdentityRM auxiliary token is used. Model/state
+access uses ordinary Azure credentials. See [authentication](AUTHENTICATION.md)
+for same-tenant requirements and token boundaries.
+
+Blueprint inherited grants and optional viewer federation may affect sibling
+agents. The FIC grants blueprint impersonation, not ARI-only access. Shared
+blueprints need explicit administrator approval; the viewer can stay disabled.
+The public token helper is an activity/autopilot reference: ordinary Responses
+hosting support requires actual live acceptance, with no fallback if unsupported.
+This sample neither publishes autopilot nor requires a hiring workflow.
+
 ## Fail-closed recovery
 
 A Blob transaction uses an infinite lease so a process crash cannot allow another
@@ -53,11 +87,11 @@ worker to execute concurrently with an operation of unknown status. This is an
 intentional availability tradeoff. It needs an operator:
 
 1. Stop/drain the old hosted worker and viewer. Ensure neither can execute again.
-2. Inspect the private state blob/file. End the known W365 session through the
+2. Inspect the private state Blob. End the known W365 session through the
    authorized W365 service, or establish that it was reclaimed. If StartSession's
    response was lost, inspect pool/session diagnostics with W365 support.
 3. Only after remote ownership is resolved, break the stale Blob lease (if any)
-   and clear the slot to JSON `null`, or remove the local state file.
+   and clear the Blob slot to JSON `null`.
 4. Restart and submit a fresh task. Never replay an uncertain desktop action.
 
 Do not automatically clear an expired slot: expiry is not evidence that the
@@ -90,10 +124,11 @@ No dependency-vulnerability or downgrade warnings are suppressed.
 | File | Responsibility |
 | --- | --- |
 | `Settings.cs`, `Program.cs`, `ResponseRequest.cs` | Configuration, hosted owner gate, 64 KiB fresh-request validation, tools, cleanup. |
-| `AgentUserTokens.cs` | Certificate-backed three-stage user-FIC and resource-scoped token cache. |
+| `AgentUserTokens.cs` | Process-selected Foundry blueprint / viewer UAMI federation, three-stage user-FIC and resource-scoped token cache. |
 | `McpConnection.cs` | MCP handshake/catalog/call transport; safe errors, no action replay. |
-| `SessionStore.cs` | Local exclusive file transactions or shared Blob leases. |
+| `SessionStore.cs` | Shared Blob leases for live runtime; `FileSessionStore` only for offline tests. |
 | `DesktopRuntime.cs` | Desktop lifecycle, ownership, tool allowlist, pause and resume. |
 | `Observations.cs`, `FreshTaskSessionStore.cs` | Bounded image handling and fresh task history. |
 | `Viewer.cs`, `wwwroot` | OIDC owner authorization, CSRF, CSP, SDK integration. |
-| `scripts/Setup-W365.ps1` | Offline plan / explicit delegated Graph provisioning. |
+| `scripts/Get-FoundryIdentity.ps1` | Read-only discovery of the deployed version's blueprint client ID and agent principal ID. |
+| `scripts/Setup-W365.ps1` | Offline `-WhatIf` / explicit reconciliation against existing Foundry identities, optional approved viewer FIC. |

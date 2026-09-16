@@ -6,21 +6,21 @@ param environmentName string
 param registryName string
 param imageName string
 param keyVaultName string
-param certificateSecretName string = 'w365-blueprint'
 param oidcSecretName string = 'w365-viewer-client-secret'
+param w365Enabled bool = false
 param storageAccountName string
 param stateContainerName string = 'desktop-state'
-param viewerPublicUrl string
-param viewerClientId string
-param operatorTenantId string
-param operatorObjectId string
-param hostedAllowedUserId string
-param w365TenantId string
-param blueprintId string
-param agentId string
-param agentUserId string
-param screenShareSdkUrl string
-param screenShareFrameOrigins string
+param viewerPublicUrl string = ''
+param viewerClientId string = ''
+param operatorTenantId string = ''
+param operatorObjectId string = ''
+param w365TenantId string = ''
+param blueprintId string = ''
+param agentId string = ''
+param agentObjectId string = ''
+param agentUserId string = ''
+param screenShareSdkUrl string = ''
+param screenShareFrameOrigins string = ''
 
 resource environment 'Microsoft.App/managedEnvironments@2024-03-01' existing = { name: environmentName }
 resource registry 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = { name: registryName }
@@ -38,7 +38,7 @@ resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' 
   name: '${appName}-identity'
   location: location
 }
-resource vaultRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource vaultRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (w365Enabled) {
   name: guid(vault.id, identity.id, 'secrets')
   scope: vault
   properties: {
@@ -78,11 +78,11 @@ resource viewer 'Microsoft.App/containerApps@2024-03-01' = {
       activeRevisionsMode: 'Single'
       ingress: { external: true, targetPort: 8080, allowInsecure: false }
       registries: [{ server: registry.properties.loginServer, identity: identity.id }]
-      secrets: [{
+      secrets: w365Enabled ? [{
         name: 'oidc-secret'
         keyVaultUrl: '${vault.properties.vaultUri}secrets/${oidcSecretName}'
         identity: identity.id
-      }]
+      }] : []
     }
     template: {
       scale: { minReplicas: 1, maxReplicas: 1 }
@@ -92,26 +92,24 @@ resource viewer 'Microsoft.App/containerApps@2024-03-01' = {
         command: ['dotnet', 'Win365Agent.dll']
         args: ['--viewer']
         resources: { cpu: json('0.5'), memory: '1Gi' }
-        env: [
+        env: concat([
           { name: 'ASPNETCORE_URLS', value: 'http://+:8080' }
           { name: 'AZURE_CLIENT_ID', value: identity.properties.clientId }
           { name: 'SAMPLE_LOCAL_MODE', value: 'false' }
+          { name: 'W365_ENABLED', value: string(w365Enabled) }
           { name: 'W365_TENANT_ID', value: w365TenantId }
           { name: 'W365_BLUEPRINT_ID', value: blueprintId }
           { name: 'W365_AGENT_ID', value: agentId }
+          { name: 'W365_AGENT_OBJECT_ID', value: agentObjectId }
           { name: 'W365_AGENT_USER_ID', value: agentUserId }
-          { name: 'W365_KEY_VAULT_URL', value: vault.properties.vaultUri }
-          { name: 'W365_CERTIFICATE_SECRET_NAME', value: certificateSecretName }
           { name: 'SESSION_BLOB_URI', value: '${storage.properties.primaryEndpoints.blob}${stateContainerName}/slot.json' }
           { name: 'OPERATOR_TENANT_ID', value: operatorTenantId }
           { name: 'OPERATOR_OBJECT_ID', value: operatorObjectId }
-          { name: 'HOSTED_ALLOWED_USER_ID', value: hostedAllowedUserId }
           { name: 'VIEWER_PUBLIC_URL', value: viewerPublicUrl }
           { name: 'VIEWER_CLIENT_ID', value: viewerClientId }
-          { name: 'VIEWER_CLIENT_SECRET', secretRef: 'oidc-secret' }
           { name: 'SCREENSHARE_SDK_URL', value: screenShareSdkUrl }
           { name: 'SCREENSHARE_FRAME_ORIGINS', value: screenShareFrameOrigins }
-        ]
+        ], w365Enabled ? [{ name: 'VIEWER_CLIENT_SECRET', secretRef: 'oidc-secret' }] : [])
         probes: [{
           type: 'Liveness'
           httpGet: { path: '/health', port: 8080 }
@@ -125,3 +123,4 @@ resource viewer 'Microsoft.App/containerApps@2024-03-01' = {
 }
 output viewerHostname string = viewer.properties.configuration.ingress.fqdn
 output viewerIdentityPrincipalId string = identity.properties.principalId
+output viewerIdentityClientId string = identity.properties.clientId

@@ -24,5 +24,6 @@ jobs:
             $failed += $errors
           }
           if ($failed.Count) { $failed | Format-List; exit 1 }
-          ./scripts/Setup-W365.ps1 -TenantId ([guid]::Empty) -Name offline-sample -AgentUserPrincipalName agent@example.com -CertificatePublicPath missing.cer -PoolId ([guid]::Empty) -WhatIf
+          ./scripts/Setup-W365.ps1 -TenantId ([guid]::Empty) -BlueprintId ([guid]::Empty) -AgentIdentityId ([guid]::Empty) -AgentUserPrincipalName agent@example.com -PoolId ([guid]::Empty) -WhatIf
           ./scripts/Test-SetupOffline.ps1
+          ./scripts/Test-DiscoveryOffline.ps1

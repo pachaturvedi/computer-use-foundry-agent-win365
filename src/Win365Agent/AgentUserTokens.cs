@@ -1,10 +1,7 @@
 using System.Net.Http.Json;
-using System.Security.Cryptography;
-using System.Security.Cryptography.X509Certificates;
-using System.Text;
 using System.Text.Json;
 using Azure.Core;
-using Azure.Security.KeyVault.Secrets;
+using Azure.Identity;
 
 namespace Win365Agent;
 
@@ -13,16 +10,49 @@ public interface IAgentUserTokens
     Task<AccessToken> GetAsync(string audience, CancellationToken ct);
 }
 
-// Explicit thin-protocol implementation of Entra's documented agent-user FIC flow.
-// Replace this boundary with an Agent 365 SDK token provider when adopting its host integration.
-public sealed class AgentUserTokens(HttpClient http, Settings settings, TokenCredential credential)
+public interface IBlueprintTokens
+{
+    Task<AccessToken> GetAsync(CancellationToken ct);
+}
+
+// Foundry's identity endpoint supplies T1. ACA instead needs an explicitly trusted UAMI.
+public sealed class BlueprintTokens : IBlueprintTokens
+{
+    private readonly HttpClient http;
+    private readonly Settings settings;
+    private readonly bool viewerMode;
+    private readonly TokenCredential credential;
+    public BlueprintTokens(HttpClient http, Settings settings, bool viewerMode)
+        : this(http, settings, viewerMode, new ManagedIdentityCredential(
+            ManagedIdentityId.FromUserAssignedClientId(settings.Required(viewerMode ? "AZURE_CLIENT_ID" : "W365_BLUEPRINT_ID")))) { }
+
+    internal BlueprintTokens(HttpClient http, Settings settings, bool viewerMode, TokenCredential credential)
+    {
+        this.http = http; this.settings = settings; this.viewerMode = viewerMode; this.credential = credential;
+    }
+
+    public async Task<AccessToken> GetAsync(CancellationToken ct)
+    {
+        var assertion = await credential.GetTokenAsync(new TokenRequestContext([AgentUserTokens.Exchange]), ct);
+        if (!viewerMode) return assertion;
+        return await AgentUserTokens.ExchangeAsync(http, settings, new()
+        {
+            ["client_id"] = settings.Required("W365_BLUEPRINT_ID"), ["grant_type"] = "client_credentials",
+            ["scope"] = AgentUserTokens.Exchange, ["fmi_path"] = settings.Required("W365_AGENT_ID"),
+            ["client_assertion_type"] = AgentUserTokens.AssertionType, ["client_assertion"] = assertion.Token
+        }, ct);
+    }
+}
+
+// Follows the public Foundry AgentTokenHelper sample; T1 never comes from CLI/user credentials.
+public sealed class AgentUserTokens(HttpClient http, Settings settings, IBlueprintTokens blueprintTokens)
     : IAgentUserTokens, IDisposable
 {
     public const string Atg = "da81128c-e5b5-4f9e-8d89-50d906f107c5";
     public const string Ari = "90ecec28-f5a6-42b3-9bde-dae1ca98f8b5";
     public const string AriView = Ari + "/Computer.See";
-    private const string Exchange = "api://AzureADTokenExchange/.default";
-    private const string AssertionType = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
+    internal const string Exchange = "api://AzureADTokenExchange/.default";
+    internal const string AssertionType = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
     private readonly SemaphoreSlim gate = new(1);
     private readonly Dictionary<string, AccessToken> cache = [];
 
@@ -34,24 +64,16 @@ public sealed class AgentUserTokens(HttpClient http, Settings settings, TokenCre
         {
             if (cache.TryGetValue(audience, out var cached) && cached.ExpiresOn > DateTimeOffset.UtcNow.AddMinutes(5))
                 return cached;
-            var blueprint = settings.Required("W365_BLUEPRINT_ID");
             var agent = settings.Required("W365_AGENT_ID");
-            using var certificate = await LoadCertificateAsync(ct);
-            var endpoint = $"https://login.microsoftonline.com/{settings.Tenant}/oauth2/v2.0/token";
-            var t1 = await ExchangeAsync(new()
-            {
-                ["client_id"] = blueprint, ["grant_type"] = "client_credentials", ["scope"] = Exchange,
-                ["fmi_path"] = agent, ["client_assertion_type"] = AssertionType,
-                ["client_assertion"] = CreateAssertion(certificate, blueprint, endpoint)
-            }, ct);
-            var t2 = await ExchangeAsync(new()
+            var t1 = await blueprintTokens.GetAsync(ct);
+            var t2 = await ExchangeAsync(http, settings, new()
             {
                 ["client_id"] = agent, ["grant_type"] = "client_credentials", ["scope"] = Exchange,
                 ["client_assertion_type"] = AssertionType, ["client_assertion"] = t1.Token
             }, ct);
-            var result = await ExchangeAsync(new()
+            var result = await ExchangeAsync(http, settings, new()
             {
-                ["client_id"] = agent, ["grant_type"] = "user_fic",
+                ["client_id"] = agent, ["grant_type"] = "user_fic", ["requested_token_use"] = "on_behalf_of",
                 ["scope"] = audience == AriView ? AriView :
                     audience == Ari ? $"{Ari}/Computer.See {Ari}/Computer.Control" : $"{Atg}/.default",
                 ["client_assertion_type"] = AssertionType, ["client_assertion"] = t1.Token,
@@ -64,58 +86,20 @@ public sealed class AgentUserTokens(HttpClient http, Settings settings, TokenCre
         finally { gate.Release(); }
     }
 
-    private async Task<X509Certificate2> LoadCertificateAsync(CancellationToken ct)
-    {
-        byte[] data;
-        if (settings.Optional("W365_CERTIFICATE_PATH") is { } path)
-            data = await File.ReadAllBytesAsync(path, ct);
-        else
-        {
-            var client = new SecretClient(settings.Https("W365_KEY_VAULT_URL"), credential);
-            var secret = await client.GetSecretAsync(settings.Required("W365_CERTIFICATE_SECRET_NAME"), cancellationToken: ct);
-            data = Convert.FromBase64String(secret.Value.Value);
-        }
-        try
-        {
-            return X509CertificateLoader.LoadPkcs12(data, settings.Optional("W365_CERTIFICATE_PASSWORD"),
-                X509KeyStorageFlags.EphemeralKeySet);
-        }
-        finally { CryptographicOperations.ZeroMemory(data); }
-    }
-
-    internal static string CreateAssertion(X509Certificate2 cert, string client, string endpoint)
-    {
-        if (!cert.HasPrivateKey || cert.NotAfter.ToUniversalTime() <= DateTime.UtcNow ||
-            cert.NotBefore.ToUniversalTime() > DateTime.UtcNow)
-            throw new InvalidOperationException("Blueprint certificate is not currently valid or lacks a private key.");
-        using var rsa = cert.GetRSAPrivateKey() ?? throw new InvalidOperationException("An RSA certificate is required.");
-        var header = Encode(JsonSerializer.SerializeToUtf8Bytes(new
-        {
-            alg = "RS256", typ = "JWT", x5t = Encode(cert.GetCertHash())
-        }));
-        var now = DateTimeOffset.UtcNow;
-        var body = Encode(JsonSerializer.SerializeToUtf8Bytes(new
-        {
-            aud = endpoint, iss = client, sub = client, jti = Guid.NewGuid().ToString(),
-            nbf = now.AddSeconds(-30).ToUnixTimeSeconds(), exp = now.AddMinutes(5).ToUnixTimeSeconds()
-        }));
-        var input = $"{header}.{body}";
-        return $"{input}.{Encode(rsa.SignData(Encoding.ASCII.GetBytes(input), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1))}";
-    }
-    private static string Encode(byte[] bytes) => Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
-
-    private async Task<AccessToken> ExchangeAsync(Dictionary<string, string> form, CancellationToken ct)
+    internal static async Task<AccessToken> ExchangeAsync(HttpClient http, Settings settings,
+        Dictionary<string, string> form, CancellationToken ct)
     {
         using var response = await http.PostAsync(
             $"https://login.microsoftonline.com/{settings.Tenant}/oauth2/v2.0/token",
             new FormUrlEncodedContent(form), ct);
         if (!response.IsSuccessStatusCode)
-            throw new HttpRequestException($"Agent-user token exchange failed (HTTP {(int)response.StatusCode}). Check tenant, certificate and consent.");
+            throw new HttpRequestException($"Agent-user token exchange failed (HTTP {(int)response.StatusCode}). Check Foundry identity support, federation, tenant and consent.");
         using var json = await response.Content.ReadFromJsonAsync<JsonDocument>(ct)
             ?? throw new InvalidOperationException("Empty token response.");
         var expires = json.RootElement.GetProperty("expires_in").GetInt32();
-        if (expires <= 0) throw new InvalidOperationException("Token has invalid expiry.");
-        return new AccessToken(json.RootElement.GetProperty("access_token").GetString()!, DateTimeOffset.UtcNow.AddSeconds(expires));
+        var token = json.RootElement.GetProperty("access_token").GetString();
+        if (expires <= 0 || string.IsNullOrWhiteSpace(token)) throw new InvalidOperationException("Invalid token response.");
+        return new AccessToken(token, DateTimeOffset.UtcNow.AddSeconds(expires));
     }
     public void Dispose() => gate.Dispose();
 }

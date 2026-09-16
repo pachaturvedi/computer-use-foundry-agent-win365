@@ -1,7 +1,5 @@
 using System.Net;
 using System.Security.Claims;
-using System.Security.Cryptography;
-using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Json;
 using Azure.Core;
@@ -182,20 +180,6 @@ public sealed class RuntimeTests : IDisposable
         await Assert.ThrowsAsync<ArgumentException>(() => runtime.ExecuteAsync("click", Json("""{"sessionId":"other"}"""), default));
         Assert.Equal(0, handler.ClickCount);
         await runtime.CloseAsync(default);
-    }
-
-    [Fact]
-    public void CertificateAssertionHasShortLifetimeAndValidSignature()
-    {
-        using var rsa = RSA.Create(2048);
-        var req = new CertificateRequest("CN=test", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
-        using var cert = req.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow.AddHours(1));
-        var parts = AgentUserTokens.CreateAssertion(cert, "blueprint", "https://login.example/token").Split('.');
-        static byte[] Decode(string input) => Convert.FromBase64String(input.Replace('-', '+').Replace('_', '/') + new string('=', (4 - input.Length % 4) % 4));
-        Assert.True(rsa.VerifyData(Encoding.ASCII.GetBytes($"{parts[0]}.{parts[1]}"), Decode(parts[2]), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1));
-        using var body = JsonDocument.Parse(Decode(parts[1]));
-        Assert.Equal("blueprint", body.RootElement.GetProperty("iss").GetString());
-        Assert.InRange(body.RootElement.GetProperty("exp").GetInt64() - DateTimeOffset.UtcNow.ToUnixTimeSeconds(), 290, 301);
     }
 
     public void Dispose() { if (Directory.Exists(folder)) Directory.Delete(folder, true); }

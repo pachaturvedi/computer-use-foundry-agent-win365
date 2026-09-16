@@ -1,6 +1,4 @@
 using System.Net;
-using System.Security.Cryptography;
-using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Json;
 using Azure.Core;
@@ -11,53 +9,76 @@ namespace Win365Agent.Tests;
 
 public sealed class TokenTests
 {
-    [Fact]
-    public async Task ThreeStageFlowCachesByScopeAndNeverUsesABlueprintSecret()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FoundryAndFederatedViewerUseTheSameAgentUserWithoutStoredCredentials(bool viewer)
     {
-        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".pfx");
-        using var rsa = RSA.Create(2048);
-        var req = new CertificateRequest("CN=offline", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
-        using var cert = req.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow.AddHours(1));
-        await File.WriteAllBytesAsync(path, cert.Export(X509ContentType.Pfx, "offline-only-password"));
-        try
+        var settings = new Settings(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
-            var settings = new Settings(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["W365_TENANT_ID"] = "11111111-1111-1111-1111-111111111111",
-                ["W365_BLUEPRINT_ID"] = "blueprint", ["W365_AGENT_ID"] = "agent", ["W365_AGENT_USER_ID"] = "agent-user",
-                ["W365_CERTIFICATE_PATH"] = path, ["W365_CERTIFICATE_PASSWORD"] = "offline-only-password"
-            }).Build());
-            using var handler = new TokenHandler();
-            using var http = new HttpClient(handler);
-            using var provider = new AgentUserTokens(http, settings, new UnusedCredential());
-            var results = await Task.WhenAll(Enumerable.Range(0, 5).Select(_ => provider.GetAsync(AgentUserTokens.Atg, default)));
-            Assert.All(results, token => Assert.Equal("token-3", token.Token));
-            Assert.Equal(3, handler.Forms.Count);
+            ["W365_TENANT_ID"] = "11111111-1111-1111-1111-111111111111",
+            ["W365_BLUEPRINT_ID"] = "blueprint", ["W365_AGENT_ID"] = "agent", ["W365_AGENT_USER_ID"] = "agent-user"
+        }).Build());
+        using var handler = new TokenHandler();
+        using var http = new HttpClient(handler);
+        var credential = new FakeCredential();
+        var blueprint = new BlueprintTokens(http, settings, viewer, credential);
+        using var provider = new AgentUserTokens(http, settings, blueprint);
+        var results = await Task.WhenAll(Enumerable.Range(0, 5).Select(_ => provider.GetAsync(AgentUserTokens.Atg, default)));
+        var count = viewer ? 3 : 2;
+        var first = viewer ? 1 : 0;
+        var t1 = viewer ? "token-1" : "identity-endpoint-token";
+        Assert.All(results, token => Assert.Equal($"token-{count}", token.Token));
+        Assert.Equal(count, handler.Forms.Count);
+        Assert.Equal(1, credential.Calls);
+        if (viewer)
+        {
             Assert.Equal("blueprint", handler.Forms[0]["client_id"]);
             Assert.Equal("agent", handler.Forms[0]["fmi_path"]);
-            Assert.Equal("token-1", handler.Forms[1]["client_assertion"]);
-            Assert.Equal("token-1", handler.Forms[2]["client_assertion"]);
-            Assert.Equal("token-2", handler.Forms[2]["user_federated_identity_credential"]);
-            Assert.Equal("user_fic", handler.Forms[2]["grant_type"]);
-            Assert.Equal("agent-user", handler.Forms[2]["user_id"]);
-            Assert.Equal($"{AgentUserTokens.Atg}/.default", handler.Forms[2]["scope"]);
-            await provider.GetAsync(AgentUserTokens.AriView, default);
-            Assert.Equal(6, handler.Forms.Count);
-            Assert.Equal(AgentUserTokens.AriView, handler.Forms[5]["scope"]);
-            Assert.DoesNotContain("Computer.Control", handler.Forms[5]["scope"]);
-            await provider.GetAsync(AgentUserTokens.Ari, default);
-            Assert.Contains("Computer.Control", handler.Forms[8]["scope"]);
-            Assert.All(handler.Forms, f => Assert.False(f.ContainsKey("client_secret")));
-            await Assert.ThrowsAsync<ArgumentException>(() => provider.GetAsync("https://untrusted.example", default));
+            Assert.Equal("identity-endpoint-token", handler.Forms[0]["client_assertion"]);
         }
-        finally { File.Delete(path); }
+        Assert.Equal("agent", handler.Forms[first]["client_id"]);
+        Assert.Equal(t1, handler.Forms[first]["client_assertion"]);
+        Assert.Equal(t1, handler.Forms[first + 1]["client_assertion"]);
+        Assert.Equal($"token-{first + 1}", handler.Forms[first + 1]["user_federated_identity_credential"]);
+        Assert.Equal("user_fic", handler.Forms[first + 1]["grant_type"]);
+        Assert.Equal("agent-user", handler.Forms[first + 1]["user_id"]);
+        Assert.Equal("on_behalf_of", handler.Forms[first + 1]["requested_token_use"]);
+        Assert.Equal($"{AgentUserTokens.Atg}/.default", handler.Forms[first + 1]["scope"]);
+        await provider.GetAsync(AgentUserTokens.AriView, default);
+        Assert.Equal(count * 2, handler.Forms.Count);
+        Assert.Equal(AgentUserTokens.AriView, handler.Forms[^1]["scope"]);
+        Assert.DoesNotContain("Computer.Control", handler.Forms[^1]["scope"]);
+        await provider.GetAsync(AgentUserTokens.Ari, default);
+        Assert.Contains("Computer.Control", handler.Forms[^1]["scope"]);
+        Assert.All(handler.Forms, f => Assert.False(f.ContainsKey("client_secret")));
+        await Assert.ThrowsAsync<ArgumentException>(() => provider.GetAsync("https://untrusted.example", default));
     }
-    private sealed class UnusedCredential : TokenCredential
+
+    [Fact]
+    public async Task MissingHostedIdentityHasNoFallback()
     {
-        public override AccessToken GetToken(TokenRequestContext requestContext, CancellationToken cancellationToken) =>
-            throw new InvalidOperationException("Test must not use Azure credentials.");
+        var settings = new Settings(new ConfigurationBuilder().Build());
+        using var handler = new TokenHandler();
+        using var http = new HttpClient(handler);
+        var blueprint = new BlueprintTokens(http, settings, false, new FakeCredential { Fail = true });
+        await Assert.ThrowsAsync<InvalidOperationException>(() => blueprint.GetAsync(default));
+        Assert.Empty(handler.Forms);
+    }
+
+    private sealed class FakeCredential : TokenCredential
+    {
+        public int Calls;
+        public bool Fail;
+        public override AccessToken GetToken(TokenRequestContext requestContext, CancellationToken cancellationToken)
+        {
+            Assert.Equal(["api://AzureADTokenExchange/.default"], requestContext.Scopes);
+            Calls++;
+            if (Fail) throw new InvalidOperationException("No hosted identity.");
+            return new AccessToken("identity-endpoint-token", DateTimeOffset.UtcNow.AddHours(1));
+        }
         public override ValueTask<AccessToken> GetTokenAsync(TokenRequestContext requestContext, CancellationToken cancellationToken) =>
-            throw new InvalidOperationException("Test must not use Azure credentials.");
+            ValueTask.FromResult(GetToken(requestContext, cancellationToken));
     }
     private sealed class TokenHandler : HttpMessageHandler
     {
