@@ -1,9 +1,10 @@
 #Requires -Version 7.4
 [CmdletBinding()]
 param(
-    [ValidateSet('Validate', 'DeployAgent', 'DeployAll')]
+    [ValidateSet('Validate', 'ProvisionFoundry', 'DeployAgent', 'DeployAll')]
     [string]$Mode = 'Validate',
     [string]$Environment,
+    [string]$ConfigPath,
     [switch]$ConfirmResourceChanges,
     [switch]$SkipPackage
 )
@@ -21,8 +22,22 @@ $logPath = Join-Path $logDirectory (
     '{0:yyyyMMdd-HHmmss}-{1}.log' -f [DateTimeOffset]::Now, $Mode.ToLowerInvariant())
 New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
 
-$azdCandidates = Get-Command azd -All -ErrorAction Stop |
-    Select-Object -ExpandProperty Source -Unique |
+$azdPaths = [System.Collections.Generic.List[string]]::new()
+foreach ($command in @(Get-Command azd -All -ErrorAction SilentlyContinue)) {
+    if ($null -ne $command -and !$azdPaths.Contains($command.Source)) {
+        $azdPaths.Add($command.Source)
+    }
+}
+foreach ($path in @(
+    (Join-Path $env:LOCALAPPDATA 'Programs\Azure Dev CLI\azd.exe'),
+    (Join-Path $env:ProgramFiles 'Azure Dev CLI\azd.exe')
+)) {
+    if (![string]::IsNullOrWhiteSpace($path) -and (Test-Path $path) -and !$azdPaths.Contains($path)) {
+        $azdPaths.Add($path)
+    }
+}
+
+$azdCandidates = $azdPaths |
     ForEach-Object {
         $versionOutput = & $_ version 2>$null
         if ($LASTEXITCODE -eq 0 -and $versionOutput -match 'azd version\s+(\d+\.\d+\.\d+)') {
@@ -75,6 +90,34 @@ function Assert-ResourceConfirmation {
     Write-DeploymentEvent DECISION 'Azure resource changes explicitly confirmed by the caller.'
 }
 
+function Has-ProjectEndpoint {
+    param([string]$Value)
+
+    return ![string]::IsNullOrWhiteSpace($Value)
+}
+
+function Invoke-FoundryLocalValidation {
+    param([string]$ProjectEndpoint)
+
+    if (Has-ProjectEndpoint $ProjectEndpoint) {
+        Write-DeploymentEvent STEP 'Validating the local Foundry manifest and environment.'
+        Invoke-Azd @('ai', 'agent', 'doctor', '--local-only')
+        return
+    }
+
+    Write-DeploymentEvent DECISION 'Skipping azd ai agent doctor --local-only until the Foundry project endpoint exists.'
+}
+
+function Preview-FoundryLayer {
+    Write-DeploymentEvent STEP 'Previewing the Foundry infrastructure layer.'
+    Invoke-Azd @('provision', 'foundry', '--preview', '--no-prompt')
+}
+
+function Provision-FoundryLayer {
+    Write-DeploymentEvent STEP 'Provisioning the Foundry infrastructure layer.'
+    Invoke-Azd @('provision', 'foundry', '--no-prompt')
+}
+
 Push-Location $root
 $previousUserAgent = $env:AZURE_DEV_USER_AGENT
 $env:AZURE_DEV_USER_AGENT = 'microsoft_foundry_skill'
@@ -111,11 +154,14 @@ try {
     Write-DeploymentEvent DECISION "Shared Blob state enabled: $stateEnabled"
     Write-DeploymentEvent DECISION "Optional viewer enabled: $viewerEnabled"
 
-    Write-DeploymentEvent STEP 'Validating the local Foundry manifest and environment.'
-    Invoke-Azd @('ai', 'agent', 'doctor', '--local-only')
-
-    Write-DeploymentEvent STEP 'Previewing the Foundry infrastructure layer.'
-    Invoke-Azd @('provision', 'foundry', '--preview', '--no-prompt')
+    Invoke-FoundryLocalValidation -ProjectEndpoint $projectEndpoint
+    $needsFoundryProvisioning = !(Has-ProjectEndpoint $projectEndpoint)
+    if ($needsFoundryProvisioning -or $Mode -eq 'ProvisionFoundry') {
+        Preview-FoundryLayer
+    }
+    else {
+        Write-DeploymentEvent DECISION 'Foundry preview skipped because the environment is already bound to an existing project endpoint.'
+    }
 
     if ($stateEnabled -eq 'true') {
         $stateAgentPrincipalId = Get-AzdValue 'STATE_AGENT_PRINCIPAL_ID'
@@ -146,8 +192,20 @@ try {
 
     switch ($Mode) {
         'Validate' {
+            if (!(Has-ProjectEndpoint $projectEndpoint)) {
+                Write-DeploymentEvent DECISION 'Remote Foundry checks skipped because the project endpoint will be created during provisioning.'
+                break
+            }
             Write-DeploymentEvent STEP 'Running remote Foundry readiness checks.'
             Invoke-Azd @('ai', 'agent', 'doctor')
+        }
+        'ProvisionFoundry' {
+            Assert-ResourceConfirmation
+            if (!$needsFoundryProvisioning) {
+                Write-DeploymentEvent DECISION 'Foundry provisioning skipped because the environment is already bound to an existing project endpoint.'
+                break
+            }
+            Provision-FoundryLayer
         }
         'DeployAgent' {
             Assert-ResourceConfirmation
@@ -157,14 +215,38 @@ try {
         }
         'DeployAll' {
             Assert-ResourceConfirmation
-            Write-DeploymentEvent STEP 'Provisioning and deploying all enabled layers and services.'
-            Invoke-Azd @('up', '--no-prompt')
+            if ($needsFoundryProvisioning) {
+                Provision-FoundryLayer
+                $projectEndpoint = Get-AzdValue 'FOUNDRY_PROJECT_ENDPOINT'
+                if (!(Has-ProjectEndpoint $projectEndpoint)) {
+                    throw 'Foundry provisioning completed but FOUNDRY_PROJECT_ENDPOINT is still empty.'
+                }
+                Invoke-FoundryLocalValidation -ProjectEndpoint $projectEndpoint
+            }
+            else {
+                Write-DeploymentEvent DECISION 'Foundry provisioning skipped because the environment is already bound to an existing project endpoint.'
+            }
+
+            if ($stateEnabled -eq 'true') {
+                Write-DeploymentEvent STEP 'Provisioning the explicitly enabled state layer.'
+                Invoke-Azd @('provision', 'state', '--no-prompt')
+            }
+
+            if ($viewerEnabled -eq 'true') {
+                Write-DeploymentEvent STEP 'Provisioning the explicitly enabled viewer layer.'
+                Invoke-Azd @('provision', 'viewer', '--no-prompt')
+            }
+
+            Write-DeploymentEvent STEP 'Deploying a new immutable hosted-agent version.'
+            Invoke-Azd @('deploy', 'win365-desktop-agent', '--no-prompt')
             Invoke-Azd @('ai', 'agent', 'doctor')
         }
     }
 
-    $agentVersion = Get-AzdValue 'AGENT_WIN365_DESKTOP_AGENT_VERSION'
-    Write-DeploymentEvent RESULT "Hosted agent version: $agentVersion"
+    if ($Mode -ne 'ProvisionFoundry') {
+        $agentVersion = Get-AzdValue 'AGENT_WIN365_DESKTOP_AGENT_VERSION'
+        Write-DeploymentEvent RESULT "Hosted agent version: $agentVersion"
+    }
     Write-DeploymentEvent RESULT "Workflow '$Mode' completed successfully."
 }
 catch {

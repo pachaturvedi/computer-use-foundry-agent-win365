@@ -13,7 +13,7 @@ public sealed class DesktopRuntimeOptions
     public int MaxToolArgumentCharacters { get; init; } = 16_000;
 
     /// <summary>Gets the maximum number of attempts to poll a new session for readiness.</summary>
-    public int ReadyPollAttempts { get; init; } = 15;
+    public int ReadyPollAttempts { get; init; } = 180;
 
     /// <summary>Gets the delay between session-readiness polls.</summary>
     public TimeSpan ReadyPollInterval { get; init; } = TimeSpan.FromSeconds(2);

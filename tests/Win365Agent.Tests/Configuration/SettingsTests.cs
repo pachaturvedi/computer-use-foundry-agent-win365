@@ -68,6 +68,17 @@ public sealed class SettingsTests
         Config(values).Validate();
     }
 
+    [Theory]
+    [InlineData("key_vault_certificate")]
+    [InlineData("unknown")]
+    public void UnimplementedCredentialModesFailClosed(string mode)
+    {
+        var values = EnabledValues();
+        values["W365_BLUEPRINT_CREDENTIAL_MODE"] = mode;
+        var error = Assert.Throws<InvalidOperationException>(() => Config(values).Validate());
+        Assert.Contains("fails closed", error.Message);
+    }
+
     [Fact]
     public void MisspelledEnableFlagDoesNotSilentlyDisableDesktop() =>
         Assert.Throws<InvalidOperationException>(() => Config(new() { ["W365_ENABLED"] = "tru" }).Validate());

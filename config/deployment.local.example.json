@@ -1,0 +1,36 @@
+{
+  "foundry": {
+    "location": "eastus2",
+    "projectEndpoint": "https://example.services.ai.azure.com/api/projects/example-project",
+    "agentName": "win365-desktop-agent-dev",
+    "agentDisplayName": "Windows 365 direct-tool agent (dev)",
+    "agentDescription": "Development hosted agent for bounded Windows 365 tasks.",
+    "modelDeploymentName": "gpt-6-astra-canary",
+    "modelName": "gpt-6-astra",
+    "modelVersion": "2026-09-03",
+    "modelSkuName": "GlobalStandard",
+    "modelSkuCapacity": 100
+  },
+  "viewer": {
+    "deploy": true,
+    "imageName": "win365-sample:v2"
+  },
+  "w365": {
+    "poolDisplayName": "su-cua-test-clone",
+    "poolDescription": "Cloned from the su-cua-test pool template.",
+    "poolBillingPlanName": "w365a-billingplan",
+    "poolBillingType": "payAsYouGo",
+    "poolGeographicLocationType": "usCentral",
+    "poolRegionGroup": "usCentral",
+    "poolRegions": [
+      "centralus"
+    ],
+    "poolImageDisplayName": "Windows 11 Enterprise 25H2",
+    "poolImageId": "microsoftwindowsdesktop_windows-ent-cpc_win11-25h2-ent-cpc-m365",
+    "poolImageType": "gallery",
+    "poolOsLocale": "en-US",
+    "poolMinimumCount": 2,
+    "poolMaximumCount": 2,
+    "poolEnableSingleSignOn": false
+  }
+}

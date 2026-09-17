@@ -13,9 +13,10 @@
 | Viewer UAMI / OIDC web app | UAMI authenticates the viewer process; a separate web app authenticates the human through OIDC. |
 
 `W365_ENABLED` defaults to `false` and accepts only `true` or `false`. Bootstrap
-does not require identity, operator, model, state or OIDC configuration, and
-does not access W365/model/state credentials. Bootstrap starts before any model
-initialization. The agent exposes healthy readiness
+always pins it to `false`; successful phase-2 setup persists `true` into the
+selected azd environment. Bootstrap does not require identity, operator, model,
+state or OIDC configuration, and does not access W365/model/state credentials.
+Bootstrap starts before any model initialization. The agent exposes healthy readiness
 and a Responses 503 explaining phase 2; the viewer exposes `/health` and 503
 on other routes. `SAMPLE_LOCAL_MODE=true` is loopback-only bootstrap/offline.
 Live W365 requires a deployed identity endpoint; enabled local mode is refused.
@@ -26,24 +27,35 @@ in both agent and viewer configuration, separately from the app/client ID in
 identity must be in the same tenant (`W365_TENANT_ID`); the human OIDC tenant
 may differ. Foundry must inject `FOUNDRY_AGENT_BLUEPRINT_CLIENT_ID`, matching
 `W365_BLUEPRINT_ID`. Never set or override reserved platform variables yourself.
-Identity mode is selected by the process (agent or viewer), never by a model,
-request argument, page or user-supplied credential. There is no separate
-W365-auth mode setting. Active runtime requires shared Blob state;
+Identity mode is selected by `W365_BLUEPRINT_CREDENTIAL_MODE`, never by a model,
+request argument, page or user-supplied credential. Active runtime requires shared Blob state;
 `FileSessionStore` is only an offline-test helper.
+
+| `W365_BLUEPRINT_CREDENTIAL_MODE` | Status |
+| --- | --- |
+| `client_secret` | Implemented and validated end to end for temporary test credentials. Requires `W365_CLIENT_SECRET`. |
+| `managed_identity_federation` | Implemented and remains the default, but the tested Foundry-hosted identity cannot chain its federated token into the blueprint exchange (`AADSTS700231`). |
+| `key_vault_certificate` | Reserved for the next implementation phase. Configuration fails closed until certificate retrieval and signing are implemented and validated. |
+
+The modes are explicit and mutually exclusive. There is no fallback from one
+mode to another. In particular, a managed-identity failure never falls back to
+a secret, certificate, Azure CLI token or local user credential.
 
 ## Three-stage agent-user tokens
 
-`AgentUserTokenProvider` selects one of two deployed authentication paths:
+`AgentUserTokenProvider` uses the explicitly selected T1 path:
 
-1. **Foundry agent T1:** select the hosted instance identity with
+1. **Managed-identity T1:** select the hosted instance identity with
    `W365_AGENT_ID`, obtain a managed identity exchange assertion, and
    authenticate the blueprint using the explicitly approved FIC and
    `fmi_path=W365_AGENT_ID`. This produces blueprint T1.
-2. **Viewer T1:** select its UAMI with `AZURE_CLIENT_ID` (the UAMI's client ID)
+2. **Client-secret T1:** authenticate the blueprint with the configured
+   temporary secret, `client_credentials`, and `fmi_path=W365_AGENT_ID`.
+3. **Viewer T1:** select its UAMI with `AZURE_CLIENT_ID` (the UAMI's client ID)
    and perform the same blueprint FIC plus `fmi_path` exchange.
-3. **Both processes T2:** the agent identity (`W365_AGENT_ID`, app/client ID)
+4. **Both processes T2:** the agent identity (`W365_AGENT_ID`, app/client ID)
    uses T1 as `client_assertion` to request the exchange scope.
-4. **Both processes T3:** the agent identity requests the resource token with
+5. **Both processes T3:** the agent identity requests the resource token with
    `grant_type=user_fic`, T1 as `client_assertion`, T2 as
    `user_federated_identity_credential`, and the agent-user ID as `user_id`.
 
@@ -52,10 +64,17 @@ resource/permission purpose with a five-minute refresh margin and serialized
 refresh. No token or exchange request/response body is logged.
 
 There is **no DefaultAzureCredential (DAC) or Azure CLI fallback for W365**.
-Certificate and short-lived client-secret modes are escalation-only options
-and are not enabled by default. Ordinary Azure model/state access uses the normal
+Certificate mode is not implemented yet. Client-secret mode is an explicit,
+temporary validation option and is not enabled by default. Ordinary Azure model/state access uses the normal
 Azure credential path; an `az login` session is not an alternative W365 identity.
 No IdentityRM auxiliary token is sent.
+
+On September 17, 2026, `client_secret` mode passed a complete bounded W365
+lifecycle: blueprint T1, agent-identity T2, agent-user T3, MCP initialization,
+`StartSession`, readiness identified by the returned HTTPS `screenShareUrl`,
+fresh transport/catalog discovery, and `EndSession`. The ready catalog
+advertised only the three lifecycle tools, so `get_screen_size` was correctly
+skipped rather than invented.
 
 | Purpose | Scope |
 | --- | --- |
@@ -112,13 +131,11 @@ hosted agent identity and, when explicitly approved, uses its exact-subject FIC
 to authenticate the blueprint with `fmi_path`. This sample does not publish
 autopilot and does not require a hiring workflow.
 
-The recorded live Responses deployment accepts the caller but currently fails
-before T1 because its hosted identity cannot acquire the initial
-`api://AzureADTokenExchange/.default` assertion. No W365 MCP request or desktop
-allocation occurs. Test the actual hosting endpoint before claiming support;
-if the initial assertion is unavailable, stop without a token, secret,
-certificate, or CLI fallback. See the [validation report](VALIDATION-REPORT.md)
-for the exact tested version and result.
+The tested Foundry-hosted managed-identity path acquires the initial assertion,
+but Entra rejects using that federated token as another federated credential
+with `AADSTS700231`. The temporary client-secret mode proved the downstream
+agent-user and W365 path independently. See the
+[validation report](VALIDATION-REPORT.md) for versioned evidence.
 
 The Foundry T1 -> T2 -> T3 flow follows the public helper; narrow raw protocol
 handling is retained for the final exchanges with no bodies logged. For

@@ -12,7 +12,7 @@ Foundry-provisioned blueprint and agent identity; it does not create replacement
 | Agent 365 | Complete tenant onboarding and licensing. |
 | Windows entitlement | Windows Enterprise E3 or higher, plus Intune and Entra ID P1. |
 | Billing | Activate a W365 for Agents pay-as-you-go billing plan; the script does not buy licenses or activate billing. |
-| Pool | Create a provisioning policy **(Agents)** in Intune. Explicitly select billing plan, geography, image and capacity. Record the pool ID. |
+| Pool | Either record an existing provisioning policy **(Agents)** ID, or prepare the billing plan, geography, image and capacity values needed for the script to create one. |
 | Foundry identities | Record the discovered blueprint app/client ID and agent object/principal ID. W365, Foundry and viewer Azure identities must share the tenant. |
 | Administrator | Verify current tenant roles and consent policy for blueprint updates, agent users, grants and pool assignment. Use PIM where required. |
 | Tooling | PowerShell 7.4+ and Microsoft.Graph.Authentication. |
@@ -28,7 +28,10 @@ A task timeout is not a billing cap. Stop/delete unneeded pools in Intune.
 
 ## Bind the existing Foundry identities
 
-From the repository root, substitute the IDs returned by discovery:
+From the repository root, either substitute the IDs returned by discovery or let
+the azd wrapper discover them from the currently deployed hosted-agent version.
+
+### Direct setup with known IDs
 
 ```powershell
 Install-Module Microsoft.Graph.Authentication -Scope CurrentUser
@@ -43,11 +46,75 @@ $setup = @{
 .\scripts\Setup-W365.ps1 @setup -BillingConfirmed -UseDeviceCode
 ```
 
+### Stitched azd flow
+
+```powershell
+pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
+    -Environment "<azd-environment-name>" `
+    -AgentUserPrincipalName "foundry-w365-agent@YOUR-TENANT.onmicrosoft.com" `
+    -PoolIdOrUrl "<existing-pool-guid-or-intune-url>" `
+    -BillingConfirmed `
+    -ConfirmResourceChanges `
+    -UseDeviceCode
+```
+
+`PoolIdOrUrl` accepts either a raw pool GUID or the Intune URL that contains
+`poolId/<guid>`, including links copied from the admin center.
+
 `-WhatIf` is offline: no sign-in or network calls. A real run requires explicit
 confirmation and delegated Graph sign-in. `-BillingConfirmed` acknowledges
 your completed billing prerequisites; it does not activate billing.
 `-UseDeviceCode` is recommended in VS Code and other embedded terminals where
 WAM cannot obtain a parent window handle.
+
+For repeatable no-`PoolId` creates, store reusable pool settings in
+`config\deployment.local.json`. `Setup-W365.ps1` now reads the `w365` section
+automatically when the corresponding command-line argument is omitted.
+
+If you already have a working pool, do not hand-copy its settings. Capture them
+once from the Intune URL and persist the template automatically:
+
+```powershell
+pwsh -NoProfile -File .\scripts\Save-W365PoolTemplate.ps1 `
+    -PoolIdOrUrl "https://intune.microsoft.com/#view/Microsoft_Azure_CloudPC/CloudPCAgentPoolDetail.ReactView/poolId/8607571b-2177-462c-bd6f-b8d1dac75333" `
+    -PoolDisplayName "su-cua-test-clone" `
+    -UseDeviceCode
+```
+
+Rerun the same command whenever the source pool changes. The script updates the
+stored `w365` values in place while preserving unrelated settings in
+`config\deployment.local.json`.
+
+After that, future setup runs can omit all pool-creation arguments and only
+pass the operator-specific values such as the agent-user UPN.
+
+```json
+{
+    "w365": {
+        "poolDisplayName": "su-cua-test-clone",
+        "poolDescription": "Cloned from the su-cua-test pool template.",
+        "poolBillingPlanId": "<billing-plan-guid>",
+        "poolBillingPlanName": "w365a-billingplan",
+        "poolBillingType": "payAsYouGo",
+        "poolGeographicLocationType": "usCentral",
+        "poolRegionGroup": "usCentral",
+        "poolRegions": ["centralus"],
+        "poolImageId": "microsoftwindowsdesktop_windows-ent-cpc_win11-25h2-ent-cpc-m365",
+        "poolImageDisplayName": "Windows 11 Enterprise 25H2",
+        "poolImageType": "gallery",
+        "poolOsLocale": "en-US",
+        "poolMinimumCount": 2,
+        "poolMaximumCount": 2,
+        "poolEnableSingleSignOn": false
+    }
+}
+```
+
+`poolBillingPlanName` and `poolImageDisplayName` are operator notes only. The
+script uses `poolBillingPlanId` and `poolImageId` for the actual create call.
+The sample `poolImageId` above is the expected gallery identifier for the UI's
+"Windows 11 Enterprise 25H2" image and should be confirmed in your tenant if
+Microsoft changes gallery image naming.
 
 The script **never creates a blueprint, blueprint service principal, agent
 identity, certificate or secret**. It can add an explicitly authorized,
@@ -63,12 +130,16 @@ on the supplied existing entities under the administrator's approved permissions
 
 After preflight, setup merges resource declarations, consent and inheritance
 while preserving unrelated entries, creates or reuses the correctly parented
-agent user, and assigns it directly to the existing pool using
+agent user, creates or updates the Cloud PC agent pool when requested, and
+assigns the agent user directly using
 `cloudPcAgentPoolUserAssignment.userPrincipalId`, not through a group. Different
-inheritance policies are not taken over. Pool creation remains an explicit
-Intune step; no purchasing, geography or image choices are automated.
+inheritance policies are not taken over. Incremental reruns reuse the persisted
+`W365_POOL_ID` from the selected azd environment and patch the mutable pool
+properties instead of creating another pool.
 
-Copy these non-secret outputs to the phase-2 deployment configuration:
+`Setup-W365.ps1` writes these non-secret outputs into the currently selected azd
+environment when `azd 1.32.0+` is available. Record them for review; they are
+identifiers, not credentials.
 
 | Output | Meaning |
 | --- | --- |
@@ -77,6 +148,11 @@ Copy these non-secret outputs to the phase-2 deployment configuration:
 | `W365_AGENT_ID` | Existing agent **app/client ID**, resolved from its object ID. |
 | `W365_AGENT_OBJECT_ID` | Existing agent **object/principal ID**, supplied as `AgentIdentityId`. |
 | `W365_AGENT_USER_ID` | Agent-user object ID assigned to the pool. |
+| `W365_POOL_ID` | Agent pool ID reused or created by setup, then used for the assignment. |
+| `W365_ENABLED` | Internal phase switch set to `true` only after setup succeeds. |
+
+If automatic persistence cannot run, copy the same non-secret outputs to the
+phase-2 deployment configuration manually.
 
 App IDs and object IDs are distinct identifier types and must be resolved from
 their documented fields rather than inferred from one another. A Foundry agent
@@ -85,11 +161,10 @@ not make their API roles interchangeable. Both `W365_AGENT_ID` and
 `W365_AGENT_OBJECT_ID` are required when enabling either the Foundry agent or
 viewer. The agent-user ID is not a credential.
 
-After setting the returned values plus Blob/operator configuration, phase 2
-redeploys the **same** `win365-desktop-agent` service:
+After setup persists the returned values plus your Blob/operator configuration,
+phase 2 redeploys the **same** `win365-desktop-agent` service:
 
 ```powershell
-azd env set W365_ENABLED true
 azd ai agent doctor
 pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
     -Mode DeployAgent `

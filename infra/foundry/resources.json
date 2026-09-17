@@ -1,0 +1,169 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.47.16.16243",
+      "templateHash": "18059828614145424296"
+    }
+  },
+  "parameters": {
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]"
+    },
+    "accountName": {
+      "type": "string"
+    },
+    "projectName": {
+      "type": "string"
+    },
+    "projectDisplayName": {
+      "type": "string"
+    },
+    "projectDescription": {
+      "type": "string"
+    },
+    "modelDeploymentName": {
+      "type": "string"
+    },
+    "modelName": {
+      "type": "string"
+    },
+    "modelVersion": {
+      "type": "string"
+    },
+    "modelSkuName": {
+      "type": "string"
+    },
+    "modelSkuCapacity": {
+      "type": "int"
+    },
+    "enableDefenderForAI": {
+      "type": "bool",
+      "defaultValue": true
+    },
+    "publicNetworkAccess": {
+      "type": "string",
+      "defaultValue": "Enabled",
+      "allowedValues": [
+        "Enabled",
+        "Disabled"
+      ]
+    },
+    "storedCompletionsDisabled": {
+      "type": "bool",
+      "defaultValue": false
+    },
+    "tags": {
+      "type": "object",
+      "defaultValue": {}
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.CognitiveServices/accounts",
+      "apiVersion": "2026-05-15-preview",
+      "name": "[parameters('accountName')]",
+      "location": "[parameters('location')]",
+      "kind": "AIServices",
+      "sku": {
+        "name": "S0"
+      },
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "tags": "[parameters('tags')]",
+      "properties": {
+        "apiProperties": {},
+        "customSubDomainName": "[parameters('accountName')]",
+        "networkAcls": {
+          "defaultAction": "Allow",
+          "virtualNetworkRules": [],
+          "ipRules": []
+        },
+        "allowProjectManagement": true,
+        "defaultProject": "[parameters('projectName')]",
+        "associatedProjects": [
+          "[parameters('projectName')]"
+        ],
+        "publicNetworkAccess": "[parameters('publicNetworkAccess')]",
+        "storedCompletionsDisabled": "[parameters('storedCompletionsDisabled')]"
+      }
+    },
+    {
+      "condition": "[parameters('enableDefenderForAI')]",
+      "type": "Microsoft.CognitiveServices/accounts/defenderForAISettings",
+      "apiVersion": "2026-05-15-preview",
+      "name": "[format('{0}/{1}', parameters('accountName'), 'Default')]",
+      "properties": {
+        "state": "Enabled"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.CognitiveServices/accounts/deployments",
+      "apiVersion": "2026-05-15-preview",
+      "name": "[format('{0}/{1}', parameters('accountName'), parameters('modelDeploymentName'))]",
+      "sku": {
+        "name": "[parameters('modelSkuName')]",
+        "capacity": "[parameters('modelSkuCapacity')]"
+      },
+      "properties": {
+        "model": {
+          "format": "OpenAI",
+          "name": "[parameters('modelName')]",
+          "version": "[parameters('modelVersion')]"
+        },
+        "versionUpgradeOption": "OnceNewDefaultVersionAvailable",
+        "currentCapacity": "[parameters('modelSkuCapacity')]",
+        "raiPolicyName": "Microsoft.DefaultV2",
+        "deploymentState": "Running"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.CognitiveServices/accounts/projects",
+      "apiVersion": "2026-05-15-preview",
+      "name": "[format('{0}/{1}', parameters('accountName'), parameters('projectName'))]",
+      "location": "[parameters('location')]",
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "properties": {
+        "description": "[parameters('projectDescription')]",
+        "displayName": "[parameters('projectDisplayName')]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "accountName": {
+      "type": "string",
+      "value": "[parameters('accountName')]"
+    },
+    "projectName": {
+      "type": "string",
+      "value": "[parameters('projectName')]"
+    },
+    "projectId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('accountName'), parameters('projectName'))]"
+    },
+    "openAiEndpoint": {
+      "type": "string",
+      "value": "[format('https://{0}.openai.azure.com/', parameters('accountName'))]"
+    },
+    "projectEndpoint": {
+      "type": "string",
+      "value": "[format('https://{0}.services.ai.azure.com/api/projects/{1}', parameters('accountName'), parameters('projectName'))]"
+    }
+  }
+}
