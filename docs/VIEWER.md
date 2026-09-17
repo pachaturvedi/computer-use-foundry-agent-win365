@@ -5,11 +5,22 @@ host the model or expose an agent `/responses` endpoint in this mode.
 
 ## Bootstrap and local mode
 
-`Run-Local.ps1 -Mode viewer` binds `http://localhost:5050` and loads the same
-`.env` as the agent. `SAMPLE_LOCAL_MODE=true` remains unauthenticated and
-loopback-only, for bootstrap/offline use; **enabled local W365 is refused**.
-Live W365 needs the deployed managed identity endpoint, not CLI credentials.
-Keep the local host private; never tunnel these ports.
+Use the canonical Windows workflow from the repository root:
+
+```powershell
+pwsh -NoProfile -File .\scripts\Setup-Local.ps1
+pwsh -NoProfile -File .\scripts\Start-Local.ps1
+```
+
+`Start-Local.ps1` launches both the agent and viewer, waits for health, and
+stops both with `Ctrl+C`. The viewer defaults to `http://localhost:5050`;
+choose another port with `-ViewerPort` when needed. Logs are written under
+`.local\`.
+
+`SAMPLE_LOCAL_MODE=true` remains unauthenticated and loopback-only, for
+bootstrap/offline use; **enabled local W365 is refused**. Live W365 needs the
+deployed managed identity endpoint, not CLI credentials. Keep the local host
+private; never tunnel these ports.
 
 With `W365_ENABLED=false` (default, strictly `true`/`false`), `/health` is healthy
 and other routes return a phase-2-required 503. No OIDC, W365 or state configuration

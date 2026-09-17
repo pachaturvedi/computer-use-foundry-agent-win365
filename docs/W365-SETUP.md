@@ -15,7 +15,7 @@ Foundry-provisioned blueprint and agent identity; it does not create replacement
 | Pool | Create a provisioning policy **(Agents)** in Intune. Explicitly select billing plan, geography, image and capacity. Record the pool ID. |
 | Foundry identities | Record the discovered blueprint app/client ID and agent object/principal ID. W365, Foundry and viewer Azure identities must share the tenant. |
 | Administrator | Verify current tenant roles and consent policy for blueprint updates, agent users, grants and pool assignment. Use PIM where required. |
-| Tooling | PowerShell 7.5+ and Microsoft.Graph.Authentication. |
+| Tooling | PowerShell 7.4+ and Microsoft.Graph.Authentication. |
 | Optional viewer | Existing deployed UAMI, explicit administrator approval for blueprint federation, and the SDK URL/frame origins from W365 onboarding. |
 
 W365 for Agents does not require a per-user Windows 365 Cloud PC seat for this
@@ -40,15 +40,18 @@ $setup = @{
     PoolId = "<existing-agent-pool-GUID>"
 }
 .\scripts\Setup-W365.ps1 @setup -WhatIf
-.\scripts\Setup-W365.ps1 @setup -BillingConfirmed
+.\scripts\Setup-W365.ps1 @setup -BillingConfirmed -UseDeviceCode
 ```
 
 `-WhatIf` is offline: no sign-in or network calls. A real run requires explicit
 confirmation and delegated Graph sign-in. `-BillingConfirmed` acknowledges
 your completed billing prerequisites; it does not activate billing.
+`-UseDeviceCode` is recommended in VS Code and other embedded terminals where
+WAM cannot obtain a parent window handle.
 
 The script **never creates a blueprint, blueprint service principal, agent
-identity, certificate or secret**. It finds the exact supplied existing entities,
+identity, certificate or secret**. It can add an explicitly authorized,
+exact-subject FIC to the existing blueprint. It finds the exact supplied entities,
 resolves the agent app ID from the supplied object ID, and validates the agent's
 blueprint parent and any existing agent user's parent **before any mutations**.
 Missing entities or a mismatched parent stop setup. Display-name matches are not
@@ -75,20 +78,45 @@ Copy these non-secret outputs to the phase-2 deployment configuration:
 | `W365_AGENT_OBJECT_ID` | Existing agent **object/principal ID**, supplied as `AgentIdentityId`. |
 | `W365_AGENT_USER_ID` | Agent-user object ID assigned to the pool. |
 
-App IDs and object IDs are distinct identifiers and must not be substituted
-for one another. Both `W365_AGENT_ID` and `W365_AGENT_OBJECT_ID` are required
-when enabling either the Foundry agent or viewer. The agent-user ID is not a credential.
+App IDs and object IDs are distinct identifier types and must be resolved from
+their documented fields rather than inferred from one another. A Foundry agent
+identity may currently expose the same GUID value for both fields; that does
+not make their API roles interchangeable. Both `W365_AGENT_ID` and
+`W365_AGENT_OBJECT_ID` are required when enabling either the Foundry agent or
+viewer. The agent-user ID is not a credential.
+
+After setting the returned values plus Blob/operator configuration, phase 2
+redeploys the **same** `win365-desktop-agent` service:
+
+```powershell
+azd env set W365_ENABLED true
+azd ai agent doctor
+pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
+    -Mode DeployAgent `
+    -ConfirmResourceChanges
+```
+
+The deployment creates a new immutable agent version under the existing agent
+name. Rediscover that exact version and reject unexpected blueprint or instance
+identity replacement before enabling desktop tasks.
 
 ## Offline setup tests
 
-From the repository root, run the mocked regression scripts with PowerShell 7.5+:
+The canonical Windows setup runs the build, .NET tests, and both mocked
+regression suites:
+
+```powershell
+pwsh -NoProfile -File .\scripts\Setup-Local.ps1
+```
+
+To rerun only the setup/discovery regressions:
 
 ```powershell
 pwsh -NoProfile -File .\scripts\Test-SetupOffline.ps1
 pwsh -NoProfile -File .\scripts\Test-DiscoveryOffline.ps1
 ```
 
-These scripts mock Graph and Azure CLI respectively: they do not sign in,
+The regression scripts mock Graph and Azure CLI respectively: they do not sign in,
 call a tenant, allocate a Cloud PC or incur W365 charges. The setup tests cover
 existing identity reuse, distinct client/object IDs, pre-mutation parent/policy
 rejection, preservation of unrelated configuration and optional idempotent
@@ -120,6 +148,31 @@ Leave the viewer disabled instead; the agent may return unavailable viewer
 links. Configure only an approved viewer and do not attempt human-handoff tasks
 without one.
 
+## Hosted runtime federation
+
+Foundry Responses hosting may expose the agent's instance identity but not a
+direct blueprint assertion. After a live probe confirms that
+`W365_AGENT_OBJECT_ID` can acquire
+`api://AzureADTokenExchange/.default`, explicitly authorize the exact instance
+identity as a blueprint FIC:
+
+```powershell
+$setup.HostedRuntimeIdentityObjectId = "<W365_AGENT_OBJECT_ID>"
+.\scripts\Setup-W365.ps1 @setup -AuthorizeHostedRuntimeFederation -WhatIf
+.\scripts\Setup-W365.ps1 @setup `
+    -AuthorizeHostedRuntimeFederation `
+    -BillingConfirmed `
+    -UseDeviceCode
+```
+
+The script requires the hosted subject to exactly equal `AgentIdentityId`.
+It uses the tenant issuer and only `api://AzureADTokenExchange` as audience.
+An existing matching FIC is reused; a conflicting issuer, subject, audience,
+or duplicate match fails before mutation. This trust can authenticate the
+blueprint and therefore can affect sibling agents under a shared blueprint.
+Use it only for the exact Foundry instance identity after the live assertion
+probe succeeds.
+
 ## Setup permissions (delegated, not runtime)
 
 | Graph scope | Purpose |
@@ -131,7 +184,7 @@ without one.
 | `AgentIdentity.Read.All` | Read existing agent identity and validate parent. |
 | `AgentIdUser.ReadWrite.All` | Create/find agent user and validate parent. |
 | `CloudPC.ReadWrite.All` | Pool validation and assignment. |
-| `AgentIdentityBlueprint.AddRemoveCreds.All` | **Optional FIC only**, with explicit viewer federation authorization. |
+| `AgentIdentityBlueprint.AddRemoveCreds.All` | **Optional FIC only**, with explicit hosted-runtime or viewer federation authorization. |
 
 No `User.Read`, blueprint, blueprint-principal or agent-identity creation scopes
 are required.

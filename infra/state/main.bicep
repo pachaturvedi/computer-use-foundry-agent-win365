@@ -1,0 +1,46 @@
+targetScope = 'subscription'
+
+param environmentName string
+param location string
+@allowed([
+  'true'
+  'false'
+])
+param deployState string = 'false'
+@minLength(2)
+@maxLength(24)
+param resourcePrefix string
+param stateResourceGroupName string = '${resourcePrefix}-state-rg'
+@minLength(36)
+@maxLength(36)
+param agentPrincipalId string = '00000000-0000-0000-0000-000000000000'
+
+var stateEnabled = toLower(deployState) == 'true'
+var tags = {
+  'azd-env-name': environmentName
+  component: 'state'
+  workload: 'win365-foundry-sample'
+  'managed-by': 'azd'
+}
+
+resource stateResourceGroup 'Microsoft.Resources/resourceGroups@2023-07-01' = if (stateEnabled) {
+  name: stateResourceGroupName
+  location: location
+  tags: tags
+}
+
+module storage './storage.bicep' = if (stateEnabled) {
+  name: 'state-storage'
+  scope: stateResourceGroup
+  params: {
+    name: resourcePrefix
+    location: location
+    tags: tags
+    agentPrincipalId: agentPrincipalId
+  }
+}
+
+output STATE_RESOURCE_GROUP_NAME string = stateEnabled ? stateResourceGroup.name : ''
+output STATE_STORAGE_ACCOUNT_NAME string = stateEnabled ? storage!.outputs.storageAccountName : ''
+output STATE_CONTAINER_NAME string = stateEnabled ? storage!.outputs.containerName : ''
+output SESSION_BLOB_URI string = stateEnabled ? storage!.outputs.sessionBlobUri : ''

@@ -1,4 +1,4 @@
-#Requires -Version 7.5
+#Requires -Version 7.4
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
 param(
     [Parameter(Mandatory)][guid]$TenantId,
@@ -6,17 +6,27 @@ param(
     [Parameter(Mandatory)][guid]$AgentIdentityId,
     [Parameter(Mandatory)][ValidatePattern('^[a-zA-Z0-9._+-]+@[a-zA-Z0-9.-]+$')][string]$AgentUserPrincipalName,
     [Parameter(Mandatory)][guid]$PoolId,
+    [guid]$HostedRuntimeIdentityObjectId = [guid]::Empty,
+    [switch]$AuthorizeHostedRuntimeFederation,
     [guid]$ViewerManagedIdentityObjectId = [guid]::Empty,
     [switch]$AuthorizeViewerFederation,
-    [switch]$BillingConfirmed
+    [switch]$BillingConfirmed,
+    [switch]$UseDeviceCode
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 if ($WhatIfPreference) {
     Write-Output "Plan only; no sign-in or network calls. Validate existing Foundry blueprint $BlueprintId and agent principal $AgentIdentityId in tenant $TenantId."
     Write-Output "Reconcile permissions and agent user '$AgentUserPrincipalName'; assign to existing pool $PoolId. No blueprint, agent identity, certificate or secret will be created."
+    if ($AuthorizeHostedRuntimeFederation) { Write-Output "Explicitly trust hosted runtime identity $HostedRuntimeIdentityObjectId on the existing blueprint. This trust can impersonate sibling agents." }
     if ($AuthorizeViewerFederation) { Write-Output "Explicitly trust viewer managed identity $ViewerManagedIdentityObjectId on the existing blueprint. This trust can impersonate sibling agents, not only screen sharing." }
     return
+}
+if ($AuthorizeHostedRuntimeFederation.IsPresent -ne ($HostedRuntimeIdentityObjectId -ne [guid]::Empty)) {
+    throw 'Supply both -HostedRuntimeIdentityObjectId and -AuthorizeHostedRuntimeFederation, or neither. Federation grants blueprint-wide impersonation capability.'
+}
+if ($AuthorizeHostedRuntimeFederation -and $HostedRuntimeIdentityObjectId -ne $AgentIdentityId) {
+    throw 'The hosted runtime federation subject must exactly match the supplied Foundry agent identity object ID.'
 }
 if ($AuthorizeViewerFederation.IsPresent -ne ($ViewerManagedIdentityObjectId -ne [guid]::Empty)) {
     throw 'Supply both -ViewerManagedIdentityObjectId and -AuthorizeViewerFederation, or neither. Federation grants blueprint-wide impersonation capability.'
@@ -30,8 +40,19 @@ $scopes = @(
     'AgentIdentity.Read.All', 'AgentIdUser.ReadWrite.All',
     'DelegatedPermissionGrant.ReadWrite.All', 'CloudPC.ReadWrite.All'
 )
-if ($AuthorizeViewerFederation) { $scopes += 'AgentIdentityBlueprint.AddRemoveCreds.All' }
-Connect-MgGraph -TenantId $TenantId -Scopes $scopes -ContextScope Process -NoWelcome
+if ($AuthorizeHostedRuntimeFederation -or $AuthorizeViewerFederation) {
+    $scopes += 'AgentIdentityBlueprint.AddRemoveCreds.All'
+}
+$connectParameters = @{
+    TenantId = $TenantId
+    Scopes = $scopes
+    ContextScope = 'Process'
+    NoWelcome = $true
+}
+if ($UseDeviceCode) {
+    $connectParameters.UseDeviceCode = $true
+}
+Connect-MgGraph @connectParameters
 $context = Get-MgContext
 if ($context.TenantId -ne $TenantId.ToString() -or $context.AuthType -ne 'Delegated') {
     throw 'A delegated Graph connection in the requested tenant is required.'
@@ -42,9 +63,12 @@ if ($missing.Count) { throw "Missing Graph scopes: $($missing -join ', ')." }
 function Graph([string]$Method, [string]$Path, $Body = $null) {
     $uri = if ($Path.StartsWith('https://')) { $Path } else { "https://graph.microsoft.com/$Path" }
     if (!([uri]$uri).Host.Equals('graph.microsoft.com')) { throw 'Graph pagination returned an unexpected origin.' }
-    $args = @{ Method = $Method; Uri = $uri; OutputType = 'Hashtable'; Headers = @{ 'OData-Version' = '4.0' } }
-    if ($null -ne $Body) { $args.Body = ConvertTo-Json $Body -Depth 30 -Compress; $args.ContentType = 'application/json' }
-    Invoke-MgGraphRequest @args
+    $requestParameters = @{ Method = $Method; Uri = $uri; OutputType = 'Hashtable'; Headers = @{ 'OData-Version' = '4.0' } }
+    if ($null -ne $Body) {
+        $requestParameters.Body = ConvertTo-Json $Body -Depth 30 -Compress
+        $requestParameters.ContentType = 'application/json'
+    }
+    Invoke-MgGraphRequest @requestParameters
 }
 function List([string]$Path) {
     $seen = [Collections.Generic.HashSet[string]]::new()
@@ -87,23 +111,51 @@ if (!$principal -or $principal['@odata.type'] -ne '#microsoft.graph.agentIdentit
 }
 $agentUser = SingleOrNone (List "beta/users/microsoft.graph.agentUser?`$filter=userPrincipalName eq '$AgentUserPrincipalName'") 'agent user'
 if ($agentUser -and $agentUser.identityParentId -ne $agent.id) { throw 'Existing agent user belongs to a different agent identity. Use a new UPN; never reparent implicitly.' }
-$federation = $null
+$federations = @()
+$ficPath = "$bpPath/microsoft.graph.agentIdentityBlueprint/federatedIdentityCredentials"
+$existingFics = if ($AuthorizeHostedRuntimeFederation -or $AuthorizeViewerFederation) {
+    @(List $ficPath)
+} else {
+    @()
+}
+if ($AuthorizeHostedRuntimeFederation) {
+    $ficName = "w365-hosted-$HostedRuntimeIdentityObjectId"
+    $federation = @{
+        name = $ficName; issuer = "https://login.microsoftonline.com/$TenantId/v2.0"
+        subject = $HostedRuntimeIdentityObjectId.ToString(); audiences = @('api://AzureADTokenExchange')
+    }
+    $existingFic = SingleOrNone @($existingFics | Where-Object {
+        $_.name -eq $ficName -or $_.subject -eq $federation.subject
+    }) 'hosted runtime federation'
+    if ($existingFic) {
+        if ($existingFic.issuer -ne $federation.issuer -or $existingFic.subject -ne $federation.subject -or
+            @($existingFic.audiences).Count -ne 1 -or $existingFic.audiences[0] -ne 'api://AzureADTokenExchange') {
+            throw 'Existing hosted runtime federation differs. Review manually; no trust will be overwritten.'
+        }
+    } else {
+        $federations += $federation
+    }
+}
 if ($AuthorizeViewerFederation) {
     $viewer = Graph GET "v1.0/servicePrincipals/$ViewerManagedIdentityObjectId"
     if ($viewer.servicePrincipalType -ne 'ManagedIdentity') { throw 'Viewer principal is not a managed identity in this tenant.' }
-    $ficPath = "$bpPath/federatedIdentityCredentials"
     $ficName = "w365-viewer-$ViewerManagedIdentityObjectId"
     $federation = @{
         name = $ficName; issuer = "https://login.microsoftonline.com/$TenantId/v2.0"
         subject = $ViewerManagedIdentityObjectId.ToString(); audiences = @('api://AzureADTokenExchange')
     }
-    $existingFic = SingleOrNone @(List $ficPath | Where-Object { $_.name -eq $ficName -or $_.subject -eq $federation.subject }) 'viewer federation'
+    $existingFic = SingleOrNone @($existingFics | Where-Object {
+        $_.name -eq $ficName -or $_.subject -eq $federation.subject
+    }) 'viewer federation'
     if ($existingFic) {
         if ($existingFic.issuer -ne $federation.issuer -or $existingFic.subject -ne $federation.subject -or
             @($existingFic.audiences).Count -ne 1 -or $existingFic.audiences[0] -ne 'api://AzureADTokenExchange') {
             throw 'Existing viewer federation differs. Review manually; no trust will be overwritten.'
         }
         $federation = $null
+    }
+    if ($federation) {
+        $federations += $federation
     }
 }
 
@@ -157,7 +209,7 @@ foreach ($resource in $resources) {
     }
     if (!$resource.ExistingInheritance) { Graph POST $inheritPath $inheritance | Out-Null }
 }
-if ($federation) { Graph POST $ficPath $federation | Out-Null }
+foreach ($federation in $federations) { Graph POST $ficPath $federation | Out-Null }
 Write-Output "Existing agent principal ID: $($agent.id)"
 if (!$agentUser) {
     $agentUser = Graph POST 'beta/users/microsoft.graph.agentUser' @{
@@ -178,4 +230,5 @@ Write-Output "W365_BLUEPRINT_ID=$($blueprint.appId)"
 Write-Output "W365_AGENT_ID=$($agent.appId)"
 Write-Output "W365_AGENT_OBJECT_ID=$($agent.id)"
 Write-Output "W365_AGENT_USER_ID=$($agentUser.id)"
+Write-Output "W365_POOL_ID=$PoolId"
 Write-Output 'Setup requests completed. Check pool readiness in Intune before running the sample.'

@@ -1,6 +1,11 @@
 #Requires -Version 7.4
 [CmdletBinding()]
-param([ValidateSet('agent', 'viewer')][string]$Mode = 'agent', [string]$EnvFile = '.env')
+param(
+    [ValidateSet('agent', 'viewer')][string]$Mode = 'agent',
+    [string]$EnvFile = '.env',
+    [ValidateRange(1, 65535)][int]$AgentPort = 8088,
+    [ValidateRange(1, 65535)][int]$ViewerPort = 5050
+)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $path = (Resolve-Path -LiteralPath $EnvFile).Path
@@ -22,7 +27,23 @@ try {
         if (!$previous.ContainsKey($key)) { $previous[$key] = [Environment]::GetEnvironmentVariable($key) }
         [Environment]::SetEnvironmentVariable($key, 'Development')
     }
-    $args = @('run', '--project', "$root\src\Win365Agent\Win365Agent.csproj", '--no-launch-profile')
+    foreach ($setting in @{
+        LOCAL_AGENT_PORT = $AgentPort.ToString()
+        LOCAL_VIEWER_PORT = $ViewerPort.ToString()
+    }.GetEnumerator()) {
+        if (!$previous.ContainsKey($setting.Key)) {
+            $previous[$setting.Key] = [Environment]::GetEnvironmentVariable($setting.Key)
+        }
+        [Environment]::SetEnvironmentVariable($setting.Key, $setting.Value)
+    }
+    $args = @(
+        'run',
+        '--project', "$root\src\Win365Agent\Win365Agent.csproj",
+        '--configuration', 'Release',
+        '--no-build',
+        '--no-restore',
+        '--no-launch-profile'
+    )
     if ($Mode -eq 'viewer') { $args += @('--', '--viewer') }
     & dotnet @args
     if ($LASTEXITCODE -ne 0) { throw "Sample process exited with code $LASTEXITCODE." }

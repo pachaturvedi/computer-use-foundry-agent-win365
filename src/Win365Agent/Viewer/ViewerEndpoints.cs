@@ -5,8 +5,14 @@ using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 
 namespace Win365Agent;
 
-public static class Viewer
+/// <summary>Configures and maps the authenticated operator UI for viewing and controlling desktop sessions.</summary>
+public static class ViewerEndpoints
 {
+    /// <summary>
+    /// Registers antiforgery, authorization, and non-local OpenID Connect authentication services for the viewer.
+    /// </summary>
+    /// <param name="builder">The web application builder.</param>
+    /// <param name="settings">The viewer and operator identity configuration.</param>
     public static void Configure(WebApplicationBuilder builder, Settings settings)
     {
         builder.Services.AddAntiforgery(o =>
@@ -55,13 +61,23 @@ public static class Viewer
             policy.RequireClaim("oid", settings.Required("OPERATOR_OBJECT_ID"));
         }));
     }
+    /// <summary>
+    /// Adds viewer security headers and maps health, static asset, session display, and operator action endpoints.
+    /// </summary>
+    /// <param name="app">The configured web application.</param>
+    /// <param name="settings">The screen-sharing, viewer, and operator configuration.</param>
+    /// <exception cref="InvalidOperationException">The configured screen-sharing frame origins are invalid.</exception>
     public static void Map(WebApplication app, Settings settings)
     {
         var sdk = settings.Https("SCREENSHARE_SDK_URL");
         var frames = settings.Required("SCREENSHARE_FRAME_ORIGINS").Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        // Require exact origins before interpolating them into CSP; paths or malformed values could weaken the policy.
         if (frames.Length == 0 || frames.Any(f => !Uri.TryCreate(f, UriKind.Absolute, out var u) ||
             u.Scheme != "https" || u.GetLeftPart(UriPartial.Authority) != f))
+        {
             throw new InvalidOperationException("SCREENSHARE_FRAME_ORIGINS must list exact HTTPS origins from onboarding.");
+        }
+
         app.Use(async (ctx, next) =>
         {
             ctx.Response.Headers.CacheControl = "no-store";
@@ -71,9 +87,13 @@ public static class Viewer
                 $"default-src 'none'; script-src 'self' {sdk.GetLeftPart(UriPartial.Authority)}; style-src 'self'; " +
                 $"frame-src {string.Join(' ', frames)}; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
             if (settings.Local)
+            {
+                // ApplicationHosting confines local mode to loopback, so synthetic claims cannot authorize remote clients.
                 ctx.User = new ClaimsPrincipal(new ClaimsIdentity([
                     new Claim("tid", settings.Required("OPERATOR_TENANT_ID")),
                     new Claim("oid", settings.Required("OPERATOR_OBJECT_ID"))], "loopback-development"));
+            }
+
             await next(ctx);
         });
         if (!settings.Local) { app.UseHsts(); app.UseAuthentication(); }
@@ -84,13 +104,20 @@ public static class Viewer
         {
             await using var tx = await store.OpenAsync(ctx.RequestAborted);
             if (tx.State is not { } state || !Owns(state, state.LinkId, ctx.User))
+            {
                 return Results.Content("No active desktop task. Start a fresh agent task, then refresh this page.", "text/plain");
+            }
+
             return Results.Redirect($"/view/{state.LinkId}");
         });
         group.MapGet("/view/{id}", async (string id, ISessionStore store, HttpContext ctx) =>
         {
             await using var tx = await store.OpenAsync(ctx.RequestAborted);
-            if (!Owns(tx.State, id, ctx.User)) return Results.NotFound();
+            if (!Owns(tx.State, id, ctx.User))
+            {
+                return Results.NotFound();
+            }
+
             return Results.Content(File.ReadAllText(Path.Combine(app.Environment.ContentRootPath, "wwwroot", "viewer.html")),
                 "text/html");
         });
@@ -99,39 +126,68 @@ public static class Viewer
         group.MapGet("/api/{id}", async (string id, ISessionStore store, HttpContext ctx, IAntiforgery csrf) =>
         {
             await using var tx = await store.OpenAsync(ctx.RequestAborted);
-            if (!Owns(tx.State, id, ctx.User)) return Results.NotFound();
-            return Results.Ok(new { phase = tx.State!.Phase, expiresAt = tx.State.ExpiresAt,
-                sdkUrl = sdk.ToString(), csrfToken = csrf.GetAndStoreTokens(ctx).RequestToken });
+            if (!Owns(tx.State, id, ctx.User))
+            {
+                return Results.NotFound();
+            }
+
+            return Results.Ok(new
+            {
+                phase = tx.State!.Phase,
+                expiresAt = tx.State.ExpiresAt,
+                sdkUrl = sdk.ToString(),
+                csrfToken = csrf.GetAndStoreTokens(ctx).RequestToken
+            });
         });
         group.MapPost("/api/{id}/{operation}", async (string id, string operation, ISessionStore store,
-            IAgentUserTokens tokens, HttpContext ctx, IAntiforgery csrf) =>
+            IAgentUserTokenProvider tokens, HttpContext ctx, IAntiforgery csrf) =>
         {
             try { await csrf.ValidateRequestAsync(ctx); }
             catch (AntiforgeryValidationException) { return Results.BadRequest(new { error = "Invalid anti-forgery token." }); }
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ctx.RequestAborted);
             timeout.CancelAfter(TimeSpan.FromSeconds(65));
             await using var tx = await store.OpenAsync(timeout.Token);
-            if (!Owns(tx.State, id, ctx.User)) return Results.NotFound();
+            if (!Owns(tx.State, id, ctx.User))
+            {
+                return Results.NotFound();
+            }
+
             var state = tx.State!;
-            if (state.OperationInFlight || state.Phase is not ("Active" or "Paused"))
+            if (state.OperationInFlight || state.Phase is not (DesktopSessionPhase.Active or DesktopSessionPhase.Paused))
+            {
                 return Results.Conflict(new { error = "Session is not ready, or needs recovery." });
+            }
+
             if (operation == "resume")
             {
-                state.Phase = "Active";
+                state.Phase = DesktopSessionPhase.Active;
                 await tx.SaveAsync(timeout.Token);
                 return Results.Ok(new { phase = state.Phase });
             }
             if (operation is not ("view" or "control" or "refresh-control"))
+            {
                 return Results.BadRequest(new { error = "Unknown operation." });
+            }
+
             if (operation == "control")
             {
-                state.Phase = "Paused";
+                state.Phase = DesktopSessionPhase.Paused;
                 await tx.SaveAsync(timeout.Token); // Same exclusive lock as remote actions: pause BEFORE issuing a control token.
             }
-            if (operation == "refresh-control" && state.Phase != "Paused")
+            if (operation == "refresh-control" && state.Phase != DesktopSessionPhase.Paused)
+            {
                 return Results.Conflict(new { error = "Control must be paused before token refresh." });
-            if (string.IsNullOrWhiteSpace(state.SessionLink)) return Results.Conflict(new { error = "W365 did not provide a screen-share link." });
-            var token = await tokens.GetAsync(operation == "view" ? AgentUserTokens.AriView : AgentUserTokens.Ari, timeout.Token);
+            }
+
+            if (string.IsNullOrWhiteSpace(state.SessionLink))
+            {
+                return Results.Conflict(new { error = "W365 did not provide a screen-share link." });
+            }
+
+            var token = await tokens.GetAsync(
+                // Viewing receives a read-only scope; control and refresh require the broader desktop scope.
+                operation == "view" ? AgentUserTokenProvider.AriView : AgentUserTokenProvider.Ari,
+                timeout.Token);
             return Results.Ok(new { sessionLink = state.SessionLink, token = token.Token, expiresAt = token.ExpiresOn });
         });
     }

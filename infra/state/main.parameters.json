@@ -1,0 +1,12 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environmentName": { "value": "${AZURE_ENV_NAME}" },
+    "location": { "value": "${AZURE_LOCATION}" },
+    "deployState": { "value": "${DEPLOY_STATE}" },
+    "resourcePrefix": { "value": "${RESOURCE_PREFIX}" },
+    "stateResourceGroupName": { "value": "${STATE_RESOURCE_GROUP_NAME}" },
+    "agentPrincipalId": { "value": "${STATE_AGENT_PRINCIPAL_ID}" }
+  }
+}

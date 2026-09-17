@@ -1,14 +1,32 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
 name: computer-use-foundry-agent-win365
 requiredVersions:
-  azd: '>=1.27.1'
+  azd: '>=1.32.0'
   extensions:
-    azure.ai.agents: '>=1.0.0-beta.9'
+    azure.ai.agents: '>=1.0.0-beta.15'
+    azure.ai.projects: '>=1.0.0-beta.10'
 services:
   ai-project:
     host: azure.ai.project
+    endpoint: ${FOUNDRY_PROJECT_ENDPOINT:-}
+    deployments:
+      - name: gpt-6-astra
+        model:
+          format: OpenAI
+          name: gpt-6-astra
+          version: '2026-09-03'
+        sku:
+          name: GlobalStandard
+          capacity: 50
   win365-desktop-agent:
     host: azure.ai.agent
+    metadata:
+      tags:
+        - AI Agent Hosting
+        - Responses Protocol
+        - Agent Framework
+        - Windows 365
+        - .NET
     project: src/Win365Agent
     language: csharp
     codeConfiguration:
@@ -26,12 +44,14 @@ services:
     env:
       SAMPLE_LOCAL_MODE: 'false'
       W365_ENABLED: ${W365_ENABLED:-false}
-      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
+      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${AZURE_AI_MODEL_DEPLOYMENT_NAME:-gpt-6-astra}
       W365_TENANT_ID: ${W365_TENANT_ID:-}
       W365_BLUEPRINT_ID: ${W365_BLUEPRINT_ID:-}
       W365_AGENT_ID: ${W365_AGENT_ID:-}
       W365_AGENT_OBJECT_ID: ${W365_AGENT_OBJECT_ID:-}
       W365_AGENT_USER_ID: ${W365_AGENT_USER_ID:-}
+      W365_BLUEPRINT_CREDENTIAL_MODE: ${W365_BLUEPRINT_CREDENTIAL_MODE:-managed_identity_federation}
+      W365_CLIENT_SECRET: ${W365_CLIENT_SECRET:-}
       SESSION_BLOB_URI: ${SESSION_BLOB_URI:-}
       OPERATOR_TENANT_ID: ${OPERATOR_TENANT_ID:-}
       OPERATOR_OBJECT_ID: ${OPERATOR_OBJECT_ID:-}
@@ -42,4 +62,24 @@ services:
         cpu: '1'
         memory: 2Gi
 infra:
-  provider: microsoft.foundry
+  layers:
+    - name: foundry
+      provider: microsoft.foundry
+      path: ./infra/foundry
+    - name: state
+      provider: bicep
+      path: ./infra/state
+      dependsOn:
+        - foundry
+    - name: viewer
+      provider: bicep
+      path: ./infra/viewer
+      dependsOn:
+        - foundry
+hooks:
+  postup:
+    windows:
+      shell: pwsh
+      run: ./scripts/Deploy-ViewerBootstrap.ps1
+      interactive: false
+      continueOnError: false

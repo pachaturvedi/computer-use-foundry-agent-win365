@@ -13,6 +13,7 @@ jobs:
         with:
           dotnet-version: 10.0.x
       - run: dotnet restore Win365FoundrySample.slnx
+      - run: dotnet format Win365FoundrySample.slnx --verify-no-changes --no-restore --verbosity minimal
       - run: dotnet test Win365FoundrySample.slnx -c Release --no-restore
       - name: Parse PowerShell and exercise offline setup plan
         shell: pwsh
@@ -27,3 +28,20 @@ jobs:
           ./scripts/Setup-W365.ps1 -TenantId ([guid]::Empty) -BlueprintId ([guid]::Empty) -AgentIdentityId ([guid]::Empty) -AgentUserPrincipalName agent@example.com -PoolId ([guid]::Empty) -WhatIf
           ./scripts/Test-SetupOffline.ps1
           ./scripts/Test-DiscoveryOffline.ps1
+  windows-quickstart:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Install azd
+        uses: Azure/setup-azd@v2
+      - name: Run the documented Windows setup
+        shell: pwsh
+        run: ./scripts/Setup-Local.ps1
+      - name: Validate azd and Foundry extension requirements
+        shell: pwsh
+        run: |
+          azd ext install microsoft.foundry
+          ./scripts/Test-AzdPrerequisites.ps1

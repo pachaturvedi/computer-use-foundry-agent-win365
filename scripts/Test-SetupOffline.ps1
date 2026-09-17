@@ -1,4 +1,4 @@
-#Requires -Version 7.5
+#Requires -Version 7.4
 # All endpoints are mocked. Unexpected calls fail, including identity/credential creation.
 [CmdletBinding()]
 param()
@@ -99,11 +99,16 @@ try {
         if ($script:ledger.Blueprint.keyCredentials[0] -ne 'untouched-key' -or
             'unrelated-resource' -notin $script:ledger.Blueprint.requiredResourceAccess.resourceAppId) { throw 'Unrelated configuration was modified.' }
     }
+    $setupArgs.HostedRuntimeIdentityObjectId = '22222222-2222-2222-2222-222222222222'
+    $setupArgs.AuthorizeHostedRuntimeFederation = $true
+    & "$PSScriptRoot\Setup-W365.ps1" @setupArgs | Out-Null
+    & "$PSScriptRoot\Setup-W365.ps1" @setupArgs | Out-Null
+    & $module { if ($script:ledger.Fics.Count -ne 1 -or $script:ledger.Creates -ne 9) { throw 'Hosted federation was duplicated.' } }
     $setupArgs.ViewerManagedIdentityObjectId = '44444444-4444-4444-4444-444444444444'
     $setupArgs.AuthorizeViewerFederation = $true
     & "$PSScriptRoot\Setup-W365.ps1" @setupArgs | Out-Null
     & "$PSScriptRoot\Setup-W365.ps1" @setupArgs | Out-Null
-    & $module { if ($script:ledger.Fics.Count -ne 1 -or $script:ledger.Creates -ne 9) { throw 'Viewer federation was duplicated.' } }
+    & $module { if ($script:ledger.Fics.Count -ne 2 -or $script:ledger.Creates -ne 10) { throw 'Viewer federation was duplicated.' } }
     foreach ($scenario in @('agent-parent', 'user-parent', 'missing-blueprint', 'missing-principal', 'fic-mismatch', 'inheritance-mismatch')) {
         $saved = & $module { $script:ledger | ConvertTo-Json -Depth 30 }
         $before = & $module { $script:ledger.Writes }
@@ -124,6 +129,6 @@ try {
         if (!$rejected -or (& $module { $script:ledger.Writes }) -ne $before) { throw "$scenario was not rejected before mutations." }
         & $module { param($saved) $script:ledger = $saved | ConvertFrom-Json -AsHashtable } $saved
     }
-    Write-Output 'Offline setup: existing identity reuse, distinct client/object IDs, parent preflight, preserved configuration and optional idempotent viewer federation passed.'
+    Write-Output 'Offline setup: existing identity reuse, distinct client/object IDs, parent preflight, preserved configuration and optional idempotent hosted/viewer federation passed.'
 }
 finally { Remove-Module Microsoft.Graph.Authentication }

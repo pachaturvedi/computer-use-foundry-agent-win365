@@ -33,16 +33,14 @@ W365-auth mode setting. Active runtime requires shared Blob state;
 
 ## Three-stage agent-user tokens
 
-`AgentUserTokens.cs` selects one of two deployed authentication paths:
+`AgentUserTokenProvider` selects one of two deployed authentication paths:
 
-1. **Foundry agent T1:** select `ManagedIdentityCredential` using the blueprint
-   client ID and request `api://AzureADTokenExchange/.default` from the
-   platform identity endpoint. This is blueprint T1, following the public
-   [AgentTokenHelper reference](https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/csharp/foundry-autopilot-agent/src/hello_world_a365_agent/Services/AgentTokenHelper.cs).
-2. **Viewer T1:** select its UAMI with `AZURE_CLIENT_ID` (the UAMI's client ID),
-   obtain a managed identity exchange token, and authenticate the blueprint
-   using the explicitly approved federated identity credential (FIC) and
-   `fmi_path` targeting the agent. This produces blueprint T1.
+1. **Foundry agent T1:** select the hosted instance identity with
+   `W365_AGENT_ID`, obtain a managed identity exchange assertion, and
+   authenticate the blueprint using the explicitly approved FIC and
+   `fmi_path=W365_AGENT_ID`. This produces blueprint T1.
+2. **Viewer T1:** select its UAMI with `AZURE_CLIENT_ID` (the UAMI's client ID)
+   and perform the same blueprint FIC plus `fmi_path` exchange.
 3. **Both processes T2:** the agent identity (`W365_AGENT_ID`, app/client ID)
    uses T1 as `client_assertion` to request the exchange scope.
 4. **Both processes T3:** the agent identity requests the resource token with
@@ -53,8 +51,9 @@ Only T3 is sent to ATG/W365 or ARI. Tokens remain in memory and are cached by
 resource/permission purpose with a five-minute refresh margin and serialized
 refresh. No token or exchange request/response body is logged.
 
-There is **no DefaultAzureCredential (DAC), Azure CLI, certificate or secret
-fallback for W365**. Ordinary Azure model/state access still uses the normal
+There is **no DefaultAzureCredential (DAC) or Azure CLI fallback for W365**.
+Certificate and short-lived client-secret modes are escalation-only options
+and are not enabled by default. Ordinary Azure model/state access uses the normal
 Azure credential path; an `az login` session is not an alternative W365 identity.
 No IdentityRM auxiliary token is sent.
 
@@ -64,7 +63,13 @@ No IdentityRM auxiliary token is sent.
 | Watch only | `90ecec28-f5a6-42b3-9bde-dae1ca98f8b5/Computer.See` |
 | Take control | ARI `Computer.See` plus `Computer.Control` |
 
-## Viewer federation is a blueprint trust
+## Runtime federation is a blueprint trust
+
+Hosted setup adds a FIC only with both
+`-HostedRuntimeIdentityObjectId` and
+`-AuthorizeHostedRuntimeFederation`. The hosted subject must exactly match the
+existing Foundry agent identity object ID. Viewer federation remains separately
+opt-in.
 
 Setup adds a viewer FIC only with both `-ViewerManagedIdentityObjectId` and
 `-AuthorizeViewerFederation`. The subject is the **existing UAMI object/principal
@@ -102,11 +107,18 @@ The authorized operator/browser is trusted, not a hostile competing controller.
 
 The public helper uses blueprint-selected managed identity in an
 **activity/autopilot sample**. It does not establish support on ordinary
-Responses hosted agents. Test the actual hosting endpoint and injected
-blueprint identity before claiming support; if unavailable, stop without a
-token/secret fallback. This sample does not publish autopilot and does not
-require a hiring workflow. No live deployment has been performed for this
-implementation.
+Responses hosted agents. This implementation instead selects the discovered
+hosted agent identity and, when explicitly approved, uses its exact-subject FIC
+to authenticate the blueprint with `fmi_path`. This sample does not publish
+autopilot and does not require a hiring workflow.
+
+The recorded live Responses deployment accepts the caller but currently fails
+before T1 because its hosted identity cannot acquire the initial
+`api://AzureADTokenExchange/.default` assertion. No W365 MCP request or desktop
+allocation occurs. Test the actual hosting endpoint before claiming support;
+if the initial assertion is unavailable, stop without a token, secret,
+certificate, or CLI fallback. See the [validation report](VALIDATION-REPORT.md)
+for the exact tested version and result.
 
 The Foundry T1 -> T2 -> T3 flow follows the public helper; narrow raw protocol
 handling is retained for the final exchanges with no bodies logged. For

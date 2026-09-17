@@ -21,6 +21,12 @@ param agentObjectId string = ''
 param agentUserId string = ''
 param screenShareSdkUrl string = ''
 param screenShareFrameOrigins string = ''
+param useRegistry bool = true
+param tags object = {}
+
+var containerImage = useRegistry
+  ? '${registry.properties.loginServer}/${imageName}'
+  : imageName
 
 resource environment 'Microsoft.App/managedEnvironments@2024-03-01' existing = { name: environmentName }
 resource registry 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = { name: registryName }
@@ -37,6 +43,7 @@ resource stateContainer 'Microsoft.Storage/storageAccounts/blobServices/containe
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: '${appName}-identity'
   location: location
+  tags: tags
 }
 resource vaultRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (w365Enabled) {
   name: guid(vault.id, identity.id, 'secrets')
@@ -65,9 +72,11 @@ resource registryRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
   }
 }
+
 resource viewer 'Microsoft.App/containerApps@2024-03-01' = {
   name: appName
   location: location
+  tags: union(tags, { 'azd-service-name': 'viewer' })
   identity: {
     type: 'UserAssigned'
     userAssignedIdentities: { '${identity.id}': {} }
@@ -77,7 +86,7 @@ resource viewer 'Microsoft.App/containerApps@2024-03-01' = {
     configuration: {
       activeRevisionsMode: 'Single'
       ingress: { external: true, targetPort: 8080, allowInsecure: false }
-      registries: [{ server: registry.properties.loginServer, identity: identity.id }]
+      registries: useRegistry ? [{ server: registry.properties.loginServer, identity: identity.id }] : []
       secrets: w365Enabled ? [{
         name: 'oidc-secret'
         keyVaultUrl: '${vault.properties.vaultUri}secrets/${oidcSecretName}'
@@ -88,7 +97,7 @@ resource viewer 'Microsoft.App/containerApps@2024-03-01' = {
       scale: { minReplicas: 1, maxReplicas: 1 }
       containers: [{
         name: 'viewer'
-        image: '${registry.properties.loginServer}/${imageName}'
+        image: containerImage
         command: ['dotnet', 'Win365Agent.dll']
         args: ['--viewer']
         resources: { cpu: json('0.5'), memory: '1Gi' }
@@ -122,5 +131,7 @@ resource viewer 'Microsoft.App/containerApps@2024-03-01' = {
   dependsOn: [vaultRole, blobRole, registryRole]
 }
 output viewerHostname string = viewer.properties.configuration.ingress.fqdn
+output viewerName string = viewer.name
 output viewerIdentityPrincipalId string = identity.properties.principalId
 output viewerIdentityClientId string = identity.properties.clientId
+output viewerIdentityResourceId string = identity.id
