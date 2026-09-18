@@ -31,6 +31,7 @@ version 16 was deployed afterward with `managed_identity_federation` restored.
 
 | Scenario | Result | Evidence |
 | --- | --- | --- |
+| Greenfield Foundry bootstrap in separate env | Passed | `fawsep18-dev` created with `Initialize-Greenfield.ps1`; staged `Validate`, `ProvisionFoundry`, `azd deploy`, `azd ai agent doctor`, and `azd ai agent show` succeeded on September 18, 2026 |
 | Windows setup | Passed | `scripts/Setup-Local.ps1` completed restore, formatting, build, and offline tests |
 | Restore and formatting | Passed | `dotnet restore` and `dotnet format --verify-no-changes` |
 | Release tests | Passed | 53 passed, 0 failed, 0 skipped |
@@ -50,6 +51,40 @@ version 16 was deployed afterward with `managed_identity_federation` restored.
 | Optional viewer | Not required | Direct MCP operation remains valid without `VIEWER_PUBLIC_URL` |
 | Managed-identity federation | Blocked by platform boundary | Chained federation returns Entra `AADSTS700231` |
 | Key Vault certificate mode | Not implemented | Reserved mode fails closed until separately implemented and validated |
+
+## Live greenfield bootstrap evidence
+
+Validated on September 18, 2026 in dedicated azd environment `fawsep18-dev`
+with W365, state, and viewer still disabled for the bootstrap pass.
+
+Commands and sanitized outcomes:
+
+```powershell
+pwsh -NoProfile -File .\scripts\Initialize-Greenfield.ps1 -SubscriptionId "<subscription-id>" -TenantId "<tenant-id>" -Prefix "fawsep18" -Environment "dev"
+pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 -Mode Validate -Environment fawsep18-dev
+pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 -Mode ProvisionFoundry -Environment fawsep18-dev -ConfirmResourceChanges
+azd deploy win365-desktop-agent --no-prompt
+azd ai agent doctor --environment fawsep18-dev
+azd ai agent show win365-desktop-agent --environment fawsep18-dev
+```
+
+Observed results:
+
+- `Initialize-Greenfield.ps1` created azd environment `fawsep18-dev` and
+  previewed creation of resource group `fawsep18-dev-foundry-rg`, account
+  `fawsep18devaifa4b94`, project `fawsep18-dev-project`, and model deployment
+  `gpt-6-astra`.
+- `Validate` completed before any hosted-agent version existed.
+- `ProvisionFoundry` completed after the Foundry layer serialized child
+  resources under the account and granted the bootstrap roles needed for
+  subsequent agent deployment.
+- `azd deploy win365-desktop-agent --no-prompt` published hosted-agent version
+  `1` and returned a Responses endpoint.
+- `azd ai agent doctor --environment fawsep18-dev` finished with 11 passed,
+  0 failed, and 2 skipped checks.
+- `azd ai agent show win365-desktop-agent --environment fawsep18-dev` reported
+  status `active`, version `1`, a project endpoint, blueprint principal/client
+  IDs, and a Responses endpoint.
 
 ## Reliability findings incorporated
 

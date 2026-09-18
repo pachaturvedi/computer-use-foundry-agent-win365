@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.47.16.16243",
-      "templateHash": "18059828614145424296"
+      "templateHash": "17622265346399634067"
     }
   },
   "parameters": {
@@ -61,6 +61,9 @@
       "defaultValue": {}
     }
   },
+  "variables": {
+    "deployerPrincipalId": "[deployer().objectId]"
+  },
   "resources": [
     {
       "type": "Microsoft.CognitiveServices/accounts",
@@ -105,6 +108,64 @@
       ]
     },
     {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]",
+      "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName')), variables('deployerPrincipalId'), 'foundry-project-manager')]",
+      "properties": {
+        "principalId": "[variables('deployerPrincipalId')]",
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'eadc314b-1a2d-4efa-be10-5d325db5065e')]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]",
+      "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName')), variables('deployerPrincipalId'), 'foundry-user')]",
+      "properties": {
+        "principalId": "[variables('deployerPrincipalId')]",
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '53ca6127-db72-4b80-b1b0-d745d6d5456d')]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.CognitiveServices/accounts/projects",
+      "apiVersion": "2026-05-15-preview",
+      "name": "[format('{0}/{1}', parameters('accountName'), parameters('projectName'))]",
+      "location": "[parameters('location')]",
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "properties": {
+        "description": "[parameters('projectDescription')]",
+        "displayName": "[parameters('projectDisplayName')]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]",
+        "[resourceId('Microsoft.CognitiveServices/accounts/defenderForAISettings', parameters('accountName'), 'Default')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]",
+      "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName')), resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('accountName'), parameters('projectName')), 'project-foundry-user')]",
+      "properties": {
+        "principalId": "[reference(resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('accountName'), parameters('projectName')), '2026-05-15-preview', 'full').identity.principalId]",
+        "principalType": "ServicePrincipal",
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '53ca6127-db72-4b80-b1b0-d745d6d5456d')]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]",
+        "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('accountName'), parameters('projectName'))]"
+      ]
+    },
+    {
       "type": "Microsoft.CognitiveServices/accounts/deployments",
       "apiVersion": "2026-05-15-preview",
       "name": "[format('{0}/{1}', parameters('accountName'), parameters('modelDeploymentName'))]",
@@ -124,23 +185,9 @@
         "deploymentState": "Running"
       },
       "dependsOn": [
-        "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]"
-      ]
-    },
-    {
-      "type": "Microsoft.CognitiveServices/accounts/projects",
-      "apiVersion": "2026-05-15-preview",
-      "name": "[format('{0}/{1}', parameters('accountName'), parameters('projectName'))]",
-      "location": "[parameters('location')]",
-      "identity": {
-        "type": "SystemAssigned"
-      },
-      "properties": {
-        "description": "[parameters('projectDescription')]",
-        "displayName": "[parameters('projectDisplayName')]"
-      },
-      "dependsOn": [
-        "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]"
+        "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]",
+        "[extensionResourceId(resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName')), variables('deployerPrincipalId'), 'foundry-project-manager'))]",
+        "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('accountName'), parameters('projectName'))]"
       ]
     }
   ],

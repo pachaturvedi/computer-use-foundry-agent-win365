@@ -7,6 +7,7 @@ param(
     [string]$OutputPath,
     [guid]$TenantId = [guid]::Empty,
     [switch]$UseDeviceCode,
+    [ValidateRange(1, 5)][int]$DeviceCodeMaxAttempts = 2,
     [ValidateRange(30, 3600)][int]$GraphClientTimeoutSeconds = 600
 )
 
@@ -63,7 +64,84 @@ function Test-GraphContext {
     }
 
     $missingScopes = @($RequiredScopes | Where-Object { $_ -notin $Context.Scopes })
-    return $missingScopes.Count -eq 0
+    return @($missingScopes).Count -eq 0
+}
+
+function Get-AzureCliGraphAccessToken {
+    param([guid]$RequiredTenantId)
+
+    $tenantQuery = '{tenant:tenant,accessToken:accessToken}'
+    $tokenResponse = az account get-access-token --resource-type ms-graph --query $tenantQuery -o json 2>$null
+    if ([string]::IsNullOrWhiteSpace($tokenResponse)) {
+        return $null
+    }
+
+    $tokenData = $tokenResponse | ConvertFrom-Json -AsHashtable
+    if ($null -eq $tokenData) {
+        return $null
+    }
+
+    $tokenTenantId = TryParse-GuidValue $tokenData.tenant
+    if ($RequiredTenantId -ne [guid]::Empty -and $tokenTenantId -ne $RequiredTenantId) {
+        return $null
+    }
+
+    $accessToken = [string]$tokenData.accessToken
+    if ([string]::IsNullOrWhiteSpace($accessToken)) {
+        return $null
+    }
+
+    return $accessToken
+}
+
+function Test-IsDeviceCodeTimeoutError {
+    param([Parameter(Mandatory)]$ErrorRecord)
+
+    $message = [string]$ErrorRecord.Exception.Message
+    return $message -match 'Authentication timed out after 120 seconds due to inactivity'
+}
+
+function Connect-GraphWithRetries {
+    param(
+        [Parameter(Mandatory)][hashtable]$ConnectParameters,
+        [switch]$UseDeviceCode,
+        [ValidateRange(1, 5)][int]$DeviceCodeMaxAttempts
+    )
+
+    if ($UseDeviceCode) {
+        for ($attempt = 1; $attempt -le $DeviceCodeMaxAttempts; $attempt++) {
+            try {
+                if ($DeviceCodeMaxAttempts -gt 1) {
+                    Write-Host "Starting Microsoft Graph device-code sign-in attempt $attempt of $DeviceCodeMaxAttempts..."
+                }
+
+                Connect-MgGraph @ConnectParameters
+                return Get-MgContext
+            }
+            catch {
+                if (!(Test-IsDeviceCodeTimeoutError -ErrorRecord $_) -or $attempt -eq $DeviceCodeMaxAttempts) {
+                    throw
+                }
+
+                Write-Warning 'Microsoft Graph device-code sign-in timed out. Retrying with a fresh code...'
+            }
+        }
+    }
+
+    try {
+        Connect-MgGraph @ConnectParameters
+        return Get-MgContext
+    }
+    catch {
+        $deviceCodeParameters = @{}
+        foreach ($entry in $ConnectParameters.GetEnumerator()) {
+            $deviceCodeParameters[$entry.Key] = $entry.Value
+        }
+
+        $deviceCodeParameters.UseDeviceCode = $true
+        Connect-MgGraph @deviceCodeParameters
+        return Get-MgContext
+    }
 }
 
 function Graph([string]$Method, [string]$Path) {
@@ -72,11 +150,33 @@ function Graph([string]$Method, [string]$Path) {
         throw 'Graph request resolved to an unexpected origin.'
     }
 
+    if (![string]::IsNullOrWhiteSpace($script:GraphAccessToken)) {
+        $headers = @{ Authorization = "Bearer $($script:GraphAccessToken)"; 'OData-Version' = '4.0' }
+        try {
+            $response = Invoke-RestMethod -Method $Method -Uri $uri -Headers $headers
+            return $response | ConvertTo-Json -Depth 20 | ConvertFrom-Json -AsHashtable -Depth 20
+        }
+        catch {
+            if ($_.Exception.Message -match 'accessDenied') {
+                throw @"
+Azure CLI is signed in, but its Microsoft Graph token does not have CloudPC consent.
+Run:
+  az logout
+  az login --tenant "$TenantId" --scope "https://graph.microsoft.com/CloudPC.Read.All"
+Then rerun this helper.
+"@
+            }
+
+            throw
+        }
+    }
+
     Invoke-MgGraphRequest -Method $Method -Uri $uri -OutputType Hashtable -Headers @{ 'OData-Version' = '4.0' }
 }
 
 $scopes = @('CloudPC.Read.All')
 Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
+$script:GraphAccessToken = $null
 
 $context = Get-MgContext
 if (!(Test-GraphContext -Context $context -RequiredTenantId $TenantId -RequiredScopes $scopes)) {
@@ -90,26 +190,37 @@ if (!(Test-GraphContext -Context $context -RequiredTenantId $TenantId -RequiredS
         $connectParameters.TenantId = $TenantId
     }
 
+    if ($UseDeviceCode) {
+        $connectParameters.UseDeviceCode = $true
+    }
+
+    $connectError = $null
     try {
-        Connect-MgGraph @connectParameters
-        $context = Get-MgContext
+        $context = Connect-GraphWithRetries -ConnectParameters $connectParameters -UseDeviceCode:$UseDeviceCode -DeviceCodeMaxAttempts $DeviceCodeMaxAttempts
     }
     catch {
-        if (!$UseDeviceCode) {
-            throw
-        }
+        $connectError = $_
+    }
 
-        $connectParameters.UseDeviceCode = $true
-        Connect-MgGraph @connectParameters
-        $context = Get-MgContext
+    if ($null -ne $connectError) {
+        $script:GraphAccessToken = Get-AzureCliGraphAccessToken -RequiredTenantId $TenantId
+        if ([string]::IsNullOrWhiteSpace($script:GraphAccessToken)) {
+            throw $connectError
+        }
     }
 }
 
-if ($context.AuthType -ne 'Delegated') {
+if ([string]::IsNullOrWhiteSpace($script:GraphAccessToken) -and $context.AuthType -ne 'Delegated') {
     throw 'A delegated Graph connection is required.'
 }
 
-$missingScopes = @($scopes | Where-Object { $_ -notin $context.Scopes })
+$missingScopes = if ([string]::IsNullOrWhiteSpace($script:GraphAccessToken)) {
+    @($scopes | Where-Object { $_ -notin $context.Scopes })
+}
+else {
+    @()
+}
+$missingScopes = @($missingScopes)
 if ($missingScopes.Count -gt 0) {
     throw "Missing Graph scopes: $($missingScopes -join ', ')."
 }
@@ -120,10 +231,11 @@ if ($pool['@odata.type'] -ne '#microsoft.graph.cloudPcAgentPool') {
     throw 'Resolved object is not a Cloud PC agent pool.'
 }
 
-$regionGroup = @($pool.networkConfiguration.regionGroups | Select-Object -First 1)
-if ($regionGroup.Count -ne 1) {
+$regionGroups = @($pool.networkConfiguration.regionGroups)
+if ($regionGroups.Count -ne 1) {
     throw 'The source pool does not expose exactly one region group.'
 }
+$regionGroup = $regionGroups[0]
 
 $repositoryRoot = Split-Path $PSScriptRoot
 $resolvedOutputPath = if ([string]::IsNullOrWhiteSpace($OutputPath)) {
@@ -147,8 +259,8 @@ $localConfig['w365'] = [ordered]@{
     poolBillingPlanId = [string]$pool.billingConfiguration.billingPlanId
     poolBillingType = [string]$pool.billingConfiguration.billingType
     poolGeographicLocationType = [string]$pool.networkConfiguration.geographicLocationType
-    poolRegionGroup = [string]$regionGroup[0].regionGroup
-    poolRegions = @($regionGroup[0].regions | ForEach-Object { [string]$_ })
+    poolRegionGroup = [string]$regionGroup.regionGroup
+    poolRegions = @($regionGroup.regions | ForEach-Object { [string]$_ })
     poolImageId = [string]$pool.cloudPcConfiguration.imageId
     poolImageType = [string]$pool.cloudPcConfiguration.imageType
     poolOsLocale = [string]$pool.cloudPcConfiguration.osLocale
