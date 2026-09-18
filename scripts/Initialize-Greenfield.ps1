@@ -55,7 +55,9 @@ $modelSkuCapacity = Get-DeploymentConfiguredValue -EnvironmentName 'FOUNDRY_MODE
 $deployState = Get-DeploymentConfiguredValue -EnvironmentName 'DEPLOY_STATE' -DefaultValue ([bool]$config.state.deploy)
 $deployViewerByDefault = Get-DeploymentConfiguredValue -EnvironmentName 'DEPLOY_VIEWER' -DefaultValue ([bool]$config.viewer.deploy)
 $resolvedDeployViewer = if ($DeployViewer.IsPresent) { $true } else { [bool]$deployViewerByDefault }
+$viewerLiveEnabled = Get-DeploymentConfiguredValue -EnvironmentName 'VIEWER_LIVE_ENABLED' -DefaultValue ([bool]$config.viewer.liveEnabled)
 $viewerImageName = [string](Get-DeploymentConfiguredValue -EnvironmentName 'VIEWER_IMAGE_NAME' -DefaultValue $config.viewer.imageName)
+$screenShareAppUrl = [string](Get-DeploymentConfiguredValue -EnvironmentName 'SCREENSHARE_APP_URL' -DefaultValue $config.viewer.screenShareAppUrl)
 
 $resourcePrefix = "$Prefix-$Environment".ToLowerInvariant()
 $environmentName = $resourcePrefix
@@ -85,8 +87,10 @@ $values = [ordered]@{
     STATE_RESOURCE_GROUP_NAME = "$resourcePrefix-$($config.state.resourceGroupSuffix)"
     STATE_AGENT_PRINCIPAL_ID = '00000000-0000-0000-0000-000000000000'
     DEPLOY_VIEWER = $resolvedDeployViewer.ToString().ToLowerInvariant()
+    VIEWER_LIVE_ENABLED = ([bool]$viewerLiveEnabled).ToString().ToLowerInvariant()
     VIEWER_RESOURCE_GROUP_NAME = "$resourcePrefix-$($config.viewer.resourceGroupSuffix)"
     VIEWER_IMAGE_NAME = $viewerImageName
+    SCREENSHARE_APP_URL = $screenShareAppUrl
     W365_ENABLED = 'false'
 }
 if ($PSBoundParameters.ContainsKey('TenantId')) {

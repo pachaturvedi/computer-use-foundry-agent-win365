@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
 using Win365Agent;
 
@@ -145,6 +146,26 @@ public sealed class DesktopRuntimeTests
         await runtime.CloseAsync(default);
     }
 
+    [Fact]
+    public async Task OpenReturnsSeparateViewOnlyAndControlRoutesAsync()
+    {
+        using var temporaryStore = new TemporarySessionStore();
+        using var handler = new McpHandler();
+        using var http = new HttpClient(handler);
+        using var runtime = Runtime(http, handler, temporaryStore.Create());
+
+        var links = JsonSerializer.SerializeToElement(await runtime.OpenAsync(default));
+        var liveView = new Uri(links.GetProperty("liveViewUrl").GetString()!);
+        var takeControl = new Uri(links.GetProperty("takeControlUrl").GetString()!);
+
+        Assert.Matches("^/live/[0-9a-f]{64}$", liveView.AbsolutePath);
+        Assert.Matches("^/view/[0-9a-f]{64}$", takeControl.AbsolutePath);
+        Assert.Equal(liveView.AbsolutePath["/live".Length..], takeControl.AbsolutePath["/view".Length..]);
+        Assert.Empty(liveView.Fragment);
+        Assert.Equal("#control", takeControl.Fragment);
+        await runtime.CloseAsync(default);
+    }
+
     private static DesktopRuntime Runtime(
         HttpClient http,
         McpHandler handler,
@@ -155,4 +176,5 @@ public sealed class DesktopRuntimeTests
             TestSettings.Create(),
             "one",
             NullLogger.Instance);
+
 }

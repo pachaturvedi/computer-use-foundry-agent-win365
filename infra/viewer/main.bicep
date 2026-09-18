@@ -12,8 +12,26 @@ param deployViewer string = 'false'
 param resourcePrefix string
 param viewerResourceGroupName string = '${resourcePrefix}-viewer-rg'
 param viewerImageName string = 'win365-sample:v1'
+@allowed([
+  'true'
+  'false'
+])
+param viewerLiveEnabled string = 'false'
+param viewerPublicUrl string = ''
+param viewerClientId string = ''
+param operatorTenantId string = ''
+param operatorObjectId string = ''
+param w365TenantId string = ''
+param blueprintId string = ''
+param agentId string = ''
+param agentObjectId string = ''
+param agentUserId string = ''
+param screenShareSdkUrl string = ''
+param screenShareFrameOrigins string = ''
+param screenShareAppUrl string = ''
 
 var viewerEnabled = toLower(deployViewer) == 'true'
+var liveViewerEnabled = viewerEnabled && toLower(viewerLiveEnabled) == 'true'
 var tags = {
   'azd-env-name': environmentName
   component: 'viewer'
@@ -48,7 +66,19 @@ module viewer '../viewer.bicep' = if (viewerEnabled) {
     keyVaultName: foundation!.outputs.keyVaultName
     storageAccountName: foundation!.outputs.storageAccountName
     stateContainerName: foundation!.outputs.stateContainerName
-    w365Enabled: false
+    w365Enabled: liveViewerEnabled
+    viewerPublicUrl: viewerPublicUrl
+    viewerClientId: viewerClientId
+    operatorTenantId: operatorTenantId
+    operatorObjectId: operatorObjectId
+    w365TenantId: w365TenantId
+    blueprintId: blueprintId
+    agentId: agentId
+    agentObjectId: agentObjectId
+    agentUserId: agentUserId
+    screenShareSdkUrl: screenShareSdkUrl
+    screenShareFrameOrigins: screenShareFrameOrigins
+    screenShareAppUrl: screenShareAppUrl
     useRegistry: false
     tags: tags
   }

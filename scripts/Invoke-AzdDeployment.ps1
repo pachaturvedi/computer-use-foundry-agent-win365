@@ -83,6 +83,62 @@ function Get-AzdValue {
     return (Invoke-Azd -Arguments @('env', 'get-value', $Name) -CaptureOutput)
 }
 
+function Get-AzdOptionalValue {
+    param([Parameter(Mandatory)][string]$Name)
+
+    $value = & $azd.Path env get-value $Name 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        return ($value | Out-String).Trim()
+    }
+
+    return ''
+}
+
+function Assert-LiveViewerConfiguration {
+    $liveEnabled = Get-AzdOptionalValue 'VIEWER_LIVE_ENABLED'
+    if ($liveEnabled -ne 'true') {
+        Write-DeploymentEvent DECISION 'Viewer remains in bootstrap mode because VIEWER_LIVE_ENABLED is not true.'
+        return
+    }
+
+    $required = @(
+        'VIEWER_PUBLIC_URL',
+        'VIEWER_CLIENT_ID',
+        'OPERATOR_TENANT_ID',
+        'OPERATOR_OBJECT_ID',
+        'W365_TENANT_ID',
+        'W365_BLUEPRINT_ID',
+        'W365_AGENT_ID',
+        'W365_AGENT_OBJECT_ID',
+        'W365_AGENT_USER_ID',
+        'SCREENSHARE_SDK_URL',
+        'SCREENSHARE_FRAME_ORIGINS',
+        'SCREENSHARE_APP_URL',
+        'VIEWER_KEY_VAULT_NAME'
+    )
+    $missing = @($required | Where-Object {
+        [string]::IsNullOrWhiteSpace((Get-AzdOptionalValue $_))
+    })
+    if ($missing.Count -gt 0) {
+        throw "VIEWER_LIVE_ENABLED=true requires: $($missing -join ', ')."
+    }
+    if ($w365Enabled -ne 'true') {
+        throw 'VIEWER_LIVE_ENABLED=true requires W365_ENABLED=true.'
+    }
+
+    $vaultName = Get-AzdOptionalValue 'VIEWER_KEY_VAULT_NAME'
+    & az keyvault secret show `
+        --subscription (Get-AzdValue 'AZURE_SUBSCRIPTION_ID') `
+        --vault-name $vaultName `
+        --name 'w365-viewer-client-secret' `
+        --query id `
+        --output none 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Key Vault '$vaultName' must contain secret 'w365-viewer-client-secret' before live viewer activation."
+    }
+    Write-DeploymentEvent DECISION 'Live viewer prerequisites and Key Vault OIDC secret are present.'
+}
+
 function Assert-ResourceConfirmation {
     if (!$ConfirmResourceChanges) {
         throw "Mode '$Mode' can create or modify Azure resources. Review the validation log, then rerun with -ConfirmResourceChanges."
@@ -178,6 +234,7 @@ try {
     }
 
     if ($viewerEnabled -eq 'true') {
+        Assert-LiveViewerConfiguration
         Write-DeploymentEvent STEP 'Previewing the explicitly enabled viewer layer.'
         Invoke-Azd @('provision', 'viewer', '--preview', '--no-prompt')
     }
@@ -244,8 +301,13 @@ try {
     }
 
     if ($Mode -ne 'ProvisionFoundry') {
-        $agentVersion = Get-AzdValue 'AGENT_WIN365_DESKTOP_AGENT_VERSION'
-        Write-DeploymentEvent RESULT "Hosted agent version: $agentVersion"
+        $agentVersion = Get-AzdOptionalValue 'AGENT_WIN365_DESKTOP_AGENT_VERSION'
+        if (![string]::IsNullOrWhiteSpace($agentVersion)) {
+            Write-DeploymentEvent RESULT "Hosted agent version: $agentVersion"
+        }
+        elseif ($Mode -eq 'Validate') {
+            Write-DeploymentEvent DECISION 'Hosted agent version is not available yet because this environment has not deployed an agent build.'
+        }
     }
     Write-DeploymentEvent RESULT "Workflow '$Mode' completed successfully."
 }

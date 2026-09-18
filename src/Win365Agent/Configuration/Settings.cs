@@ -103,6 +103,23 @@ public sealed class Settings(IConfiguration config)
         }
     }
 
+    /// <summary>Gets the W365-hosted view-only application URI.</summary>
+    public Uri ScreenShareAppUrl
+    {
+        get
+        {
+            var uri = new Uri(Required("SCREENSHARE_APP_URL").TrimEnd('/') + "/");
+            if (uri.Scheme != "https" || !string.IsNullOrEmpty(uri.UserInfo) ||
+                !string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment))
+            {
+                throw new InvalidOperationException(
+                    "SCREENSHARE_APP_URL must be an HTTPS URL without credentials, query or fragment.");
+            }
+
+            return uri;
+        }
+    }
+
     /// <summary>Validates configuration for the active application mode.</summary>
     /// <param name="viewerMode">
     /// <see langword="true"/> to validate viewer identity settings; otherwise, validates hosted-agent settings.
@@ -148,6 +165,7 @@ public sealed class Settings(IConfiguration config)
         if (viewerMode)
         {
             _ = ViewerUrl;
+            _ = ScreenShareAppUrl;
             _ = Guid.Parse(Required("AZURE_CLIENT_ID"));
         }
         else

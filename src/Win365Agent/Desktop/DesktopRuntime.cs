@@ -234,7 +234,7 @@ public sealed class DesktopRuntime : IDisposable
         var viewerUrl = _settings.OptionalViewerUrl;
         return new
         {
-            liveViewUrl = viewerUrl is null ? null : new Uri(viewerUrl, $"view/{session.LinkId}").ToString(),
+            liveViewUrl = viewerUrl is null ? null : new Uri(viewerUrl, $"live/{session.LinkId}").ToString(),
             takeControlUrl = viewerUrl is null ? null : new Uri(viewerUrl, $"view/{session.LinkId}#control").ToString(),
             expiresAt = session.ExpiresAt,
             message = viewerUrl is null

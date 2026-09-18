@@ -21,6 +21,7 @@
     "agentObjectId": { "value": "YOUR-FOUNDRY-AGENT-OBJECT-ID" },
     "agentUserId": { "value": "YOUR-W365-AGENT-USER-OBJECT-ID" },
     "screenShareSdkUrl": { "value": "https://YOUR-ONBOARDING-HOST/sdk.js" },
-    "screenShareFrameOrigins": { "value": "https://YOUR-ONBOARDING-FRAME-HOST" }
+    "screenShareFrameOrigins": { "value": "https://YOUR-ONBOARDING-FRAME-HOST" },
+    "screenShareAppUrl": { "value": "https://YOUR-W365-SCREENSHARE-APP-HOST" }
   }
 }

@@ -20,8 +20,10 @@
   },
   "viewer": {
     "deploy": false,
+    "liveEnabled": false,
     "resourceGroupSuffix": "viewer-rg",
-    "imageName": "win365-sample:v1"
+    "imageName": "win365-sample:v1",
+    "screenShareAppUrl": ""
   },
   "w365": {
     "poolBillingType": "payAsYouGo",

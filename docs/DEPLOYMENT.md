@@ -300,7 +300,12 @@ pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
     -ConfirmResourceChanges
 ```
 
-`azd up` provisions the conditional Bicep layer with a safe public placeholder,
+If you are deploying the viewer, set `SCREENSHARE_APP_URL` in the azd
+environment or an untracked parameter file to the endpoint supplied by W365
+onboarding. The repository intentionally does not contain a concrete endpoint.
+
+`azd up` provisions the conditional Bicep layer using the `SCREENSHARE_APP_URL`
+you supplied,
 deploys the Foundry agent, then runs the Windows `postup` hook. The hook builds
 the repository image in the newly created ACR, waits for `AcrPull` role
 propagation, switches the Container App to that image, and verifies `/health`.
@@ -396,6 +401,8 @@ Set non-secret values using `azd env set KEY VALUE`:
 | `OPERATOR_TENANT_ID`, `OPERATOR_OBJECT_ID` | Exact human operator's tenant/object IDs. |
 | `HOSTED_ALLOWED_USER_ID` | **Foundry agent only:** platform user partition or `sha256:` fingerprint; see binding below. Not a viewer parameter. |
 | `VIEWER_PUBLIC_URL` | Optional for an agent-only deployment. When omitted, desktop execution remains available but live-view/take-control links are returned as unavailable. Required for the viewer itself. |
+| `SCREENSHARE_APP_URL` | **Viewer only:** W365-hosted view-only application origin supplied by W365 onboarding. It is required only when `VIEWER_LIVE_ENABLED=true`. |
+| `VIEWER_LIVE_ENABLED` | Explicit viewer phase switch. Leave `false` for bootstrap; set `true` only after OIDC, state, W365, SDK/frame-origin values, and the Key Vault secret are ready. |
 | `W365_ENABLED` | Internal phase switch. Bootstrap sets it to `false`; `Setup-W365.ps1` persists `true` only after phase-2 prerequisites are ready. |
 
 Enabled configuration requires valid identity IDs and same-tenant Foundry/W365/
@@ -411,8 +418,8 @@ from the corresponding setup output, not the agent's app ID. The viewer has no
 For an approved viewer, finish [OIDC/SDK configuration](VIEWER.md#enable-the-hosted-viewer).
 Store its OIDC web-app secret as `w365-viewer-client-secret` in Key Vault. Never
 put the value in `.azure`, parameter files, `azure.yaml` or the image. Fill the
-phase-2 viewer parameters, set `w365Enabled=true`, review the deployment what-if,
-and redeploy using the same viewer name/UAMI. Only then does the template reference
+phase-2 viewer parameters, set `VIEWER_LIVE_ENABLED=true`, review the deployment
+what-if, and redeploy using the same viewer name/UAMI. Only then does the template reference
 the OIDC secret and grant Key Vault access. No blueprint certificate parameter
 or W365 Key Vault credential setting is used.
 
