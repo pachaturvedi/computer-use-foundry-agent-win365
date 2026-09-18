@@ -12,13 +12,11 @@ $workflow = Get-Content -LiteralPath $workflowPath -Raw
 
 $requiredFragments = @(
     'workflow_dispatch:',
-    'environment: w365-live-acceptance',
     'id-token: write',
     'cancel-in-progress: false',
     'I_APPROVE_W365_BILLING_AND_CLEANUP',
-    'W365_RESOURCE_CHANGES_CONFIRMED: ''true''',
-    'W365_CLEANUP_CONFIRMED: ''true''',
-    'azd down --environment $env:AZD_ENVIRONMENT_NAME --force --purge --no-prompt',
+    'Invoke-W365LiveAcceptance.ps1',
+    'RemoveEnvironmentAfterCleanup = $true',
     'if: always()',
     'actions/upload-artifact@v4'
 )
@@ -29,6 +27,25 @@ foreach ($fragment in $requiredFragments) {
 }
 if ($workflow -match '(?m)^\s+(push|pull_request):') {
     throw 'Live acceptance must never run from push or pull_request.'
+}
+if ($workflow -match '(?m)^\s+environment:\s') {
+    throw 'Live acceptance must not require a GitHub Environment.'
+}
+
+$driverPath = Join-Path $repositoryRoot 'scripts\Invoke-W365LiveAcceptance.ps1'
+$driver = Get-Content -LiteralPath $driverPath -Raw
+foreach ($fragment in @(
+    'I_APPROVE_W365_BILLING_AND_CLEANUP',
+    '[switch]$Resume',
+    'W365_RESOURCE_CHANGES_CONFIRMED',
+    'W365_CLEANUP_CONFIRMED',
+    'ExpectedManifestSha256',
+    '''down'', ''--environment''',
+    'finally'
+)) {
+    if (!$driver.Contains($fragment, [StringComparison]::Ordinal)) {
+        throw "Local live acceptance driver is missing required contract '$fragment'."
+    }
 }
 
 $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("w365-live-verifier-{0}" -f ([guid]::NewGuid()))
@@ -92,6 +109,17 @@ AGENT_WIN365_DESKTOP_AGENT_VERSION="2"
         !(Test-Path -LiteralPath $evidencePath)) {
         throw 'Live deployment verification did not emit the expected sanitized evidence.'
     }
+    $evidence = Get-Content -LiteralPath $evidencePath -Raw
+    foreach ($sensitiveValue in @(
+        'sample-agent@YOUR-TENANT.onmicrosoft.com',
+        '11111111-1111-1111-1111-111111111111',
+        '22222222-2222-2222-2222-222222222222',
+        '33333333-3333-3333-3333-333333333333'
+    )) {
+        if ($evidence.Contains($sensitiveValue, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Sanitized evidence exposed '$sensitiveValue'."
+        }
+    }
 
     $hashMismatchBlocked = $false
     try {
@@ -117,7 +145,7 @@ AGENT_WIN365_DESKTOP_AGENT_VERSION="2"
         throw 'Live deployment verification did not prove completed cleanup.'
     }
 
-    Write-Output 'Offline live acceptance: manual protection, approvals, teardown, rerun evidence, and cleanup proof passed.'
+    Write-Output 'Offline live acceptance: azd-centered execution, approvals, teardown, rerun evidence, and sanitization passed.'
 }
 finally {
     if (Test-Path -LiteralPath $tempRoot) {
