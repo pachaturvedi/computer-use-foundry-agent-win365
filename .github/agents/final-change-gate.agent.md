@@ -68,6 +68,10 @@ disagreement between personas.
 Use only read-only or offline commands.
 
 - Verify the diff contains only intended changes and passes `git diff --check`.
+- Run the same formatter, tests, script parsing, and prerequisite checks used by
+  affected CI jobs locally when the required tooling is available.
+- For cross-platform workflows, verify that formatting and line-ending policy
+  are compatible with both Linux and Windows clean checkouts.
 - Confirm matching instruction modules and repository conventions were followed.
 - Map every acceptance criterion to expected behavior, observed evidence, and
   `pass`, `fail`, `blocked`, or `not applicable`.

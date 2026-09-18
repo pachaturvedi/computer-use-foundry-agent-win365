@@ -6,6 +6,8 @@ applyTo: "scripts/**/*.ps1"
 
 - Target PowerShell 7.4+ and Windows execution from the repository root.
 - Use approved PowerShell verbs, `[CmdletBinding()]`, typed parameters, and `$ErrorActionPreference = 'Stop'` for operational scripts.
+- Under strict mode, wrap function or pipeline results in `@(...)` before using
+  `.Count`; a single returned item may otherwise be an unwrapped scalar.
 - Make read-only/default behavior safe. Resource mutation requires an explicit confirmation switch and must honor `-WhatIf`/`ShouldProcess` where applicable.
 - Every operator workflow must identify itself as read-only, preview, or mutating; print a concise redacted action summary; report blocked prerequisites; and provide the next safe command.
 - Resolve and validate IDs before mutation. Reject ambiguous Graph, Foundry, W365, RBAC, or azd results.
