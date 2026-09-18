@@ -35,96 +35,15 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+. (Join-Path $PSScriptRoot 'W365Provisioning.ps1')
+
 if (!$IsWindows) {
     throw 'This W365 setup flow is Windows-only. Use PowerShell 7.4 or later on Windows.'
 }
-if (!$ConfirmResourceChanges) {
-    throw 'This W365 setup flow can create or update Intune pools, Graph assignments, azd environment state, and hosted agent versions. Review the plan, then rerun with -ConfirmResourceChanges.'
-}
-
-function Invoke-Step {
-    param([Parameter(Mandatory)][string]$Message)
-
-    Write-Host ('[{0:HH:mm:ss}] {1}' -f [DateTimeOffset]::Now, $Message)
-}
-
-function Get-AzdCommand {
-    $azdPaths = [System.Collections.Generic.List[string]]::new()
-    foreach ($command in @(Get-Command azd -All -ErrorAction SilentlyContinue)) {
-        if ($null -ne $command -and !$azdPaths.Contains($command.Source)) {
-            $azdPaths.Add($command.Source)
-        }
-    }
-    foreach ($path in @(
-        (Join-Path $env:LOCALAPPDATA 'Programs\Azure Dev CLI\azd.exe'),
-        (Join-Path $env:ProgramFiles 'Azure Dev CLI\azd.exe')
-    )) {
-        if (![string]::IsNullOrWhiteSpace($path) -and (Test-Path $path) -and !$azdPaths.Contains($path)) {
-            $azdPaths.Add($path)
-        }
-    }
-
-    $azdCandidates = $azdPaths |
-        ForEach-Object {
-            $versionOutput = & $_ version 2>$null
-            if ($LASTEXITCODE -eq 0 -and $versionOutput -match 'azd version\s+(\d+\.\d+\.\d+)') {
-                [pscustomobject]@{ Path = $_; Version = [version]$Matches[1] }
-            }
-        } |
-        Sort-Object Version -Descending
-
-    return $azdCandidates | Where-Object Version -ge ([version]'1.32.0') | Select-Object -First 1
-}
-
-function Invoke-Azd {
-    param(
-        [Parameter(Mandatory)]$Azd,
-        [Parameter(Mandatory)][string[]]$Arguments,
-        [switch]$CaptureOutput
-    )
-
-    Write-Host ('[{0:HH:mm:ss}] [COMMAND] azd {1}' -f [DateTimeOffset]::Now, ($Arguments -join ' '))
-    $output = & $Azd.Path @Arguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "azd $($Arguments -join ' ') failed with exit code $LASTEXITCODE."
-    }
-
-    if ($CaptureOutput) {
-        return ($output | Out-String).Trim()
-    }
-
-    return $output
-}
-
-function Get-AzdValue {
-    param(
-        [Parameter(Mandatory)]$Azd,
-        [Parameter(Mandatory)][string]$Name
-    )
-
-    return (Invoke-Azd -Azd $Azd -Arguments @('env', 'get-value', $Name) -CaptureOutput)
-}
-
-function Resolve-TenantId {
-    param([Parameter(Mandatory)]$Azd)
-
-    if ($null -ne $TenantId -and $TenantId -ne [guid]::Empty) {
-        return $TenantId
-    }
-
-    foreach ($name in @('W365_TENANT_ID', 'AZURE_TENANT_ID')) {
-        $value = Get-AzdValue -Azd $Azd -Name $name
-        $parsed = [guid]::Empty
-        if ([guid]::TryParse($value, [ref]$parsed) -and $parsed -ne [guid]::Empty) {
-            return $parsed
-        }
-    }
-
-    throw 'TenantId is required when the azd environment does not already contain AZURE_TENANT_ID or W365_TENANT_ID.'
-}
+Assert-W365ResourceApproval -EnableW365:$true -ConfirmResourceChanges:$ConfirmResourceChanges
 
 $root = Split-Path $PSScriptRoot
-$azd = Get-AzdCommand
+$azd = Get-W365AzdCommand
 if (!$azd) {
     throw 'azd 1.32.0 or later is required.'
 }
@@ -132,8 +51,8 @@ if (!$azd) {
 Push-Location $root
 try {
     if ($Environment) {
-        Invoke-Step "Selecting azd environment '$Environment'."
-        Invoke-Azd -Azd $azd -Arguments @('env', 'select', $Environment) | Out-Null
+        Write-W365ProvisioningStep "Selecting azd environment '$Environment'."
+        Invoke-W365Azd -Azd $azd -Arguments @('env', 'select', $Environment) | Out-Null
     }
 
     & (Join-Path (Split-Path $PSScriptRoot) 'tests\PowerShell\Test-AzdPrerequisites.ps1') -RequireLogin
@@ -141,8 +60,8 @@ try {
         throw 'azd prerequisite validation failed.'
     }
 
-    $environmentName = Get-AzdValue -Azd $azd -Name 'AZURE_ENV_NAME'
-    $projectEndpoint = Get-AzdValue -Azd $azd -Name 'FOUNDRY_PROJECT_ENDPOINT'
+    $environmentName = Get-W365AzdValue -Azd $azd -Name 'AZURE_ENV_NAME'
+    $projectEndpoint = Get-W365AzdValue -Azd $azd -Name 'FOUNDRY_PROJECT_ENDPOINT'
     if ([string]::IsNullOrWhiteSpace($projectEndpoint)) {
         throw 'FOUNDRY_PROJECT_ENDPOINT is empty. Deploy the Foundry bootstrap before running W365 setup.'
     }
@@ -151,7 +70,7 @@ try {
         $AgentName
     }
     else {
-        $configuredAgentName = Get-AzdValue -Azd $azd -Name 'FOUNDRY_AGENT_NAME'
+        $configuredAgentName = Get-W365AzdValue -Azd $azd -Name 'FOUNDRY_AGENT_NAME' -AllowMissing
         if ([string]::IsNullOrWhiteSpace($configuredAgentName)) {
             'win365-desktop-agent'
         }
@@ -164,14 +83,14 @@ try {
         $AgentVersion
     }
     else {
-        Get-AzdValue -Azd $azd -Name 'AGENT_WIN365_DESKTOP_AGENT_VERSION'
+        Get-W365AzdValue -Azd $azd -Name 'AGENT_WIN365_DESKTOP_AGENT_VERSION'
     }
     if ([string]::IsNullOrWhiteSpace($resolvedAgentVersion)) {
         throw 'AGENT_WIN365_DESKTOP_AGENT_VERSION is empty. Deploy the hosted agent before running W365 setup.'
     }
 
-    $resolvedTenantId = Resolve-TenantId -Azd $azd
-    Invoke-Step "Discovering Foundry identity for agent '$resolvedAgentName' version '$resolvedAgentVersion'."
+    $resolvedTenantId = Resolve-W365TenantId -Azd $azd -ExplicitTenantId $TenantId
+    Write-W365ProvisioningStep "Discovering Foundry identity for agent '$resolvedAgentName' version '$resolvedAgentVersion'."
     $identityResult = @(& (Join-Path $PSScriptRoot 'Get-FoundryIdentity.ps1') `
         -ProjectEndpoint $projectEndpoint `
         -AgentName $resolvedAgentName `
@@ -197,7 +116,7 @@ try {
         throw 'Foundry identity discovery did not return a valid agent identity ID.'
     }
 
-    Invoke-Step "Running W365 setup for azd environment '$environmentName'."
+    Write-W365ProvisioningStep "Running W365 setup for azd environment '$environmentName'."
     $setupArguments = @{
         TenantId = $discoveredTenantId
         BlueprintId = $discoveredBlueprintId
@@ -226,7 +145,7 @@ try {
         throw 'W365 setup failed.'
     }
 
-    Invoke-Step 'Redeploying the hosted agent with the persisted W365 configuration.'
+    Write-W365ProvisioningStep 'Redeploying the hosted agent with the persisted W365 configuration.'
     $deployArguments = @{
         Mode = 'DeployAgent'
         Environment = $environmentName
