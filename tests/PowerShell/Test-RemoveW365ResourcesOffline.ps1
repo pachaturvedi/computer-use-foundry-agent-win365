@@ -171,7 +171,8 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
 
 $module | Import-Module -Global
 
-$repoRoot = Split-Path $PSScriptRoot
+$repoRoot = Split-Path (Split-Path $PSScriptRoot)
+$scriptsRoot = Join-Path $repoRoot 'scripts'
 $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("w365-cleanup-{0}" -f ([guid]::NewGuid()))
 $envName = 'cleanup-test'
 $envDir = Join-Path $tempRoot $envName
@@ -261,7 +262,7 @@ try {
     Write-TestEnvironment
     Write-TestManifest
 
-    & "$PSScriptRoot\Remove-W365Resources.ps1" -EnvironmentName $envName -EnvironmentFilePath $envFilePath -OwnershipManifestPath $manifestPath -Confirm:$false
+    & "$scriptsRoot\Remove-W365Resources.ps1" -EnvironmentName $envName -EnvironmentFilePath $envFilePath -OwnershipManifestPath $manifestPath -Confirm:$false
     $state = Get-MockGraphState
     if ($null -ne $state.Pool -or $null -ne $state.AgentUser) {
         throw 'Created pool or agent user was not deleted.'
@@ -307,7 +308,7 @@ try {
     }
     $savedOperations = @($state.Operations)
 
-    & "$PSScriptRoot\Remove-W365Resources.ps1" -EnvironmentName $envName -EnvironmentFilePath $envFilePath -OwnershipManifestPath $manifestPath -Confirm:$false
+    & "$scriptsRoot\Remove-W365Resources.ps1" -EnvironmentName $envName -EnvironmentFilePath $envFilePath -OwnershipManifestPath $manifestPath -Confirm:$false
     $state = Get-MockGraphState
     if ($state.Operations.Count -ne $savedOperations.Count) {
         throw 'Cleanup rerun should have been idempotent.'
@@ -319,7 +320,7 @@ try {
     & $module { $script:state.Assignments += @{ id = 'assignment-unrelated'; userPrincipalId = 'someone-else' } }
     $sharedAssignmentBlocked = $false
     try {
-        & "$PSScriptRoot\Remove-W365Resources.ps1" -EnvironmentName $envName -EnvironmentFilePath $envFilePath -OwnershipManifestPath $manifestPath -Confirm:$false | Out-Null
+        & "$scriptsRoot\Remove-W365Resources.ps1" -EnvironmentName $envName -EnvironmentFilePath $envFilePath -OwnershipManifestPath $manifestPath -Confirm:$false | Out-Null
     }
     catch {
         $sharedAssignmentBlocked = $true
@@ -337,7 +338,7 @@ try {
     Write-TestManifest -ProjectOwnership existing
     $blocked = $false
     try {
-        & "$PSScriptRoot\Remove-W365Resources.ps1" -EnvironmentName $envName -EnvironmentFilePath $envFilePath -OwnershipManifestPath $manifestPath -Confirm:$false | Out-Null
+        & "$scriptsRoot\Remove-W365Resources.ps1" -EnvironmentName $envName -EnvironmentFilePath $envFilePath -OwnershipManifestPath $manifestPath -Confirm:$false | Out-Null
     }
     catch {
         $blocked = $true
@@ -355,7 +356,7 @@ try {
     Write-TestManifest -ProjectOwnership unknown
     $inferredExistingBlocked = $false
     try {
-        & "$PSScriptRoot\Remove-W365Resources.ps1" -EnvironmentName $envName -EnvironmentFilePath $envFilePath -OwnershipManifestPath $manifestPath -Confirm:$false | Out-Null
+        & "$scriptsRoot\Remove-W365Resources.ps1" -EnvironmentName $envName -EnvironmentFilePath $envFilePath -OwnershipManifestPath $manifestPath -Confirm:$false | Out-Null
     }
     catch {
         $inferredExistingBlocked = $true
@@ -375,7 +376,7 @@ try {
     }
     $missingManifestBlocked = $false
     try {
-        & "$PSScriptRoot\Remove-W365Resources.ps1" -EnvironmentName $envName -EnvironmentFilePath $envFilePath -OwnershipManifestPath $manifestPath -Confirm:$false | Out-Null
+        & "$scriptsRoot\Remove-W365Resources.ps1" -EnvironmentName $envName -EnvironmentFilePath $envFilePath -OwnershipManifestPath $manifestPath -Confirm:$false | Out-Null
     }
     catch {
         $missingManifestBlocked = $true
@@ -394,7 +395,7 @@ try {
     & $module { $script:state.FailReusedGrantLookup = $true }
     $failed = $false
     try {
-        & "$PSScriptRoot\Remove-W365Resources.ps1" -EnvironmentName $envName -EnvironmentFilePath $envFilePath -OwnershipManifestPath $manifestPath -Confirm:$false | Out-Null
+        & "$scriptsRoot\Remove-W365Resources.ps1" -EnvironmentName $envName -EnvironmentFilePath $envFilePath -OwnershipManifestPath $manifestPath -Confirm:$false | Out-Null
     }
     catch {
         $failed = $true
@@ -413,7 +414,7 @@ try {
     & $module { $script:state.FailReusedInheritanceLookup = $true }
     $inheritanceFailed = $false
     try {
-        & "$PSScriptRoot\Remove-W365Resources.ps1" -EnvironmentName $envName -EnvironmentFilePath $envFilePath -OwnershipManifestPath $manifestPath -Confirm:$false | Out-Null
+        & "$scriptsRoot\Remove-W365Resources.ps1" -EnvironmentName $envName -EnvironmentFilePath $envFilePath -OwnershipManifestPath $manifestPath -Confirm:$false | Out-Null
     }
     catch {
         $inheritanceFailed = $true

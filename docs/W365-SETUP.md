@@ -193,9 +193,9 @@ pwsh -NoProfile -File .\scripts\Setup-Local.ps1
 To rerun only the setup/discovery regressions:
 
 ```powershell
-pwsh -NoProfile -File .\scripts\Test-SetupOffline.ps1
-pwsh -NoProfile -File .\scripts\Test-RemoveW365ResourcesOffline.ps1
-pwsh -NoProfile -File .\scripts\Test-DiscoveryOffline.ps1
+pwsh -NoProfile -File .\tests\PowerShell\Test-SetupOffline.ps1
+pwsh -NoProfile -File .\tests\PowerShell\Test-RemoveW365ResourcesOffline.ps1
+pwsh -NoProfile -File .\tests\PowerShell\Test-DiscoveryOffline.ps1
 ```
 
 The regression scripts mock Graph and Azure CLI respectively: they do not sign in,

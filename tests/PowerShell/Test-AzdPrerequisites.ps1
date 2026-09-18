@@ -11,7 +11,7 @@ if (!$IsWindows) {
     throw 'This readiness check is Windows-only. Run it from PowerShell 7.4 or later on Windows.'
 }
 
-$root = Split-Path $PSScriptRoot
+$root = Split-Path (Split-Path $PSScriptRoot)
 $manifestPath = Join-Path $root 'azure.yaml'
 
 function Convert-Version {

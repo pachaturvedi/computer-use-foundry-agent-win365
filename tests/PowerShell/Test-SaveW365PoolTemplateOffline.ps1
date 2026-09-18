@@ -44,6 +44,8 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
 }
 
 $module | Import-Module -Global
+$repoRoot = Split-Path (Split-Path $PSScriptRoot)
+$scriptsRoot = Join-Path $repoRoot 'scripts'
 $tempPath = Join-Path $env:TEMP 'w365-pool-template-test.json'
 try {
     Set-Content -LiteralPath $tempPath -Value @'
@@ -58,7 +60,7 @@ try {
 }
 '@
 
-    & "$PSScriptRoot\Save-W365PoolTemplate.ps1" `
+    & "$scriptsRoot\Save-W365PoolTemplate.ps1" `
         -PoolIdOrUrl 'https://intune.microsoft.com/#view/Microsoft_Azure_CloudPC/CloudPCAgentPoolDetail.ReactView/poolId/8607571b-2177-462c-bd6f-b8d1dac75333' `
         -PoolDisplayName 'su-cua-test-clone' `
         -PoolDescription 'updated description' `

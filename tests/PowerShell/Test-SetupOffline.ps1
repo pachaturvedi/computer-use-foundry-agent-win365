@@ -110,7 +110,8 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
     Export-ModuleMember -Function Connect-MgGraph, Get-MgContext, Invoke-MgGraphRequest
 }
 $module | Import-Module -Global
-$repoRoot = Split-Path $PSScriptRoot
+$repoRoot = Split-Path (Split-Path $PSScriptRoot)
+$scriptsRoot = Join-Path $repoRoot 'scripts'
 $localConfigPath = Join-Path $repoRoot 'config\deployment.local.json'
 $ownershipManifestPath = Join-Path ([IO.Path]::GetTempPath()) ("w365-ownership-{0}.json" -f ([guid]::NewGuid()))
 $savedLocalConfig = if (Test-Path -LiteralPath $localConfigPath) {
@@ -126,7 +127,7 @@ try {
         PoolId = '55555555-5555-5555-5555-555555555555'; BillingConfirmed = $true; Confirm = $false; SkipAzdEnvironmentSync = $true
         OwnershipManifestPath = $ownershipManifestPath
     }
-    $output = & "$PSScriptRoot\Setup-W365.ps1" @setupArgs
+    $output = & "$scriptsRoot\Setup-W365.ps1" @setupArgs
     if ('W365_AGENT_ID=33333333-3333-3333-3333-333333333333' -notin $output -or
         'W365_AGENT_OBJECT_ID=22222222-2222-2222-2222-222222222222' -notin $output) { throw 'Client and object IDs were conflated.' }
     if (!(Test-Path -LiteralPath $ownershipManifestPath)) { throw 'Ownership manifest was not written.' }
@@ -142,7 +143,7 @@ try {
         requiredResourceAccessBefore = $manifest.graph.blueprint.requiredResourceAccessBefore
         requiredResourceAccessAdded = $manifest.graph.blueprint.requiredResourceAccessAdded
     } | ConvertTo-Json -Depth 40 -Compress
-    & "$PSScriptRoot\Setup-W365.ps1" @setupArgs | Out-Null
+    & "$scriptsRoot\Setup-W365.ps1" @setupArgs | Out-Null
     $manifestAfterRerun = Get-Content -LiteralPath $ownershipManifestPath -Raw | ConvertFrom-Json -AsHashtable
     $restoreBaselineAfterRerun = [ordered]@{
         previousScope = $manifestAfterRerun.graph.permissionGrants['90ecec28-f5a6-42b3-9bde-dae1ca98f8b5'].previousScope
@@ -160,13 +161,13 @@ try {
     }
     $setupArgs.HostedRuntimeIdentityObjectId = '22222222-2222-2222-2222-222222222222'
     $setupArgs.AuthorizeHostedRuntimeFederation = $true
-    & "$PSScriptRoot\Setup-W365.ps1" @setupArgs | Out-Null
-    & "$PSScriptRoot\Setup-W365.ps1" @setupArgs | Out-Null
+    & "$scriptsRoot\Setup-W365.ps1" @setupArgs | Out-Null
+    & "$scriptsRoot\Setup-W365.ps1" @setupArgs | Out-Null
     & $module { if ($script:ledger.Fics.Count -ne 1 -or $script:ledger.Creates -ne 9) { throw 'Hosted federation was duplicated.' } }
     $setupArgs.ViewerManagedIdentityObjectId = '44444444-4444-4444-4444-444444444444'
     $setupArgs.AuthorizeViewerFederation = $true
-    & "$PSScriptRoot\Setup-W365.ps1" @setupArgs | Out-Null
-    & "$PSScriptRoot\Setup-W365.ps1" @setupArgs | Out-Null
+    & "$scriptsRoot\Setup-W365.ps1" @setupArgs | Out-Null
+    & "$scriptsRoot\Setup-W365.ps1" @setupArgs | Out-Null
     & $module { if ($script:ledger.Fics.Count -ne 2 -or $script:ledger.Creates -ne 10) { throw 'Viewer federation was duplicated.' } }
     foreach ($scenario in @('agent-parent', 'user-parent', 'missing-blueprint', 'missing-principal', 'fic-mismatch', 'inheritance-mismatch')) {
         $saved = & $module { $script:ledger | ConvertTo-Json -Depth 30 }
@@ -183,7 +184,7 @@ try {
             }
         } $scenario
         $rejected = $false
-        try { & "$PSScriptRoot\Setup-W365.ps1" @setupArgs | Out-Null }
+        try { & "$scriptsRoot\Setup-W365.ps1" @setupArgs | Out-Null }
         catch { $rejected = $true }
         if (!$rejected -or (& $module { $script:ledger.Writes }) -ne $before) { throw "$scenario was not rejected before mutations." }
         & $module { param($saved) $script:ledger = $saved | ConvertFrom-Json -AsHashtable } $saved
@@ -205,7 +206,7 @@ try {
         PoolEnableSingleSignOn = $true; BillingConfirmed = $true; Confirm = $false; SkipAzdEnvironmentSync = $true
         OwnershipManifestPath = $ownershipManifestPath
     }
-    $createOutput = & "$PSScriptRoot\Setup-W365.ps1" @createArgs
+    $createOutput = & "$scriptsRoot\Setup-W365.ps1" @createArgs
     if ('W365_POOL_ID=77777777-7777-7777-7777-777777777777' -notin $createOutput -or
         'W365_ENABLED=true' -notin $createOutput) { throw 'Pool creation outputs were not persisted.' }
     $manifest = Get-Content -LiteralPath $ownershipManifestPath -Raw | ConvertFrom-Json -AsHashtable
@@ -249,7 +250,7 @@ try {
         BillingConfirmed = $true; Confirm = $false; SkipAzdEnvironmentSync = $true
         OwnershipManifestPath = $ownershipManifestPath
     }
-    $configCreateOutput = & "$PSScriptRoot\Setup-W365.ps1" @configCreateArgs
+    $configCreateOutput = & "$scriptsRoot\Setup-W365.ps1" @configCreateArgs
     if ('W365_POOL_ID=77777777-7777-7777-7777-777777777777' -notin $configCreateOutput) {
         throw 'Pool creation did not consume deployment.local.json values.'
     }

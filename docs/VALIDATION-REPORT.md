@@ -93,10 +93,10 @@ dotnet restore .\Win365FoundrySample.slnx
 dotnet format .\Win365FoundrySample.slnx --verify-no-changes --no-restore --verbosity minimal
 dotnet test .\Win365FoundrySample.slnx -c Release --no-restore
 
-pwsh -NoProfile -File .\scripts\Test-SetupOffline.ps1
-pwsh -NoProfile -File .\scripts\Test-RemoveW365ResourcesOffline.ps1
-pwsh -NoProfile -File .\scripts\Test-W365TeardownFlowOffline.ps1
-pwsh -NoProfile -File .\scripts\Test-DiscoveryOffline.ps1
+pwsh -NoProfile -File .\tests\PowerShell\Test-SetupOffline.ps1
+pwsh -NoProfile -File .\tests\PowerShell\Test-RemoveW365ResourcesOffline.ps1
+pwsh -NoProfile -File .\tests\PowerShell\Test-W365TeardownFlowOffline.ps1
+pwsh -NoProfile -File .\tests\PowerShell\Test-DiscoveryOffline.ps1
 ```
 
 These commands do not authenticate to Microsoft Graph, allocate a Cloud PC, or
