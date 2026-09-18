@@ -155,8 +155,18 @@ agent user, creates or updates the Cloud PC agent pool when requested, and
 assigns the agent user directly using
 `cloudPcAgentPoolUserAssignment.userPrincipalId`, not through a group. Different
 inheritance policies are not taken over. Incremental reruns reuse the persisted
-`W365_POOL_ID` from the selected azd environment and patch the mutable pool
-properties instead of creating another pool.
+pool only when the selected environment's ownership manifest proves its exact
+ID and relationships. A standalone `W365_POOL_ID` or matching display name is
+not ownership proof. The environment-owned `azd up` path creates the pool from
+the validated local profile and derives its display name from `RESOURCE_PREFIX`
+and `AZURE_ENV_NAME`.
+
+When `ENABLE_W365=true`, the project `postup` hook drives this setup after the
+bootstrap hosted-agent version exists. It requires
+`W365_AGENT_USER_PRINCIPAL_NAME` and asks for W365 resource approval before
+mutations. Protected noninteractive automation may set
+`W365_RESOURCE_CHANGES_CONFIRMED=true` for that process; do not commit or
+persist this approval as a reusable default.
 
 `Setup-W365.ps1` writes these non-secret outputs into the currently selected azd
 environment when `azd 1.32.0+` is available. Record them for review; they are

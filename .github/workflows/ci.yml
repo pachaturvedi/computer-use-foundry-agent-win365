@@ -31,6 +31,7 @@ jobs:
           ./tests/PowerShell/Test-W365TeardownFlowOffline.ps1
           ./tests/PowerShell/Test-DiscoveryOffline.ps1
           ./tests/PowerShell/Test-W365ProvisioningOffline.ps1
+          ./tests/PowerShell/Test-CompleteAzdUpOffline.ps1
   windows-quickstart:
     runs-on: windows-latest
     steps:
