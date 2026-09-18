@@ -1,4 +1,5 @@
 #Requires -Version 7.4
+# TestCategory: Offline
 [CmdletBinding()]
 param()
 $ErrorActionPreference = 'Stop'

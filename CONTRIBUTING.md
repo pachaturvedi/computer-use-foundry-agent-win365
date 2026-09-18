@@ -32,6 +32,10 @@ tests. See the [architecture code map](docs/ARCHITECTURE.md#source-layout).
 
 Add fake-handler tests for behavior changes; tests must never acquire tokens
 from a real tenant, allocate a Cloud PC, or call a live model by default.
+PowerShell tests under `tests\PowerShell` must declare exactly one leading
+`# TestCategory: Offline`, `Platform`, or `Live` marker. The recursive
+`Invoke-PowerShellTests.ps1` driver runs only `Offline` tests by default and
+fails closed when category metadata is missing or invalid.
 
 For azd changes, keep `azure.yaml` aligned with the current official Foundry
 hosted-agent schema and preserve its minimum CLI/extension versions. Validate

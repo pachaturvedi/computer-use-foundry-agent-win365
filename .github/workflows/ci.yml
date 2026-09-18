@@ -15,23 +15,9 @@ jobs:
       - run: dotnet restore Win365FoundrySample.slnx
       - run: dotnet format Win365FoundrySample.slnx --verify-no-changes --no-restore --verbosity minimal
       - run: dotnet test Win365FoundrySample.slnx -c Release --no-restore
-      - name: Parse PowerShell and exercise offline setup plan
+      - name: Run offline PowerShell validation
         shell: pwsh
-        run: |
-          $failed = @()
-          Get-ChildItem scripts/*.ps1, tests/PowerShell/*.ps1 | ForEach-Object {
-            $tokens = $null; $errors = $null
-            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors) | Out-Null
-            $failed += $errors
-          }
-          if ($failed.Count) { $failed | Format-List; exit 1 }
-          ./scripts/Setup-W365.ps1 -TenantId ([guid]::Empty) -BlueprintId ([guid]::Empty) -AgentIdentityId ([guid]::Empty) -AgentUserPrincipalName agent@example.com -PoolId ([guid]::Empty) -WhatIf
-          ./tests/PowerShell/Test-SetupOffline.ps1
-          ./tests/PowerShell/Test-RemoveW365ResourcesOffline.ps1
-          ./tests/PowerShell/Test-W365TeardownFlowOffline.ps1
-          ./tests/PowerShell/Test-DiscoveryOffline.ps1
-          ./tests/PowerShell/Test-W365ProvisioningOffline.ps1
-          ./tests/PowerShell/Test-CompleteAzdUpOffline.ps1
+        run: ./tests/PowerShell/Invoke-PowerShellTests.ps1
   windows-quickstart:
     runs-on: windows-latest
     steps:
