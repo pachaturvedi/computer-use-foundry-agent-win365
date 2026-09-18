@@ -179,6 +179,7 @@ $envName = 'cleanup-test'
 $envDir = Join-Path $tempRoot $envName
 $envFilePath = Join-Path $envDir '.env'
 $manifestPath = Join-Path $envDir 'w365-ownership.json'
+$previousCleanupApproval = $env:W365_CLEANUP_CONFIRMED
 
 function Write-TestEnvironment {
     param(
@@ -263,7 +264,9 @@ try {
     Write-TestEnvironment
     Write-TestManifest
 
-    & "$scriptsRoot\Remove-W365Resources.ps1" -EnvironmentName $envName -EnvironmentFilePath $envFilePath -OwnershipManifestPath $manifestPath -Confirm:$false
+    $env:W365_CLEANUP_CONFIRMED = 'true'
+    & "$scriptsRoot\Remove-W365Resources.ps1" -EnvironmentName $envName -EnvironmentFilePath $envFilePath -OwnershipManifestPath $manifestPath
+    $env:W365_CLEANUP_CONFIRMED = ''
     $state = Get-MockGraphState
     if ($null -ne $state.Pool -or $null -ne $state.AgentUser) {
         throw 'Created pool or agent user was not deleted.'
@@ -428,9 +431,10 @@ try {
         throw 'Reused-inheritance preflight should block cleanup before any deletions run.'
     }
 
-    Write-Output 'Offline cleanup: reverse-order deletion, idempotent rerun, shared-project guard, and fail-closed partial cleanup passed.'
+    Write-Output 'Offline cleanup: protected approval, reverse-order deletion, idempotent rerun, shared-project guard, and fail-closed partial cleanup passed.'
 }
 finally {
+    [Environment]::SetEnvironmentVariable('W365_CLEANUP_CONFIRMED', $previousCleanupApproval, 'Process')
     if (Test-Path -LiteralPath $tempRoot) {
         Remove-Item -LiteralPath $tempRoot -Recurse -Force
     }

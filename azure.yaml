@@ -72,7 +72,7 @@ hooks:
   predown:
     windows:
       shell: pwsh
-      run: ./scripts/Remove-W365Resources.ps1
+      run: ./scripts/Remove-W365Resources.ps1 -UseDeviceCode
       interactive: true
       continueOnError: false
   postup:
