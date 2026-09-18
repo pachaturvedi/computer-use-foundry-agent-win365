@@ -11,7 +11,13 @@ Describe the behavior change and the user-visible or operator-visible impact.
 - [ ] Confirmed default tests remained offline and did not mutate external resources.
 - [ ] Included any manual validation notes for Azure, Foundry, W365, or Graph behavior.
 
-Commands, results, test counts, skipped/blocked checks, and evidence location:
+Record each command or check exactly; use `Pass`, `Fail`, `Blocked`, or `Not applicable` rather than leaving evidence blank.
+
+| Command or check | Outcome | Environment/platform | Scope (`Offline` or `Live`) | UTC date/time or run link (when applicable) | Evidence/result |
+| --- | --- | --- | --- | --- | --- |
+|  |  |  |  |  |  |
+
+Declared gaps, limitations, skipped coverage, and follow-up verification:
 
 ## Live Validation
 
