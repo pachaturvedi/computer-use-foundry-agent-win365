@@ -227,7 +227,7 @@ If you want a single stitched command after bootstrap, use:
 ```powershell
 pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
      -Environment "<azd-environment-name>" `
-     -AgentUserPrincipalName "foundry-w365-agent@YOUR-VERIFIED-DOMAIN.example" `
+     -AgentUserPrincipalName "foundry-w365-agent@YOUR-TENANT.onmicrosoft.com" `
      -PoolIdOrUrl "https://intune.microsoft.com/#view/Microsoft_Azure_CloudPC/CloudPCAgentPoolDetail.ReactView/poolId/<pool-guid>" `
      -BillingConfirmed `
      -ConfirmResourceChanges `

@@ -299,7 +299,7 @@ same agent name:
 ```powershell
 pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
    -Environment "<azd-environment-name>" `
-   -AgentUserPrincipalName "foundry-w365-agent@YOUR-VERIFIED-DOMAIN.example" `
+   -AgentUserPrincipalName "foundry-w365-agent@YOUR-TENANT.onmicrosoft.com" `
    -PoolIdOrUrl "<existing-pool-guid-or-intune-url>" `
    -BillingConfirmed `
    -ConfirmResourceChanges `

@@ -39,7 +39,7 @@ $setup = @{
     TenantId = "<same-W365-and-Foundry-tenant-GUID>"
     BlueprintId = "<Foundry-blueprint-app-client-GUID>"
     AgentIdentityId = "<Foundry-agent-object-principal-GUID>"
-    AgentUserPrincipalName = "foundry-w365-agent@YOUR-VERIFIED-DOMAIN.example"
+    AgentUserPrincipalName = "foundry-w365-agent@YOUR-TENANT.onmicrosoft.com"
     PoolId = "<existing-agent-pool-GUID>"
 }
 .\scripts\Setup-W365.ps1 @setup -WhatIf
@@ -51,7 +51,7 @@ $setup = @{
 ```powershell
 pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
     -Environment "<azd-environment-name>" `
-    -AgentUserPrincipalName "foundry-w365-agent@YOUR-VERIFIED-DOMAIN.example" `
+    -AgentUserPrincipalName "foundry-w365-agent@YOUR-TENANT.onmicrosoft.com" `
     -PoolIdOrUrl "<existing-pool-guid-or-intune-url>" `
     -BillingConfirmed `
     -ConfirmResourceChanges `
