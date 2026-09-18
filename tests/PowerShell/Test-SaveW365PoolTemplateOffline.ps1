@@ -76,7 +76,7 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
 $module | Import-Module -Global
 $repoRoot = Split-Path (Split-Path $PSScriptRoot)
 $scriptsRoot = Join-Path $repoRoot 'scripts'
-$tempPath = Join-Path $env:TEMP 'w365-pool-template-test.json'
+$tempPath = Join-Path ([IO.Path]::GetTempPath()) 'w365-pool-template-test.json'
 $script:AzCalls = 0
 function global:az {
     param(
