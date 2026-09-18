@@ -79,9 +79,7 @@ try {
     if (!$SkipTests) {
         Write-Host 'Running offline tests...'
         Invoke-DotNet @('test', $solution, '--configuration', 'Release', '--no-build', '--no-restore')
-        $testRoot = Join-Path (Split-Path $PSScriptRoot) 'tests\PowerShell'
-        & (Join-Path $testRoot 'Test-SetupOffline.ps1')
-        & (Join-Path $testRoot 'Test-DiscoveryOffline.ps1')
+        & (Join-Path (Split-Path $PSScriptRoot) 'tests\PowerShell\Invoke-PowerShellTests.ps1')
     }
 }
 finally {

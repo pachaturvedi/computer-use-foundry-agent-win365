@@ -1,4 +1,5 @@
 #Requires -Version 7.4
+# TestCategory: Platform
 [CmdletBinding()]
 param(
     [switch]$RequireLogin

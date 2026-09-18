@@ -1,4 +1,5 @@
 #Requires -Version 7.4
+# TestCategory: Offline
 # All endpoints are mocked. Unexpected calls fail, including identity/credential creation.
 [CmdletBinding()]
 param()
