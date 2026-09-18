@@ -28,6 +28,15 @@ param modelVersion string
 param modelSkuName string
 @minValue(1)
 param modelSkuCapacity int
+@allowed([
+  'managed'
+  'existing'
+])
+param foundryProjectOwnership string = 'managed'
+param existingProjectEndpoint string = ''
+param existingProjectId string = ''
+param existingFoundryResourceGroupId string = ''
+param existingFoundryResourceGroupName string = ''
 param projectDisplayName string = projectName
 param projectDescription string = 'Default project created with the resource'
 @allowed([
@@ -53,14 +62,27 @@ var tags = {
   'managed-by': 'azd'
   'resource-prefix': resourcePrefix
 }
+var useExistingProject = foundryProjectOwnership == 'existing'
+var resolvedProjectEndpoint = !useExistingProject
+  ? ''
+  : (!empty(existingProjectEndpoint) ? existingProjectEndpoint : fail('Existing-project mode requires FOUNDRY_PROJECT_ENDPOINT.'))
+var resolvedProjectId = !useExistingProject
+  ? ''
+  : (!empty(existingProjectId) ? existingProjectId : fail('Existing-project mode requires AZURE_AI_PROJECT_ID.'))
+var resolvedFoundryResourceGroupId = !useExistingProject
+  ? ''
+  : (!empty(existingFoundryResourceGroupId) ? existingFoundryResourceGroupId : fail('Existing-project mode requires AZD_FOUNDRY_RESOURCE_GROUP_ID.'))
+var resolvedFoundryResourceGroupName = !useExistingProject
+  ? ''
+  : (!empty(existingFoundryResourceGroupName) ? existingFoundryResourceGroupName : fail('Existing-project mode requires AZURE_FOUNDRY_RESOURCE_GROUP.'))
 
-resource foundryResourceGroup 'Microsoft.Resources/resourceGroups@2023-07-01' = {
+resource foundryResourceGroup 'Microsoft.Resources/resourceGroups@2023-07-01' = if (!useExistingProject) {
   name: foundryResourceGroupName
   location: location
   tags: tags
 }
 
-module foundry './resources.bicep' = {
+module foundry './resources.bicep' = if (!useExistingProject) {
   name: 'foundry-resources'
   scope: foundryResourceGroup
   params: {
@@ -81,14 +103,15 @@ module foundry './resources.bicep' = {
   }
 }
 
-output AZD_FOUNDRY_RESOURCE_GROUP_ID string = foundryResourceGroup.id
-output AZURE_FOUNDRY_RESOURCE_GROUP string = foundryResourceGroup.name
-output AZURE_RESOURCE_GROUP string = foundryResourceGroup.name
-output AZURE_AI_ACCOUNT_NAME string = foundry.outputs.accountName
-output AZURE_AI_PROJECT_NAME string = foundry.outputs.projectName
-output AZURE_AI_PROJECT_ID string = foundry.outputs.projectId
-output AZURE_OPENAI_ENDPOINT string = foundry.outputs.openAiEndpoint
-output FOUNDRY_PROJECT_ENDPOINT string = foundry.outputs.projectEndpoint
+output AZD_FOUNDRY_RESOURCE_GROUP_ID string = useExistingProject ? resolvedFoundryResourceGroupId : foundryResourceGroup.id
+output AZURE_FOUNDRY_RESOURCE_GROUP string = useExistingProject ? resolvedFoundryResourceGroupName : foundryResourceGroup.name
+output AZURE_RESOURCE_GROUP string = useExistingProject ? resolvedFoundryResourceGroupName : foundryResourceGroup.name
+output FOUNDRY_PROJECT_OWNERSHIP string = foundryProjectOwnership
+output AZURE_AI_ACCOUNT_NAME string = useExistingProject ? accountName : foundry!.outputs.accountName
+output AZURE_AI_PROJECT_NAME string = useExistingProject ? projectName : foundry!.outputs.projectName
+output AZURE_AI_PROJECT_ID string = useExistingProject ? resolvedProjectId : foundry!.outputs.projectId
+output AZURE_OPENAI_ENDPOINT string = useExistingProject ? 'https://${accountName}.openai.azure.com/' : foundry!.outputs.openAiEndpoint
+output FOUNDRY_PROJECT_ENDPOINT string = useExistingProject ? resolvedProjectEndpoint : foundry!.outputs.projectEndpoint
 output AI_PROJECT_DEPLOYMENTS string = string([
   {
     name: modelDeploymentName

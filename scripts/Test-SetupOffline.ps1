@@ -112,6 +112,7 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
 $module | Import-Module -Global
 $repoRoot = Split-Path $PSScriptRoot
 $localConfigPath = Join-Path $repoRoot 'config\deployment.local.json'
+$ownershipManifestPath = Join-Path ([IO.Path]::GetTempPath()) ("w365-ownership-{0}.json" -f ([guid]::NewGuid()))
 $savedLocalConfig = if (Test-Path -LiteralPath $localConfigPath) {
     Get-Content -LiteralPath $localConfigPath -Raw
 }
@@ -123,11 +124,34 @@ try {
         TenantId = [guid]::Empty; BlueprintId = '11111111-1111-1111-1111-111111111111'
         AgentIdentityId = '22222222-2222-2222-2222-222222222222'; AgentUserPrincipalName = 'agent@example.com'
         PoolId = '55555555-5555-5555-5555-555555555555'; BillingConfirmed = $true; Confirm = $false; SkipAzdEnvironmentSync = $true
+        OwnershipManifestPath = $ownershipManifestPath
     }
     $output = & "$PSScriptRoot\Setup-W365.ps1" @setupArgs
     if ('W365_AGENT_ID=33333333-3333-3333-3333-333333333333' -notin $output -or
         'W365_AGENT_OBJECT_ID=22222222-2222-2222-2222-222222222222' -notin $output) { throw 'Client and object IDs were conflated.' }
+    if (!(Test-Path -LiteralPath $ownershipManifestPath)) { throw 'Ownership manifest was not written.' }
+    $manifest = Get-Content -LiteralPath $ownershipManifestPath -Raw | ConvertFrom-Json -AsHashtable
+    if ($manifest.w365.pool.id -ne '55555555-5555-5555-5555-555555555555' -or
+        $manifest.w365.pool.disposition -ne 'reused' -or
+        $manifest.w365.assignment.disposition -ne 'created' -or
+        $manifest.graph.blueprint.appId -ne '11111111-1111-1111-1111-111111111111') {
+        throw 'Ownership manifest contents were incomplete.'
+    }
+    $restoreBaselineBeforeRerun = [ordered]@{
+        previousScope = $manifest.graph.permissionGrants['90ecec28-f5a6-42b3-9bde-dae1ca98f8b5'].previousScope
+        requiredResourceAccessBefore = $manifest.graph.blueprint.requiredResourceAccessBefore
+        requiredResourceAccessAdded = $manifest.graph.blueprint.requiredResourceAccessAdded
+    } | ConvertTo-Json -Depth 40 -Compress
     & "$PSScriptRoot\Setup-W365.ps1" @setupArgs | Out-Null
+    $manifestAfterRerun = Get-Content -LiteralPath $ownershipManifestPath -Raw | ConvertFrom-Json -AsHashtable
+    $restoreBaselineAfterRerun = [ordered]@{
+        previousScope = $manifestAfterRerun.graph.permissionGrants['90ecec28-f5a6-42b3-9bde-dae1ca98f8b5'].previousScope
+        requiredResourceAccessBefore = $manifestAfterRerun.graph.blueprint.requiredResourceAccessBefore
+        requiredResourceAccessAdded = $manifestAfterRerun.graph.blueprint.requiredResourceAccessAdded
+    } | ConvertTo-Json -Depth 40 -Compress
+    if ($restoreBaselineAfterRerun -ne $restoreBaselineBeforeRerun) {
+        throw 'Setup rerun overwrote the original cleanup restore baseline.'
+    }
     & $module {
         if ($script:ledger.Creates -ne 8 -or $script:ledger.Grants.Count -ne 3 -or $script:ledger.Inheritance.Count -ne 3 -or
             $script:ledger.Assignments.Count -ne 1 -or $script:ledger.Fics.Count -ne 0) { throw 'Setup was not idempotent.' }
@@ -164,6 +188,9 @@ try {
         if (!$rejected -or (& $module { $script:ledger.Writes }) -ne $before) { throw "$scenario was not rejected before mutations." }
         & $module { param($saved) $script:ledger = $saved | ConvertFrom-Json -AsHashtable } $saved
     }
+    if (Test-Path -LiteralPath $ownershipManifestPath) {
+        Remove-Item -LiteralPath $ownershipManifestPath
+    }
     & $module {
         $script:ledger.Pool = $null
         $script:ledger.User = $null
@@ -176,10 +203,19 @@ try {
         PoolGeographicLocationType = 'usWest'; PoolRegionGroup = 'usWest'; PoolRegions = @('westus2', 'westus3')
         PoolImageId = 'microsoftwindowsdesktop_windows-ent-cpc_win11-23h2-ent-cpc-m365'; PoolMinimumCount = 2; PoolMaximumCount = 4
         PoolEnableSingleSignOn = $true; BillingConfirmed = $true; Confirm = $false; SkipAzdEnvironmentSync = $true
+        OwnershipManifestPath = $ownershipManifestPath
     }
     $createOutput = & "$PSScriptRoot\Setup-W365.ps1" @createArgs
     if ('W365_POOL_ID=77777777-7777-7777-7777-777777777777' -notin $createOutput -or
         'W365_ENABLED=true' -notin $createOutput) { throw 'Pool creation outputs were not persisted.' }
+    $manifest = Get-Content -LiteralPath $ownershipManifestPath -Raw | ConvertFrom-Json -AsHashtable
+    if ($manifest.w365.pool.id -ne '77777777-7777-7777-7777-777777777777' -or
+        $manifest.w365.pool.disposition -ne 'created') {
+        throw 'Created pool ownership was not persisted.'
+    }
+    if (Test-Path -LiteralPath $ownershipManifestPath) {
+        Remove-Item -LiteralPath $ownershipManifestPath
+    }
     & $module {
         $script:ledger.Pool = $null
         $script:ledger.User = $null
@@ -211,6 +247,7 @@ try {
         TenantId = [guid]::Empty; BlueprintId = '11111111-1111-1111-1111-111111111111'
         AgentIdentityId = '22222222-2222-2222-2222-222222222222'; AgentUserPrincipalName = 'config-agent@example.com'
         BillingConfirmed = $true; Confirm = $false; SkipAzdEnvironmentSync = $true
+        OwnershipManifestPath = $ownershipManifestPath
     }
     $configCreateOutput = & "$PSScriptRoot\Setup-W365.ps1" @configCreateArgs
     if ('W365_POOL_ID=77777777-7777-7777-7777-777777777777' -notin $configCreateOutput) {
@@ -233,6 +270,9 @@ finally {
     }
     elseif (Test-Path -LiteralPath $localConfigPath) {
         Remove-Item -LiteralPath $localConfigPath
+    }
+    if (Test-Path -LiteralPath $ownershipManifestPath) {
+        Remove-Item -LiteralPath $ownershipManifestPath
     }
 
     Remove-Module Microsoft.Graph.Authentication

@@ -151,6 +151,12 @@ identifiers, not credentials.
 | `W365_POOL_ID` | Agent pool ID reused or created by setup, then used for the assignment. |
 | `W365_ENABLED` | Internal phase switch set to `true` only after setup succeeds. |
 
+When setup can resolve the selected azd environment, it also writes a
+non-secret ownership manifest under `.azure/<environment>/w365-ownership.json`
+and prints `W365_OWNERSHIP_MANIFEST=<path>`. That manifest records which W365
+and Entra objects were created by the sample, which ones were reused, and the
+blueprint's prior `requiredResourceAccess` so teardown can restore it.
+
 If automatic persistence cannot run, copy the same non-secret outputs to the
 phase-2 deployment configuration manually.
 
@@ -188,6 +194,7 @@ To rerun only the setup/discovery regressions:
 
 ```powershell
 pwsh -NoProfile -File .\scripts\Test-SetupOffline.ps1
+pwsh -NoProfile -File .\scripts\Test-RemoveW365ResourcesOffline.ps1
 pwsh -NoProfile -File .\scripts\Test-DiscoveryOffline.ps1
 ```
 
@@ -195,10 +202,14 @@ The regression scripts mock Graph and Azure CLI respectively: they do not sign i
 call a tenant, allocate a Cloud PC or incur W365 charges. The setup tests cover
 existing identity reuse, distinct client/object IDs, pre-mutation parent/policy
 rejection, preservation of unrelated configuration and optional idempotent
-viewer federation. The discovery tests cover the exact read-only version URL,
-ID types, tenant binding, missing metadata and untrusted endpoint rejection.
-This is separate from setup `-WhatIf`, which prints the offline plan for your
-supplied arguments. Neither proves live hosting compatibility.
+viewer federation. The cleanup tests cover reverse-order deletion, idempotent
+runs, shared-project blocking, already-absent resource handling, pre-mutation
+verification of reused grants and reused inheritance entries, and fail-closed
+behavior when shared-state restoration is no longer safe. The discovery tests
+cover the exact read-only version URL, ID types, tenant binding, missing
+metadata and untrusted endpoint rejection. This is separate from setup `-WhatIf`,
+which prints the offline plan for your supplied arguments. Neither proves live
+hosting compatibility.
 
 ## Optional viewer federation
 
@@ -316,12 +327,53 @@ old Key Vault certificate secrets. Preserve the viewer's separate OIDC secret.
 
 ## Cleanup
 
-End active sessions first. In Intune remove the sample assignment and delete
-unneeded sample pools (deletion destroys their Cloud PCs). Remove only approved,
-sample-specific agent users, grants, viewer FICs and role assignments. Check
-other consumers and coordinate with the Foundry owner before deleting any
-Foundry-managed blueprint, principal or agent identity. Never treat reused
-identities as disposable script-owned resources.
+End active sessions first. `azd down` now invokes
+`scripts/Remove-W365Resources.ps1` through the manifest `predown` hook in
+`azure.yaml`, and that script removes W365/Entra artifacts before Azure
+resources. The recorded teardown order is: pool assignment, agent user,
+sample-created federated credentials, created permission grants or restored
+reused grant scopes, sample-created inheritance entries, blueprint
+`requiredResourceAccess`, and finally a sample-created W365 pool.
+
+Cleanup is ownership-driven, not name-driven. The script reads
+`.azure/<environment>/w365-ownership.json` and removes only objects recorded as
+sample-created. Reused grants are restored to their prior scope instead of being
+deleted, reused inheritance entries are preserved, and reused identities or
+pools are preserved. Before any sample-owned deletion runs, cleanup now verifies
+that every reused shared-state dependency it may need to preserve or restore is
+still present. If W365 state exists but the manifest is missing, or reused
+shared state has drifted beyond safe restoration, cleanup is blocked because the
+sample can no longer prove what it owns.
+
+For direct execution, use the selected azd environment or pass the paths
+explicitly:
+
+```powershell
+pwsh -NoProfile -File .\scripts\Remove-W365Resources.ps1 -Confirm
+pwsh -NoProfile -File .\scripts\Remove-W365Resources.ps1 `
+    -EnvironmentName "<azd-environment-name>" `
+    -EnvironmentFilePath ".\.azure\<azd-environment-name>\.env" `
+    -OwnershipManifestPath ".\.azure\<azd-environment-name>\w365-ownership.json" `
+    -UseDeviceCode `
+    -Confirm
+```
+
+If the environment is bound to an existing Foundry project, cleanup fails before
+any mutation unless you explicitly confirm that the Foundry side is also safe to
+destroy:
+
+```powershell
+$env:ALLOW_EXISTING_FOUNDRY_CLEANUP = 'true'
+pwsh -NoProfile -File .\scripts\Remove-W365Resources.ps1 -Confirm
+```
+
+Use that override only for dedicated disposable environments. It is not a safe
+default for shared Foundry projects.
+
+Outside the scripted path, remove only approved, sample-specific role
+assignments and viewer FICs. Check other consumers and coordinate with the
+Foundry owner before deleting any Foundry-managed blueprint, principal or agent
+identity. Never treat reused identities as disposable script-owned resources.
 
 Retire unneeded OIDC secrets and private state according to policy. Azure
 resource-group deletion does not delete Entra identities or cancel W365 billing.

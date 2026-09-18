@@ -1,0 +1,567 @@
+#Requires -Version 7.4
+[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
+param(
+    [string]$EnvironmentName,
+    [string]$EnvironmentFilePath,
+    [string]$OwnershipManifestPath,
+    [switch]$AllowExistingProjectCleanup,
+    [switch]$UseDeviceCode,
+    [ValidateRange(30, 3600)][int]$GraphClientTimeoutSeconds = 600
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+. (Join-Path $PSScriptRoot 'W365OwnershipManifest.ps1')
+
+function Get-AzdCommand {
+    $azdPaths = [System.Collections.Generic.List[string]]::new()
+    foreach ($command in @(Get-Command azd -All -ErrorAction SilentlyContinue)) {
+        if ($null -ne $command -and !$azdPaths.Contains($command.Source)) {
+            $azdPaths.Add($command.Source)
+        }
+    }
+    foreach ($path in @(
+        (Join-Path $env:LOCALAPPDATA 'Programs\Azure Dev CLI\azd.exe'),
+        (Join-Path $env:ProgramFiles 'Azure Dev CLI\azd.exe')
+    )) {
+        if (![string]::IsNullOrWhiteSpace($path) -and (Test-Path $path) -and !$azdPaths.Contains($path)) {
+            $azdPaths.Add($path)
+        }
+    }
+
+    $azdCandidates = $azdPaths |
+        ForEach-Object {
+            $versionOutput = & $_ version 2>$null
+            if ($LASTEXITCODE -eq 0 -and $versionOutput -match 'azd version\s+(\d+\.\d+\.\d+)') {
+                [pscustomobject]@{ Path = $_; Version = [version]$Matches[1] }
+            }
+        } |
+        Sort-Object Version -Descending
+
+    return $azdCandidates | Where-Object Version -ge ([version]'1.32.0') | Select-Object -First 1
+}
+function Invoke-Azd {
+    param(
+        [Parameter(Mandatory)]$Azd,
+        [Parameter(Mandatory)][string[]]$Arguments,
+        [switch]$CaptureOutput
+    )
+
+    $output = & $Azd.Path @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "azd $($Arguments -join ' ') failed with exit code $LASTEXITCODE."
+    }
+
+    if ($CaptureOutput) {
+        return ($output | Out-String).Trim()
+    }
+
+    return $output
+}
+function Get-OptionalObjectValue {
+    param(
+        $Object,
+        [Parameter(Mandatory)][string]$Name
+    )
+
+    if ($null -eq $Object) {
+        return $null
+    }
+
+    if ($Object -is [System.Collections.IDictionary]) {
+        if ($Object.Contains($Name)) {
+            return $Object[$Name]
+        }
+
+        return $null
+    }
+
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -ne $property) {
+        return $property.Value
+    }
+
+    return $null
+}
+function Test-TrueString {
+    param([string]$Value)
+
+    return @('1', 'true', 'yes', 'on') -contains ([string]$Value).Trim().ToLowerInvariant()
+}
+function Test-GraphResourceNotFound {
+    param([Parameter(Mandatory)]$ErrorRecord)
+
+    $statusCode = Get-OptionalObjectValue -Object $ErrorRecord.Exception -Name 'ResponseStatusCode'
+    if ($null -eq $statusCode) {
+        $response = Get-OptionalObjectValue -Object $ErrorRecord.Exception -Name 'Response'
+        $statusCode = Get-OptionalObjectValue -Object $response -Name 'StatusCode'
+    }
+
+    if ($null -ne $statusCode -and [int]$statusCode -eq 404) {
+        return $true
+    }
+
+    return $ErrorRecord.Exception.Message -eq 'Pool not found'
+}
+function Get-RequiredStringValue {
+    param(
+        [hashtable]$Map,
+        [Parameter(Mandatory)][string]$Key
+    )
+
+    if ($null -eq $Map -or !$Map.Contains($Key) -or [string]::IsNullOrWhiteSpace([string]$Map[$Key])) {
+        throw "Required manifest field '$Key' is missing."
+    }
+
+    return [string]$Map[$Key]
+}
+function List-MapValues {
+    param([hashtable]$Map)
+
+    if ($null -eq $Map) {
+        return @()
+    }
+
+    return @($Map.Keys | Sort-Object | ForEach-Object { $Map[$_] })
+}
+function Test-GraphContext {
+    param(
+        $Context,
+        [guid]$RequiredTenantId,
+        [string[]]$RequiredScopes
+    )
+
+    if ($null -eq $Context) {
+        return $false
+    }
+    if ($Context.TenantId -ne $RequiredTenantId.ToString()) {
+        return $false
+    }
+    if ($Context.AuthType -ne 'Delegated') {
+        return $false
+    }
+
+    $missingScopes = @($RequiredScopes | Where-Object { $_ -notin $Context.Scopes })
+    return $missingScopes.Count -eq 0
+}
+function Graph([string]$Method, [string]$Path, $Body = $null) {
+    $uri = if ($Path.StartsWith('https://')) { $Path } else { "https://graph.microsoft.com/$Path" }
+    if (!([uri]$uri).Host.Equals('graph.microsoft.com')) {
+        throw 'Graph request resolved to an unexpected origin.'
+    }
+
+    $requestParameters = @{ Method = $Method; Uri = $uri; OutputType = 'Hashtable'; Headers = @{ 'OData-Version' = '4.0' } }
+    if ($null -ne $Body) {
+        $requestParameters.Body = ConvertTo-Json $Body -Depth 40 -Compress
+        $requestParameters.ContentType = 'application/json'
+    }
+
+    Invoke-MgGraphRequest @requestParameters
+}
+function List([string]$Path) {
+    $seen = [Collections.Generic.HashSet[string]]::new()
+    while ($Path) {
+        if (!$seen.Add($Path)) {
+            throw 'Repeated Graph pagination cursor.'
+        }
+
+        $page = Graph GET $Path
+        foreach ($item in $page.value) {
+            $item
+        }
+        $Path = $page['@odata.nextLink']
+    }
+}
+function SingleOrNone($Items, [string]$Label) {
+    $all = @($Items)
+    if ($all.Count -gt 1) {
+        throw "Ambiguous $Label; multiple matches. Resolve manually before rerunning cleanup."
+    }
+    if ($all.Count -eq 1) {
+        return $all[0]
+    }
+
+    return $null
+}
+function Assert-ReusedManifestDependenciesPresent {
+    param(
+        [Parameter(Mandatory)][object[]]$PermissionGrants,
+        [Parameter(Mandatory)][object[]]$CurrentGrants,
+        [Parameter(Mandatory)][object[]]$InheritablePermissions,
+        [Parameter(Mandatory)][object[]]$CurrentInheritances
+    )
+
+    foreach ($grant in @($PermissionGrants | Where-Object { [string]$_.disposition -eq 'reused' })) {
+        $currentGrant = SingleOrNone @($CurrentGrants | Where-Object { $_.resourceId -eq $grant.resourceId }) "permission grant $($grant.resourceAppId)"
+        if (!$currentGrant) {
+            throw "A reused permission grant for $($grant.resourceAppId) is missing, so cleanup cannot safely restore its previous scope."
+        }
+        $recordedGrantId = [string](Get-OptionalObjectValue -Object $grant -Name 'grantId')
+        if (![string]::IsNullOrWhiteSpace($recordedGrantId) -and [string]$currentGrant.id -ne $recordedGrantId) {
+            throw "A reused permission grant for $($grant.resourceAppId) does not match the ownership manifest ID."
+        }
+    }
+
+    foreach ($inheritance in @($InheritablePermissions | Where-Object { [string]$_.disposition -eq 'reused' })) {
+        $currentInheritance = SingleOrNone @($CurrentInheritances | Where-Object { $_.resourceAppId -eq $inheritance.resourceAppId }) "inheritance $($inheritance.resourceAppId)"
+        if (!$currentInheritance) {
+            throw "A reused inheritance entry for $($inheritance.resourceAppId) is missing, so cleanup cannot safely preserve shared blueprint state."
+        }
+        $recordedInheritanceId = [string](Get-OptionalObjectValue -Object $inheritance -Name 'entryId')
+        if (![string]::IsNullOrWhiteSpace($recordedInheritanceId) -and [string]$currentInheritance.id -ne $recordedInheritanceId) {
+            throw "A reused inheritance entry for $($inheritance.resourceAppId) does not match the ownership manifest ID."
+        }
+    }
+}
+function Resolve-EnvironmentContext {
+    $repositoryRoot = Split-Path $PSScriptRoot
+    $azd = $null
+    $resolvedEnvironmentName = $EnvironmentName
+    $resolvedEnvironmentFilePath = $EnvironmentFilePath
+    $resolvedManifestPath = $OwnershipManifestPath
+
+    if ([string]::IsNullOrWhiteSpace($resolvedEnvironmentName) -or
+        [string]::IsNullOrWhiteSpace($resolvedEnvironmentFilePath) -or
+        [string]::IsNullOrWhiteSpace($resolvedManifestPath)) {
+        $azd = Get-AzdCommand
+        if ($azd) {
+            if ([string]::IsNullOrWhiteSpace($resolvedEnvironmentName)) {
+                $resolvedEnvironmentName = Invoke-Azd -Azd $azd -Arguments @('env', 'get-value', 'AZURE_ENV_NAME') -CaptureOutput
+            }
+
+            if (![string]::IsNullOrWhiteSpace($resolvedEnvironmentName)) {
+                if ([string]::IsNullOrWhiteSpace($resolvedEnvironmentFilePath)) {
+                    $resolvedEnvironmentFilePath = Join-Path (Join-Path $repositoryRoot ".azure\$resolvedEnvironmentName") '.env'
+                }
+                if ([string]::IsNullOrWhiteSpace($resolvedManifestPath)) {
+                    $resolvedManifestPath = Get-W365OwnershipManifestPath -RepositoryRoot $repositoryRoot -EnvironmentName $resolvedEnvironmentName
+                }
+            }
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($resolvedEnvironmentName) -and ![string]::IsNullOrWhiteSpace($resolvedManifestPath)) {
+        $resolvedEnvironmentName = Split-Path (Split-Path $resolvedManifestPath -Parent) -Leaf
+    }
+
+    return [pscustomobject]@{
+        RepositoryRoot = $repositoryRoot
+        Azd = $azd
+        EnvironmentName = $resolvedEnvironmentName
+        EnvironmentFilePath = $resolvedEnvironmentFilePath
+        OwnershipManifestPath = $resolvedManifestPath
+    }
+}
+
+$context = Resolve-EnvironmentContext
+if ([string]::IsNullOrWhiteSpace($context.EnvironmentFilePath) -and
+    [string]::IsNullOrWhiteSpace($context.OwnershipManifestPath)) {
+    throw 'Unable to resolve the azd environment or W365 ownership manifest. Cleanup cannot prove whether tenant resources remain, so azd down is blocked.'
+}
+$envValues = if (![string]::IsNullOrWhiteSpace($context.EnvironmentFilePath) -and (Test-Path -LiteralPath $context.EnvironmentFilePath)) {
+    Read-AzdEnvironmentFile -Path $context.EnvironmentFilePath
+}
+else {
+    [ordered]@{}
+}
+$manifest = if (![string]::IsNullOrWhiteSpace($context.OwnershipManifestPath)) {
+    Read-W365OwnershipManifest -Path $context.OwnershipManifestPath -AllowMissing
+}
+else {
+    $null
+}
+
+if ($null -eq $manifest) {
+    $hasW365State = Test-TrueString ([string]$envValues['W365_ENABLED']) -or
+        ![string]::IsNullOrWhiteSpace([string]$envValues['W365_POOL_ID']) -or
+        ![string]::IsNullOrWhiteSpace([string]$envValues['W365_AGENT_USER_ID'])
+    if ($hasW365State) {
+        throw 'No W365 ownership manifest was found for this environment. Cleanup cannot prove ownership, so azd down is blocked.'
+    }
+
+    Write-Output 'No W365 ownership manifest was found and no W365 state is configured. Nothing to clean before azd down.'
+    return
+}
+
+$projectOwnership = [string](Get-OptionalObjectValue -Object $manifest.foundry -Name 'projectOwnership')
+if ([string]::IsNullOrWhiteSpace($projectOwnership) -or $projectOwnership -eq 'unknown') {
+    $projectOwnership = [string]$envValues['FOUNDRY_PROJECT_OWNERSHIP']
+}
+if (([string]::IsNullOrWhiteSpace($projectOwnership) -or $projectOwnership -eq 'unknown') -and
+    ![string]::IsNullOrWhiteSpace([string]$envValues['FOUNDRY_PROJECT_ENDPOINT'])) {
+    $projectOwnership = 'existing'
+}
+$allowExistingProjectCleanup = $AllowExistingProjectCleanup -or (Test-TrueString ([Environment]::GetEnvironmentVariable('ALLOW_EXISTING_FOUNDRY_CLEANUP')))
+if ($projectOwnership -eq 'existing' -and !$allowExistingProjectCleanup) {
+    throw 'This environment is bound to an existing Foundry project. Set ALLOW_EXISTING_FOUNDRY_CLEANUP=true or pass -AllowExistingProjectCleanup only after confirming azd down may delete that shared project resource group.'
+}
+
+if (!$PSCmdlet.ShouldProcess(($context.EnvironmentName ?? 'current azd environment'), 'Remove W365 and Entra resources before azd down')) {
+    throw 'Cleanup confirmation was declined.'
+}
+
+$tenantIdValue = if (![string]::IsNullOrWhiteSpace([string]$envValues['W365_TENANT_ID']) -and [string]$envValues['W365_TENANT_ID'] -ne '00000000-0000-0000-0000-000000000000') {
+    [string]$envValues['W365_TENANT_ID']
+}
+elseif (![string]::IsNullOrWhiteSpace([string]$envValues['AZURE_TENANT_ID'])) {
+    [string]$envValues['AZURE_TENANT_ID']
+}
+elseif ($manifest.foundry -and ![string]::IsNullOrWhiteSpace([string]$manifest.foundry.tenantId)) {
+    [string]$manifest.foundry.tenantId
+}
+else {
+    throw 'Tenant ID is unavailable. Cleanup requires a valid tenant from the azd environment.'
+}
+$tenantId = [guid]$tenantIdValue
+
+Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
+$scopes = @(
+    'Application.Read.All',
+    'AgentIdentityBlueprint.ReadWrite.All', 'AgentIdentityBlueprint.UpdateAuthProperties.All',
+    'AgentIdUser.ReadWrite.All', 'DelegatedPermissionGrant.ReadWrite.All', 'CloudPC.ReadWrite.All'
+)
+if ((List-MapValues $manifest.graph.federatedIdentityCredentials).Count -gt 0) {
+    $scopes += 'AgentIdentityBlueprint.AddRemoveCreds.All'
+}
+
+$graphContext = Get-MgContext
+if (!(Test-GraphContext -Context $graphContext -RequiredTenantId $tenantId -RequiredScopes $scopes)) {
+    $connectParameters = @{
+        TenantId = $tenantId
+        Scopes = $scopes
+        ClientTimeout = $GraphClientTimeoutSeconds
+        ContextScope = 'CurrentUser'
+        NoWelcome = $true
+    }
+    try {
+        Connect-MgGraph @connectParameters
+        $graphContext = Get-MgContext
+    }
+    catch {
+        if (!$UseDeviceCode) {
+            throw
+        }
+
+        $connectParameters.UseDeviceCode = $true
+        Connect-MgGraph @connectParameters
+        $graphContext = Get-MgContext
+    }
+}
+if (!(Test-GraphContext -Context $graphContext -RequiredTenantId $tenantId -RequiredScopes $scopes)) {
+    throw 'A delegated Graph connection in the requested tenant is required for cleanup.'
+}
+
+$blueprint = $manifest.graph.blueprint
+$agent = $manifest.graph.agent
+$blueprintObjectId = Get-RequiredStringValue -Map $blueprint -Key 'objectId'
+$blueprintAppId = Get-RequiredStringValue -Map $blueprint -Key 'appId'
+$blueprintPrincipalId = Get-RequiredStringValue -Map $blueprint -Key 'principalId'
+$poolManifest = $manifest.w365.pool
+$agentUserManifest = $manifest.w365.agentUser
+$assignmentManifest = $manifest.w365.assignment
+$permissionGrants = @(List-MapValues $manifest.graph.permissionGrants)
+$inheritablePermissions = @(List-MapValues $manifest.graph.inheritablePermissions)
+$federatedCredentials = @(List-MapValues $manifest.graph.federatedIdentityCredentials)
+
+$bpPath = "v1.0/applications/$blueprintObjectId"
+$ficPath = "$bpPath/microsoft.graph.agentIdentityBlueprint/federatedIdentityCredentials"
+$inheritPath = "v1.0/applications/microsoft.graph.agentIdentityBlueprint/$blueprintAppId/inheritablePermissions"
+
+Write-Output 'Cleaning W365 and Entra resources in reverse dependency order before azd down.'
+
+$poolId = if ($poolManifest) { [string]$poolManifest.id } else { '' }
+$agentUserId = if ($agentUserManifest) { [string]$agentUserManifest.id } else { '' }
+$currentAssignments = if (![string]::IsNullOrWhiteSpace($poolId)) {
+    @(List "beta/deviceManagement/virtualEndpoint/cloudPcPools/$poolId/assignments")
+}
+else {
+    @()
+}
+$currentGrants = @(List "v1.0/oauth2PermissionGrants?`$filter=clientId eq '$blueprintPrincipalId'")
+$currentInheritances = @(List $inheritPath)
+Assert-ReusedManifestDependenciesPresent -PermissionGrants $permissionGrants -CurrentGrants $currentGrants -InheritablePermissions $inheritablePermissions -CurrentInheritances $currentInheritances
+if ($poolManifest -and [string]$poolManifest.disposition -eq 'created') {
+    $recordedAssignmentId = if ($assignmentManifest) { [string](Get-OptionalObjectValue -Object $assignmentManifest -Name 'id') } else { '' }
+    $recordedUserPrincipalId = if ($assignmentManifest) { [string](Get-OptionalObjectValue -Object $assignmentManifest -Name 'userPrincipalId') } else { '' }
+    $unexpectedAssignments = @($currentAssignments | Where-Object {
+        $currentAssignmentId = [string](Get-OptionalObjectValue -Object $_ -Name 'id')
+        $currentUserPrincipalId = [string](Get-OptionalObjectValue -Object $_ -Name 'userPrincipalId')
+        !((![string]::IsNullOrWhiteSpace($recordedAssignmentId) -and $currentAssignmentId -eq $recordedAssignmentId) -or
+            (![string]::IsNullOrWhiteSpace($recordedUserPrincipalId) -and $currentUserPrincipalId -eq $recordedUserPrincipalId))
+    })
+    if ($unexpectedAssignments.Count -gt 0) {
+        throw 'The sample-created W365 pool has assignments not recorded in the ownership manifest. Cleanup is blocked to avoid deleting another principal''s Cloud PCs.'
+    }
+}
+
+if ($assignmentManifest -and [string]$assignmentManifest.disposition -eq 'created') {
+    $currentAssignment = SingleOrNone @($currentAssignments | Where-Object { $_.userPrincipalId -eq $assignmentManifest.userPrincipalId }) 'pool assignment'
+    if ($currentAssignment) {
+        $assignmentId = [string](Get-OptionalObjectValue -Object $currentAssignment -Name 'id')
+        if ([string]::IsNullOrWhiteSpace($assignmentId)) {
+            throw 'The pool assignment exists but does not expose an ID for deletion.'
+        }
+        $recordedAssignmentId = [string](Get-OptionalObjectValue -Object $assignmentManifest -Name 'id')
+        if (![string]::IsNullOrWhiteSpace($recordedAssignmentId) -and $assignmentId -ne $recordedAssignmentId) {
+            throw 'The current pool assignment ID does not match the ownership manifest.'
+        }
+
+        Graph DELETE "beta/deviceManagement/virtualEndpoint/cloudPcPools/$poolId/assignments/$assignmentId" | Out-Null
+        Write-Output "Removed pool assignment $assignmentId."
+    }
+    else {
+        Write-Output 'Pool assignment was already absent.'
+    }
+}
+
+if ($agentUserManifest -and [string]$agentUserManifest.disposition -eq 'created') {
+    $currentAgentUser = SingleOrNone @(List "beta/users/microsoft.graph.agentUser?`$filter=userPrincipalName eq '$($agentUserManifest.userPrincipalName)'") 'agent user'
+    if ($currentAgentUser) {
+        if ([string]$currentAgentUser.id -ne $agentUserId -or [string]$currentAgentUser.identityParentId -ne [string]$agentUserManifest.parentAgentObjectId) {
+            throw 'The current agent user does not match the recorded ownership manifest.'
+        }
+
+        Graph DELETE "beta/users/$agentUserId" | Out-Null
+        Write-Output "Removed agent user $agentUserId."
+    }
+    else {
+        Write-Output 'Agent user was already absent.'
+    }
+}
+
+$currentFics = @(List $ficPath)
+foreach ($credential in $federatedCredentials | Where-Object { [string]$_.disposition -eq 'created' }) {
+    $match = SingleOrNone @($currentFics | Where-Object { $_.name -eq $credential.name -and $_.subject -eq $credential.subject }) "federated credential $($credential.name)"
+    if ($match) {
+        $credentialId = [string](Get-OptionalObjectValue -Object $match -Name 'id')
+        if ([string]::IsNullOrWhiteSpace($credentialId)) {
+            throw "Federated credential '$($credential.name)' exists but does not expose an ID for deletion."
+        }
+        $recordedCredentialId = [string](Get-OptionalObjectValue -Object $credential -Name 'id')
+        if (![string]::IsNullOrWhiteSpace($recordedCredentialId) -and $credentialId -ne $recordedCredentialId) {
+            throw "Federated credential '$($credential.name)' does not match the ownership manifest ID."
+        }
+
+        Graph DELETE "$ficPath/$credentialId" | Out-Null
+        Write-Output "Removed federated credential $($credential.name)."
+    }
+    else {
+        Write-Output "Federated credential $($credential.name) was already absent."
+    }
+}
+
+foreach ($grant in $permissionGrants) {
+    $currentGrant = SingleOrNone @($currentGrants | Where-Object { $_.resourceId -eq $grant.resourceId }) "permission grant $($grant.resourceAppId)"
+    if ($currentGrant) {
+        $recordedGrantId = [string](Get-OptionalObjectValue -Object $grant -Name 'grantId')
+        if (![string]::IsNullOrWhiteSpace($recordedGrantId) -and [string]$currentGrant.id -ne $recordedGrantId) {
+            throw "Permission grant for $($grant.resourceAppId) does not match the ownership manifest ID."
+        }
+    }
+    if ([string]$grant.disposition -eq 'created') {
+        if ($currentGrant) {
+            Graph DELETE "v1.0/oauth2PermissionGrants/$([string]$currentGrant.id)" | Out-Null
+            Write-Output "Removed permission grant for $($grant.resourceAppId)."
+        }
+        else {
+            Write-Output "Permission grant for $($grant.resourceAppId) was already absent."
+        }
+    }
+    else {
+        if (!$currentGrant) {
+            throw "A reused permission grant for $($grant.resourceAppId) is missing, so cleanup cannot safely restore its previous scope."
+        }
+
+        $previousScope = [string]$grant.previousScope
+        if ([string]$currentGrant.scope -ne $previousScope) {
+            Graph PATCH "v1.0/oauth2PermissionGrants/$([string]$currentGrant.id)" @{ scope = $previousScope } | Out-Null
+            Write-Output "Restored permission grant scope for $($grant.resourceAppId)."
+        }
+    }
+}
+
+foreach ($inheritance in $inheritablePermissions | Where-Object { [string]$_.disposition -eq 'created' }) {
+    $currentInheritance = SingleOrNone @($currentInheritances | Where-Object { $_.resourceAppId -eq $inheritance.resourceAppId }) "inheritance $($inheritance.resourceAppId)"
+    if ($currentInheritance) {
+        $inheritanceId = [string](Get-OptionalObjectValue -Object $currentInheritance -Name 'id')
+        if ([string]::IsNullOrWhiteSpace($inheritanceId)) {
+            throw "Inheritance entry for $($inheritance.resourceAppId) exists but does not expose an ID for deletion."
+        }
+        $recordedInheritanceId = [string](Get-OptionalObjectValue -Object $inheritance -Name 'entryId')
+        if (![string]::IsNullOrWhiteSpace($recordedInheritanceId) -and $inheritanceId -ne $recordedInheritanceId) {
+            throw "Inheritance entry for $($inheritance.resourceAppId) does not match the ownership manifest ID."
+        }
+
+        Graph DELETE "$inheritPath/$inheritanceId" | Out-Null
+        Write-Output "Removed inheritance entry for $($inheritance.resourceAppId)."
+    }
+    else {
+        Write-Output "Inheritance entry for $($inheritance.resourceAppId) was already absent."
+    }
+}
+
+if (!($blueprint -is [System.Collections.IDictionary]) -or !$blueprint.Contains('requiredResourceAccessAdded')) {
+    throw 'The ownership manifest does not record the blueprint permissions added by setup. Cleanup cannot safely modify requiredResourceAccess.'
+}
+$requiredResourceAccessAdded = @(Get-OptionalObjectValue -Object $blueprint -Name 'requiredResourceAccessAdded')
+$currentBlueprint = Graph GET "$bpPath`?`$select=id,appId,requiredResourceAccess"
+$currentRequiredResourceAccess = @($currentBlueprint.requiredResourceAccess | Where-Object { $null -ne $_ })
+$restoredRequiredResourceAccess = @()
+$requiredResourceAccessChanged = $false
+foreach ($currentEntry in $currentRequiredResourceAccess) {
+    $addedEntry = @($requiredResourceAccessAdded | Where-Object { $_.resourceAppId -eq $currentEntry.resourceAppId })
+    if ($addedEntry.Count -gt 1) {
+        throw "The ownership manifest contains duplicate requiredResourceAccess additions for $($currentEntry.resourceAppId)."
+    }
+    $addedIds = if ($addedEntry.Count -eq 1) {
+        @($addedEntry[0].resourceAccess | ForEach-Object { [string]$_.id })
+    }
+    else {
+        @()
+    }
+    $remainingAccess = @($currentEntry.resourceAccess | Where-Object { [string]$_.id -notin $addedIds })
+    if ($remainingAccess.Count -ne @($currentEntry.resourceAccess).Count) {
+        $requiredResourceAccessChanged = $true
+    }
+    if ($remainingAccess.Count -gt 0) {
+        $restoredRequiredResourceAccess += [ordered]@{
+            resourceAppId = [string]$currentEntry.resourceAppId
+            resourceAccess = Copy-W365ManifestValue -Value $remainingAccess
+        }
+    }
+}
+if ($requiredResourceAccessChanged) {
+    Graph PATCH $bpPath @{ requiredResourceAccess = $restoredRequiredResourceAccess } | Out-Null
+    Write-Output 'Removed the blueprint requiredResourceAccess entries added by setup.'
+}
+
+if ($poolManifest -and [string]$poolManifest.disposition -eq 'created') {
+    $currentPool = $null
+    try {
+        $currentPool = Graph GET "beta/deviceManagement/virtualEndpoint/cloudPcPools/$poolId"
+    }
+    catch {
+        if (Test-GraphResourceNotFound -ErrorRecord $_) {
+            $currentPool = $null
+        }
+        else {
+            throw
+        }
+    }
+
+    if ($currentPool) {
+        Graph DELETE "beta/deviceManagement/virtualEndpoint/cloudPcPools/$poolId" | Out-Null
+        Write-Output "Removed sample-owned pool $poolId."
+    }
+    else {
+        Write-Output 'Sample-owned pool was already absent.'
+    }
+}
+
+$manifest['cleanup'] = [ordered]@{
+    status = 'completed'
+    completedAtUtc = [DateTimeOffset]::UtcNow.ToString('o')
+}
+Write-W365OwnershipManifest -Path $context.OwnershipManifestPath -Manifest $manifest
+Write-Output 'W365 cleanup completed. azd down can now continue with Azure resource deletion.'

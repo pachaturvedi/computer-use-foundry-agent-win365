@@ -71,6 +71,7 @@ $values = [ordered]@{
     AZURE_AI_ACCOUNT_NAME = "$compactPrefix$($config.foundry.accountNameSuffix)$suffix"
     AZURE_AI_PROJECT_NAME = "$resourcePrefix-$($config.foundry.projectNameSuffix)"
     FOUNDRY_PROJECT_ENDPOINT = $foundryProjectEndpoint
+    FOUNDRY_PROJECT_OWNERSHIP = if ([string]::IsNullOrWhiteSpace($foundryProjectEndpoint)) { 'managed' } else { 'existing' }
     FOUNDRY_AGENT_NAME = $agentName
     FOUNDRY_AGENT_DISPLAY_NAME = $agentDisplayName
     FOUNDRY_AGENT_DESCRIPTION = $agentDescription

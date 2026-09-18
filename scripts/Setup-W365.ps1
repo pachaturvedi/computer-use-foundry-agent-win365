@@ -27,12 +27,14 @@ param(
     [switch]$BillingConfirmed,
     [switch]$UseDeviceCode,
     [ValidateRange(30, 3600)][int]$GraphClientTimeoutSeconds = 600,
-    [switch]$SkipAzdEnvironmentSync
+    [switch]$SkipAzdEnvironmentSync,
+    [string]$OwnershipManifestPath
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'DeploymentConfig.ps1')
+. (Join-Path $PSScriptRoot 'W365OwnershipManifest.ps1')
 
 $repositoryRoot = Split-Path $PSScriptRoot
 $deploymentConfig = Get-DeploymentConfig -RepositoryRoot $repositoryRoot
@@ -412,6 +414,165 @@ function Get-RequiredPoolValue {
 
     return $Value
 }
+function Resolve-OwnershipManifestTarget {
+    param(
+        $Azd,
+        [string]$OverridePath
+    )
+
+    if (![string]::IsNullOrWhiteSpace($OverridePath)) {
+        return [pscustomobject]@{
+            EnvironmentName = ''
+            Path = $OverridePath
+        }
+    }
+
+    if ($null -eq $Azd) {
+        return $null
+    }
+
+    try {
+        $environmentName = Invoke-Azd -Azd $Azd -Arguments @('env', 'get-value', 'AZURE_ENV_NAME') -CaptureOutput
+        if ([string]::IsNullOrWhiteSpace($environmentName)) {
+            throw 'No azd environment is currently selected.'
+        }
+
+        return [pscustomobject]@{
+            EnvironmentName = $environmentName
+            Path = Get-W365OwnershipManifestPath -RepositoryRoot $script:repositoryRoot -EnvironmentName $environmentName
+        }
+    }
+    catch {
+        Write-Warning "Unable to resolve the azd ownership manifest location automatically. $($_.Exception.Message)"
+        return $null
+    }
+}
+function Merge-OwnershipEntry {
+    param(
+        [System.Collections.IDictionary]$ExistingEntry,
+        [Parameter(Mandatory)][System.Collections.IDictionary]$CurrentEntry,
+        [string[]]$IdentityKeys,
+        [string[]]$PreserveKeys,
+        [Parameter(Mandatory)][string]$Label
+    )
+
+    if ($null -eq $ExistingEntry) {
+        return Copy-W365ManifestValue -Value $CurrentEntry
+    }
+
+    foreach ($key in @($IdentityKeys | Where-Object { $_ })) {
+        $existingValue = [string]$ExistingEntry[$key]
+        $currentValue = [string]$CurrentEntry[$key]
+        if (![string]::IsNullOrWhiteSpace($existingValue) -and
+            ![string]::IsNullOrWhiteSpace($currentValue) -and
+            $existingValue -ne $currentValue) {
+            throw "Ownership manifest mismatch for $Label. Existing $key '$existingValue' does not match current '$currentValue'."
+        }
+    }
+
+    $merged = Copy-W365ManifestValue -Value $ExistingEntry
+    foreach ($key in $CurrentEntry.Keys) {
+        if ($key -in @($PreserveKeys) -and $ExistingEntry.Contains($key)) {
+            continue
+        }
+
+        $value = $CurrentEntry[$key]
+        if ($value -is [string] -and [string]::IsNullOrWhiteSpace($value) -and $merged.Contains($key)) {
+            continue
+        }
+
+        if ($null -eq $value -and $merged.Contains($key)) {
+            continue
+        }
+
+        $merged[$key] = Copy-W365ManifestValue -Value $value
+    }
+
+    if ([string]$ExistingEntry['disposition'] -eq 'created' -or [string]$CurrentEntry['disposition'] -eq 'created') {
+        $merged['disposition'] = 'created'
+    }
+
+    return $merged
+}
+function Merge-OwnershipMapEntry {
+    param(
+        [Parameter(Mandatory)][System.Collections.IDictionary]$Container,
+        [Parameter(Mandatory)][string]$Key,
+        [Parameter(Mandatory)][System.Collections.IDictionary]$Entry,
+        [string[]]$IdentityKeys,
+        [string[]]$PreserveKeys,
+        [Parameter(Mandatory)][string]$Label
+    )
+
+    if (!$Container.Contains($Key) -or $null -eq $Container[$Key]) {
+        $Container[$Key] = Copy-W365ManifestValue -Value $Entry
+        return
+    }
+
+    $Container[$Key] = Merge-OwnershipEntry -ExistingEntry $Container[$Key] -CurrentEntry $Entry -IdentityKeys $IdentityKeys -PreserveKeys $PreserveKeys -Label $Label
+}
+function New-OwnershipManifest {
+    param(
+        [System.Collections.IDictionary]$ExistingManifest,
+        [string]$EnvironmentName
+    )
+
+    $manifest = if ($null -eq $ExistingManifest) {
+        [ordered]@{}
+    }
+    else {
+        Copy-W365ManifestValue -Value $ExistingManifest
+    }
+
+    $manifest['schemaVersion'] = 1
+    if (![string]::IsNullOrWhiteSpace($EnvironmentName)) {
+        $manifest['environmentName'] = $EnvironmentName
+    }
+    elseif (!$manifest.Contains('environmentName')) {
+        $manifest['environmentName'] = ''
+    }
+
+    $manifest['updatedAtUtc'] = [DateTimeOffset]::UtcNow.ToString('o')
+
+    foreach ($sectionName in @('foundry', 'w365', 'graph')) {
+        if (!$manifest.Contains($sectionName) -or !($manifest[$sectionName] -is [System.Collections.IDictionary])) {
+            $manifest[$sectionName] = [ordered]@{}
+        }
+    }
+
+    foreach ($mapName in @('permissionGrants', 'inheritablePermissions', 'federatedIdentityCredentials')) {
+        if (!$manifest.graph.Contains($mapName) -or !($manifest.graph[$mapName] -is [System.Collections.IDictionary])) {
+            $manifest.graph[$mapName] = [ordered]@{}
+        }
+    }
+
+    return $manifest
+}
+function Get-OptionalObjectValue {
+    param(
+        $Object,
+        [Parameter(Mandatory)][string]$Name
+    )
+
+    if ($null -eq $Object) {
+        return $null
+    }
+
+    if ($Object -is [System.Collections.IDictionary]) {
+        if ($Object.Contains($Name)) {
+            return $Object[$Name]
+        }
+
+        return $null
+    }
+
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -ne $property) {
+        return $property.Value
+    }
+
+    return $null
+}
 function New-PoolCreateRequest {
     $regions = @(
         Get-RequiredPoolValue -Name 'PoolRegions' -Value $PoolRegions | ForEach-Object { $_.ToString().Trim() } | Where-Object { $_ }
@@ -657,12 +818,20 @@ $resources = @(
     @{ Sp = (Resource '90ecec28-f5a6-42b3-9bde-dae1ca98f8b5'); Scopes = @('Computer.See', 'Computer.Control') }
 )
 $azd = if ($SkipAzdEnvironmentSync) { $null } else { Get-AzdCommand }
+$manifestTarget = Resolve-OwnershipManifestTarget -Azd $azd -OverridePath $OwnershipManifestPath
+$existingManifest = if ($manifestTarget) {
+    Read-W365OwnershipManifest -Path $manifestTarget.Path -AllowMissing
+}
+else {
+    $null
+}
 $poolState = Resolve-OrCreatePool -Azd $azd
 $pool = $poolState.Pool
 $PoolId = $poolState.Id
 $inheritPath = "v1.0/applications/microsoft.graph.agentIdentityBlueprint/$($blueprint.appId)/inheritablePermissions"
 $inheritances = @(List $inheritPath)
 $grants = @(List "v1.0/oauth2PermissionGrants?`$filter=clientId eq '$($principal.id)'")
+$requiredResourceAccessBefore = Copy-W365ManifestValue -Value @($blueprint.requiredResourceAccess | Where-Object { $null -ne $_ })
 foreach ($resource in $resources) {
     foreach ($scope in $resource.Scopes) {
         $match = @($resource.Sp.oauth2PermissionScopes | Where-Object { $_.value -eq $scope -and $_.isEnabled })
@@ -677,6 +846,8 @@ foreach ($resource in $resources) {
 }
 Write-Output "Blueprint app ID: $($blueprint.appId)"
 $required = @($blueprint.requiredResourceAccess | Where-Object { $null -ne $_ })
+$grantManifestEntries = [ordered]@{}
+$inheritanceManifestEntries = [ordered]@{}
 foreach ($resource in $resources) {
     $entry = SingleOrNone @($required | Where-Object { $_.resourceAppId -eq $resource.Sp.appId }) 'resource declaration'
     if ($null -eq $entry) { $entry = @{ resourceAppId = $resource.Sp.appId; resourceAccess = @() }; $required += $entry }
@@ -687,35 +858,110 @@ foreach ($resource in $resources) {
         }
     }
 }
+$requiredResourceAccessAdded = @()
+foreach ($entry in $required) {
+    $beforeEntries = @($requiredResourceAccessBefore | Where-Object { $_.resourceAppId -eq $entry.resourceAppId })
+    if ($beforeEntries.Count -gt 1) {
+        throw "Blueprint contains duplicate requiredResourceAccess entries for $($entry.resourceAppId)."
+    }
+    $beforeIds = if ($beforeEntries.Count -eq 1) {
+        @($beforeEntries[0].resourceAccess | ForEach-Object { [string]$_.id })
+    }
+    else {
+        @()
+    }
+    $addedAccess = @($entry.resourceAccess | Where-Object { [string]$_.id -notin $beforeIds })
+    if ($addedAccess.Count -gt 0) {
+        $requiredResourceAccessAdded += [ordered]@{
+            resourceAppId = [string]$entry.resourceAppId
+            resourceAccess = Copy-W365ManifestValue -Value $addedAccess
+        }
+    }
+}
 Graph PATCH $bpPath @{ requiredResourceAccess = $required } | Out-Null
 foreach ($resource in $resources) {
     $grant = $resource.Grant
+    $grantExisted = $null -ne $grant
+    $previousScope = if ($grantExisted) { [string]$grant.scope } else { '' }
     $scope = @(@($(if ($grant) { $grant.scope -split ' ' })) + $resource.Scopes | Where-Object { $_ } | Sort-Object -Unique) -join ' '
-    if ($grant) { Graph PATCH "v1.0/oauth2PermissionGrants/$($grant.id)" @{ scope = $scope } | Out-Null }
-    else { Graph POST 'v1.0/oauth2PermissionGrants' @{
-        clientId = $principal.id; resourceId = $resource.Sp.id; consentType = 'AllPrincipals'; scope = $scope
-    } | Out-Null }
+    if ($grant) {
+        Graph PATCH "v1.0/oauth2PermissionGrants/$($grant.id)" @{ scope = $scope } | Out-Null
+    }
+    else {
+        $grant = Graph POST 'v1.0/oauth2PermissionGrants' @{
+            clientId = $principal.id; resourceId = $resource.Sp.id; consentType = 'AllPrincipals'; scope = $scope
+        }
+    }
+    $grantManifestEntries[$resource.Sp.appId] = [ordered]@{
+        resourceAppId = $resource.Sp.appId
+        resourceId = $resource.Sp.id
+        grantId = [string]$grant.id
+        disposition = if ($grantExisted) { 'reused' } else { 'created' }
+        previousScope = $previousScope
+        scope = $scope
+    }
     $inheritance = @{
         resourceAppId = $resource.Sp.appId
         inheritableScopes = @{ '@odata.type' = '#microsoft.graph.allAllowedScopes'; kind = 'allAllowed' }
         inheritableRoles = @{ '@odata.type' = '#microsoft.graph.noRoles'; kind = 'none' }
     }
-    if (!$resource.ExistingInheritance) { Graph POST $inheritPath $inheritance | Out-Null }
+    $inheritanceDisposition = 'reused'
+    $currentInheritance = $resource.ExistingInheritance
+    if (!$resource.ExistingInheritance) {
+        $currentInheritance = Graph POST $inheritPath $inheritance
+        $inheritanceDisposition = 'created'
+    }
+    $inheritanceManifestEntries[$resource.Sp.appId] = [ordered]@{
+        resourceAppId = $resource.Sp.appId
+        entryId = [string](Get-OptionalObjectValue -Object $currentInheritance -Name 'id')
+        disposition = $inheritanceDisposition
+        previous = Copy-W365ManifestValue -Value $resource.ExistingInheritance
+        current = Copy-W365ManifestValue -Value $currentInheritance
+    }
 }
-foreach ($federation in $federations) { Graph POST $ficPath $federation | Out-Null }
+$federationManifestEntries = [ordered]@{}
+foreach ($existingFic in @($existingFics)) {
+    $ficName = [string]$existingFic.name
+    if ([string]::IsNullOrWhiteSpace($ficName)) {
+        continue
+    }
+
+    $federationManifestEntries[$ficName] = [ordered]@{
+        id = [string](Get-OptionalObjectValue -Object $existingFic -Name 'id')
+        name = $ficName
+        subject = [string]$existingFic.subject
+        issuer = [string]$existingFic.issuer
+        audiences = @($existingFic.audiences)
+        disposition = 'reused'
+    }
+}
+foreach ($federation in $federations) {
+    $createdFederation = Graph POST $ficPath $federation
+    $federationManifestEntries[$federation.name] = [ordered]@{
+        id = [string](Get-OptionalObjectValue -Object $createdFederation -Name 'id')
+        name = [string]$federation.name
+        subject = [string]$federation.subject
+        issuer = [string]$federation.issuer
+        audiences = @($federation.audiences)
+        disposition = 'created'
+    }
+}
 Write-Output "Existing agent principal ID: $($agent.id)"
+ $createdAgentUser = $false
 if (!$agentUser) {
     $agentUser = Graph POST 'beta/users/microsoft.graph.agentUser' @{
         displayName = "$($agent.displayName) user"; userPrincipalName = $AgentUserPrincipalName
         mailNickname = $AgentUserPrincipalName.Split('@')[0]; accountEnabled = $true; identityParentId = $agent.id
     }
+    $createdAgentUser = $true
 }
 $assignmentPath = "beta/deviceManagement/virtualEndpoint/cloudPcPools/$PoolId/assignments"
 $assigned = SingleOrNone @(List $assignmentPath | Where-Object { $_.userPrincipalId -eq $agentUser.id }) 'agent pool assignment'
+ $createdAssignment = $null
 if (!$assigned) {
-    Graph POST $assignmentPath @{
+    $createdAssignment = Graph POST $assignmentPath @{
         '@odata.type' = '#microsoft.graph.cloudPcAgentPoolUserAssignment'; userPrincipalId = $agentUser.id
-    } | Out-Null
+    }
 }
 $phaseTwoValues = [ordered]@{
     W365_TENANT_ID = $TenantId.ToString()
@@ -725,6 +971,88 @@ $phaseTwoValues = [ordered]@{
     W365_AGENT_USER_ID = $agentUser.id
     W365_POOL_ID = $PoolId.ToString()
     W365_ENABLED = 'true'
+}
+
+if ($manifestTarget) {
+    $manifest = New-OwnershipManifest -ExistingManifest $existingManifest -EnvironmentName $manifestTarget.EnvironmentName
+    $foundryOwnership = ''
+    $projectEndpoint = ''
+    $projectId = ''
+    $foundryResourceGroupName = ''
+    $foundryResourceGroupId = ''
+    if ($azd) {
+        foreach ($entry in @(
+            @{ Name = 'FOUNDRY_PROJECT_OWNERSHIP'; Target = 'foundryOwnership' },
+            @{ Name = 'FOUNDRY_PROJECT_ENDPOINT'; Target = 'projectEndpoint' },
+            @{ Name = 'AZURE_AI_PROJECT_ID'; Target = 'projectId' },
+            @{ Name = 'AZURE_FOUNDRY_RESOURCE_GROUP'; Target = 'foundryResourceGroupName' },
+            @{ Name = 'AZD_FOUNDRY_RESOURCE_GROUP_ID'; Target = 'foundryResourceGroupId' }
+        )) {
+            try {
+                Set-Variable -Name $entry.Target -Value (Invoke-Azd -Azd $azd -Arguments @('env', 'get-value', $entry.Name) -CaptureOutput) -Scope Local
+            }
+            catch {
+            }
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($foundryOwnership) -and ![string]::IsNullOrWhiteSpace($projectEndpoint)) {
+        $foundryOwnership = 'existing'
+    }
+
+    $manifest.foundry = Merge-OwnershipEntry -ExistingEntry $manifest.foundry -CurrentEntry ([ordered]@{
+        tenantId = $TenantId.ToString()
+        projectOwnership = if ([string]::IsNullOrWhiteSpace($foundryOwnership)) { 'unknown' } else { $foundryOwnership }
+        existingProjectBound = $foundryOwnership -eq 'existing'
+        projectEndpoint = $projectEndpoint
+        projectId = $projectId
+        resourceGroupName = $foundryResourceGroupName
+        resourceGroupId = $foundryResourceGroupId
+    }) -IdentityKeys @('tenantId', 'projectEndpoint', 'projectId') -Label 'Foundry project binding'
+    $manifest.w365['pool'] = Merge-OwnershipEntry -ExistingEntry $manifest.w365['pool'] -CurrentEntry ([ordered]@{
+        id = $PoolId.ToString()
+        displayName = [string]$pool.displayName
+        description = [string]$pool.description
+        disposition = if ($poolState.Created) { 'created' } else { 'reused' }
+    }) -IdentityKeys @('id') -Label 'W365 pool'
+    $manifest.w365['agentUser'] = Merge-OwnershipEntry -ExistingEntry $manifest.w365['agentUser'] -CurrentEntry ([ordered]@{
+        id = [string]$agentUser.id
+        userPrincipalName = [string]$agentUser.userPrincipalName
+        parentAgentObjectId = [string]$agent.id
+        disposition = if ($createdAgentUser) { 'created' } else { 'reused' }
+    }) -IdentityKeys @('id', 'userPrincipalName', 'parentAgentObjectId') -Label 'W365 agent user'
+    $manifest.w365['assignment'] = Merge-OwnershipEntry -ExistingEntry $manifest.w365['assignment'] -CurrentEntry ([ordered]@{
+        id = if ($assigned) { [string](Get-OptionalObjectValue -Object $assigned -Name 'id') } else { [string](Get-OptionalObjectValue -Object $createdAssignment -Name 'id') }
+        poolId = $PoolId.ToString()
+        userPrincipalId = [string]$agentUser.id
+        disposition = if ($assigned) { 'reused' } else { 'created' }
+    }) -IdentityKeys @('poolId', 'userPrincipalId') -Label 'W365 pool assignment'
+    $manifest.graph['blueprint'] = Merge-OwnershipEntry -ExistingEntry $manifest.graph['blueprint'] -CurrentEntry ([ordered]@{
+        appId = [string]$blueprint.appId
+        objectId = [string]$blueprint.id
+        principalId = [string]$principal.id
+        requiredResourceAccessBefore = $requiredResourceAccessBefore
+        requiredResourceAccessAdded = $requiredResourceAccessAdded
+    }) -IdentityKeys @('appId', 'objectId', 'principalId') -PreserveKeys @('requiredResourceAccessBefore', 'requiredResourceAccessAdded') -Label 'Foundry blueprint'
+    $manifest.graph['agent'] = Merge-OwnershipEntry -ExistingEntry $manifest.graph['agent'] -CurrentEntry ([ordered]@{
+        appId = [string]$agent.appId
+        objectId = [string]$agent.id
+    }) -IdentityKeys @('appId', 'objectId') -Label 'Foundry agent identity'
+
+    foreach ($resourceAppId in $grantManifestEntries.Keys) {
+        Merge-OwnershipMapEntry -Container $manifest.graph.permissionGrants -Key $resourceAppId -Entry $grantManifestEntries[$resourceAppId] -IdentityKeys @('resourceAppId', 'resourceId') -PreserveKeys @('previousScope') -Label "permission grant $resourceAppId"
+    }
+    foreach ($resourceAppId in $inheritanceManifestEntries.Keys) {
+        Merge-OwnershipMapEntry -Container $manifest.graph.inheritablePermissions -Key $resourceAppId -Entry $inheritanceManifestEntries[$resourceAppId] -IdentityKeys @('resourceAppId') -PreserveKeys @('previous') -Label "inheritance $resourceAppId"
+    }
+    foreach ($federationName in $federationManifestEntries.Keys) {
+        Merge-OwnershipMapEntry -Container $manifest.graph.federatedIdentityCredentials -Key $federationName -Entry $federationManifestEntries[$federationName] -IdentityKeys @('name', 'subject') -Label "federation $federationName"
+    }
+
+    Write-W365OwnershipManifest -Path $manifestTarget.Path -Manifest $manifest
+    Write-Output "W365_OWNERSHIP_MANIFEST=$($manifestTarget.Path)"
+}
+elseif (!$SkipAzdEnvironmentSync) {
+    Write-Warning 'Ownership manifest was not written because no azd environment or manifest path was available.'
 }
 
 if ($azd) {

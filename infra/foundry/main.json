@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.47.16.16243",
-      "templateHash": "11866234855294104686"
+      "templateHash": "1067995821549537311"
     }
   },
   "parameters": {
@@ -59,6 +59,30 @@
       "type": "int",
       "minValue": 1
     },
+    "foundryProjectOwnership": {
+      "type": "string",
+      "defaultValue": "managed",
+      "allowedValues": [
+        "managed",
+        "existing"
+      ]
+    },
+    "existingProjectEndpoint": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "existingProjectId": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "existingFoundryResourceGroupId": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "existingFoundryResourceGroupName": {
+      "type": "string",
+      "defaultValue": ""
+    },
     "projectDisplayName": {
       "type": "string",
       "defaultValue": "[parameters('projectName')]"
@@ -99,10 +123,16 @@
       "workload": "win365-foundry-sample",
       "managed-by": "azd",
       "resource-prefix": "[parameters('resourcePrefix')]"
-    }
+    },
+    "useExistingProject": "[equals(parameters('foundryProjectOwnership'), 'existing')]",
+    "resolvedProjectEndpoint": "[if(not(variables('useExistingProject')), '', if(not(empty(parameters('existingProjectEndpoint'))), parameters('existingProjectEndpoint'), fail('Existing-project mode requires FOUNDRY_PROJECT_ENDPOINT.')))]",
+    "resolvedProjectId": "[if(not(variables('useExistingProject')), '', if(not(empty(parameters('existingProjectId'))), parameters('existingProjectId'), fail('Existing-project mode requires AZURE_AI_PROJECT_ID.')))]",
+    "resolvedFoundryResourceGroupId": "[if(not(variables('useExistingProject')), '', if(not(empty(parameters('existingFoundryResourceGroupId'))), parameters('existingFoundryResourceGroupId'), fail('Existing-project mode requires AZD_FOUNDRY_RESOURCE_GROUP_ID.')))]",
+    "resolvedFoundryResourceGroupName": "[if(not(variables('useExistingProject')), '', if(not(empty(parameters('existingFoundryResourceGroupName'))), parameters('existingFoundryResourceGroupName'), fail('Existing-project mode requires AZURE_FOUNDRY_RESOURCE_GROUP.')))]"
   },
   "resources": [
     {
+      "condition": "[not(variables('useExistingProject'))]",
       "type": "Microsoft.Resources/resourceGroups",
       "apiVersion": "2023-07-01",
       "name": "[parameters('foundryResourceGroupName')]",
@@ -110,6 +140,7 @@
       "tags": "[variables('tags')]"
     },
     {
+      "condition": "[not(variables('useExistingProject'))]",
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
       "name": "foundry-resources",
@@ -341,35 +372,39 @@
   "outputs": {
     "AZD_FOUNDRY_RESOURCE_GROUP_ID": {
       "type": "string",
-      "value": "[subscriptionResourceId('Microsoft.Resources/resourceGroups', parameters('foundryResourceGroupName'))]"
+      "value": "[if(variables('useExistingProject'), variables('resolvedFoundryResourceGroupId'), subscriptionResourceId('Microsoft.Resources/resourceGroups', parameters('foundryResourceGroupName')))]"
     },
     "AZURE_FOUNDRY_RESOURCE_GROUP": {
       "type": "string",
-      "value": "[parameters('foundryResourceGroupName')]"
+      "value": "[if(variables('useExistingProject'), variables('resolvedFoundryResourceGroupName'), parameters('foundryResourceGroupName'))]"
     },
     "AZURE_RESOURCE_GROUP": {
       "type": "string",
-      "value": "[parameters('foundryResourceGroupName')]"
+      "value": "[if(variables('useExistingProject'), variables('resolvedFoundryResourceGroupName'), parameters('foundryResourceGroupName'))]"
+    },
+    "FOUNDRY_PROJECT_OWNERSHIP": {
+      "type": "string",
+      "value": "[parameters('foundryProjectOwnership')]"
     },
     "AZURE_AI_ACCOUNT_NAME": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('foundryResourceGroupName')), 'Microsoft.Resources/deployments', 'foundry-resources'), '2025-04-01').outputs.accountName.value]"
+      "value": "[if(variables('useExistingProject'), parameters('accountName'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('foundryResourceGroupName')), 'Microsoft.Resources/deployments', 'foundry-resources'), '2025-04-01').outputs.accountName.value)]"
     },
     "AZURE_AI_PROJECT_NAME": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('foundryResourceGroupName')), 'Microsoft.Resources/deployments', 'foundry-resources'), '2025-04-01').outputs.projectName.value]"
+      "value": "[if(variables('useExistingProject'), parameters('projectName'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('foundryResourceGroupName')), 'Microsoft.Resources/deployments', 'foundry-resources'), '2025-04-01').outputs.projectName.value)]"
     },
     "AZURE_AI_PROJECT_ID": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('foundryResourceGroupName')), 'Microsoft.Resources/deployments', 'foundry-resources'), '2025-04-01').outputs.projectId.value]"
+      "value": "[if(variables('useExistingProject'), variables('resolvedProjectId'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('foundryResourceGroupName')), 'Microsoft.Resources/deployments', 'foundry-resources'), '2025-04-01').outputs.projectId.value)]"
     },
     "AZURE_OPENAI_ENDPOINT": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('foundryResourceGroupName')), 'Microsoft.Resources/deployments', 'foundry-resources'), '2025-04-01').outputs.openAiEndpoint.value]"
+      "value": "[if(variables('useExistingProject'), format('https://{0}.openai.azure.com/', parameters('accountName')), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('foundryResourceGroupName')), 'Microsoft.Resources/deployments', 'foundry-resources'), '2025-04-01').outputs.openAiEndpoint.value)]"
     },
     "FOUNDRY_PROJECT_ENDPOINT": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('foundryResourceGroupName')), 'Microsoft.Resources/deployments', 'foundry-resources'), '2025-04-01').outputs.projectEndpoint.value]"
+      "value": "[if(variables('useExistingProject'), variables('resolvedProjectEndpoint'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('foundryResourceGroupName')), 'Microsoft.Resources/deployments', 'foundry-resources'), '2025-04-01').outputs.projectEndpoint.value)]"
     },
     "AI_PROJECT_DEPLOYMENTS": {
       "type": "string",

@@ -12,6 +12,11 @@
     "modelName": { "value": "${FOUNDRY_MODEL_NAME}" },
     "modelVersion": { "value": "${FOUNDRY_MODEL_VERSION}" },
     "modelSkuName": { "value": "${FOUNDRY_MODEL_SKU_NAME}" },
-    "modelSkuCapacity": { "value": "${FOUNDRY_MODEL_SKU_CAPACITY}" }
+    "modelSkuCapacity": { "value": "${FOUNDRY_MODEL_SKU_CAPACITY}" },
+    "foundryProjectOwnership": { "value": "${FOUNDRY_PROJECT_OWNERSHIP=managed}" },
+    "existingProjectEndpoint": { "value": "${FOUNDRY_PROJECT_ENDPOINT}" },
+    "existingProjectId": { "value": "${AZURE_AI_PROJECT_ID}" },
+    "existingFoundryResourceGroupId": { "value": "${AZD_FOUNDRY_RESOURCE_GROUP_ID}" },
+    "existingFoundryResourceGroupName": { "value": "${AZURE_FOUNDRY_RESOURCE_GROUP}" }
   }
 }
