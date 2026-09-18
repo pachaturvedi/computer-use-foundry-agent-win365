@@ -184,10 +184,9 @@ public static class ViewerEndpoints
                 return Results.Conflict(new { error = "W365 did not provide a screen-share link." });
             }
 
-            var token = await tokens.GetAsync(
-                // Viewing receives a read-only scope; control and refresh require the broader desktop scope.
-                operation == "view" ? AgentUserTokenProvider.AriView : AgentUserTokenProvider.Ari,
-                timeout.Token);
+            // Viewing receives a read-only scope; control and refresh require the broader desktop scope.
+            var audience = operation == "view" ? AgentUserTokenProvider.AriView : AgentUserTokenProvider.Ari;
+            var token = await tokens.GetAsync(audience, timeout.Token);
             return Results.Ok(new { sessionLink = state.SessionLink, token = token.Token, expiresAt = token.ExpiresOn });
         });
     }

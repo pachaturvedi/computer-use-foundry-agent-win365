@@ -142,7 +142,8 @@ public sealed class Settings(IConfiguration config)
         if (BlueprintCredentialMode is not ("managed_identity_federation" or "client_secret"))
         {
             throw new InvalidOperationException(
-                "W365_BLUEPRINT_CREDENTIAL_MODE must be managed_identity_federation or client_secret.");
+                "W365_BLUEPRINT_CREDENTIAL_MODE must be managed_identity_federation or client_secret. " +
+                "key_vault_certificate is reserved for the next implementation phase and currently fails closed.");
         }
         if (viewerMode)
         {

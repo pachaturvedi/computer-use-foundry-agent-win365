@@ -1,0 +1,34 @@
+{
+  "foundry": {
+    "location": "eastus",
+    "projectEndpoint": "",
+    "resourceGroupSuffix": "foundry-rg",
+    "accountNameSuffix": "ai",
+    "projectNameSuffix": "project",
+    "agentName": "win365-desktop-agent",
+    "agentDisplayName": "Windows 365 direct-tool agent",
+    "agentDescription": "Single-operator, bounded desktop tasks using W365 tools through Agent Framework.",
+    "modelDeploymentName": "gpt-6-astra",
+    "modelName": "gpt-6-astra",
+    "modelVersion": "2026-09-03",
+    "modelSkuName": "GlobalStandard",
+    "modelSkuCapacity": 50
+  },
+  "state": {
+    "deploy": false,
+    "resourceGroupSuffix": "state-rg"
+  },
+  "viewer": {
+    "deploy": false,
+    "resourceGroupSuffix": "viewer-rg",
+    "imageName": "win365-sample:v1"
+  },
+  "w365": {
+    "poolBillingType": "payAsYouGo",
+    "poolImageType": "gallery",
+    "poolOsLocale": "en-US",
+    "poolMinimumCount": 1,
+    "poolMaximumCount": 1,
+    "poolEnableSingleSignOn": false
+  }
+}

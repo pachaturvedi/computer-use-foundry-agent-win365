@@ -9,15 +9,6 @@ services:
   ai-project:
     host: azure.ai.project
     endpoint: ${FOUNDRY_PROJECT_ENDPOINT:-}
-    deployments:
-      - name: gpt-6-astra
-        model:
-          format: OpenAI
-          name: gpt-6-astra
-          version: '2026-09-03'
-        sku:
-          name: GlobalStandard
-          capacity: 50
   win365-desktop-agent:
     host: azure.ai.agent
     metadata:
@@ -64,7 +55,7 @@ services:
 infra:
   layers:
     - name: foundry
-      provider: microsoft.foundry
+      provider: bicep
       path: ./infra/foundry
     - name: state
       provider: bicep

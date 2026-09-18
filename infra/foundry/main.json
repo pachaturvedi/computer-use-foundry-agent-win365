@@ -1,0 +1,379 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2018-05-01/subscriptionDeploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.47.16.16243",
+      "templateHash": "11866234855294104686"
+    }
+  },
+  "parameters": {
+    "environmentName": {
+      "type": "string"
+    },
+    "location": {
+      "type": "string"
+    },
+    "foundryResourceGroupName": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 90
+    },
+    "accountName": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 24
+    },
+    "projectName": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 64
+    },
+    "resourcePrefix": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 64
+    },
+    "modelDeploymentName": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 64
+    },
+    "modelName": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 64
+    },
+    "modelVersion": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "modelSkuName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "modelSkuCapacity": {
+      "type": "int",
+      "minValue": 1
+    },
+    "projectDisplayName": {
+      "type": "string",
+      "defaultValue": "[parameters('projectName')]"
+    },
+    "projectDescription": {
+      "type": "string",
+      "defaultValue": "Default project created with the resource"
+    },
+    "enableDefenderForAI": {
+      "type": "string",
+      "defaultValue": "true",
+      "allowedValues": [
+        "true",
+        "false"
+      ]
+    },
+    "publicNetworkAccess": {
+      "type": "string",
+      "defaultValue": "Enabled",
+      "allowedValues": [
+        "Enabled",
+        "Disabled"
+      ]
+    },
+    "storedCompletionsDisabled": {
+      "type": "string",
+      "defaultValue": "false",
+      "allowedValues": [
+        "true",
+        "false"
+      ]
+    }
+  },
+  "variables": {
+    "tags": {
+      "azd-env-name": "[parameters('environmentName')]",
+      "component": "foundry",
+      "workload": "win365-foundry-sample",
+      "managed-by": "azd",
+      "resource-prefix": "[parameters('resourcePrefix')]"
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Resources/resourceGroups",
+      "apiVersion": "2023-07-01",
+      "name": "[parameters('foundryResourceGroupName')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]"
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "foundry-resources",
+      "resourceGroup": "[parameters('foundryResourceGroupName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "accountName": {
+            "value": "[parameters('accountName')]"
+          },
+          "projectName": {
+            "value": "[parameters('projectName')]"
+          },
+          "projectDisplayName": {
+            "value": "[parameters('projectDisplayName')]"
+          },
+          "projectDescription": {
+            "value": "[parameters('projectDescription')]"
+          },
+          "modelDeploymentName": {
+            "value": "[parameters('modelDeploymentName')]"
+          },
+          "modelName": {
+            "value": "[parameters('modelName')]"
+          },
+          "modelVersion": {
+            "value": "[parameters('modelVersion')]"
+          },
+          "modelSkuName": {
+            "value": "[parameters('modelSkuName')]"
+          },
+          "modelSkuCapacity": {
+            "value": "[parameters('modelSkuCapacity')]"
+          },
+          "enableDefenderForAI": {
+            "value": "[equals(toLower(parameters('enableDefenderForAI')), 'true')]"
+          },
+          "publicNetworkAccess": {
+            "value": "[parameters('publicNetworkAccess')]"
+          },
+          "storedCompletionsDisabled": {
+            "value": "[equals(toLower(parameters('storedCompletionsDisabled')), 'true')]"
+          },
+          "tags": {
+            "value": "[variables('tags')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.47.16.16243",
+              "templateHash": "18059828614145424296"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string",
+              "defaultValue": "[resourceGroup().location]"
+            },
+            "accountName": {
+              "type": "string"
+            },
+            "projectName": {
+              "type": "string"
+            },
+            "projectDisplayName": {
+              "type": "string"
+            },
+            "projectDescription": {
+              "type": "string"
+            },
+            "modelDeploymentName": {
+              "type": "string"
+            },
+            "modelName": {
+              "type": "string"
+            },
+            "modelVersion": {
+              "type": "string"
+            },
+            "modelSkuName": {
+              "type": "string"
+            },
+            "modelSkuCapacity": {
+              "type": "int"
+            },
+            "enableDefenderForAI": {
+              "type": "bool",
+              "defaultValue": true
+            },
+            "publicNetworkAccess": {
+              "type": "string",
+              "defaultValue": "Enabled",
+              "allowedValues": [
+                "Enabled",
+                "Disabled"
+              ]
+            },
+            "storedCompletionsDisabled": {
+              "type": "bool",
+              "defaultValue": false
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {}
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.CognitiveServices/accounts",
+              "apiVersion": "2026-05-15-preview",
+              "name": "[parameters('accountName')]",
+              "location": "[parameters('location')]",
+              "kind": "AIServices",
+              "sku": {
+                "name": "S0"
+              },
+              "identity": {
+                "type": "SystemAssigned"
+              },
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "apiProperties": {},
+                "customSubDomainName": "[parameters('accountName')]",
+                "networkAcls": {
+                  "defaultAction": "Allow",
+                  "virtualNetworkRules": [],
+                  "ipRules": []
+                },
+                "allowProjectManagement": true,
+                "defaultProject": "[parameters('projectName')]",
+                "associatedProjects": [
+                  "[parameters('projectName')]"
+                ],
+                "publicNetworkAccess": "[parameters('publicNetworkAccess')]",
+                "storedCompletionsDisabled": "[parameters('storedCompletionsDisabled')]"
+              }
+            },
+            {
+              "condition": "[parameters('enableDefenderForAI')]",
+              "type": "Microsoft.CognitiveServices/accounts/defenderForAISettings",
+              "apiVersion": "2026-05-15-preview",
+              "name": "[format('{0}/{1}', parameters('accountName'), 'Default')]",
+              "properties": {
+                "state": "Enabled"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.CognitiveServices/accounts/deployments",
+              "apiVersion": "2026-05-15-preview",
+              "name": "[format('{0}/{1}', parameters('accountName'), parameters('modelDeploymentName'))]",
+              "sku": {
+                "name": "[parameters('modelSkuName')]",
+                "capacity": "[parameters('modelSkuCapacity')]"
+              },
+              "properties": {
+                "model": {
+                  "format": "OpenAI",
+                  "name": "[parameters('modelName')]",
+                  "version": "[parameters('modelVersion')]"
+                },
+                "versionUpgradeOption": "OnceNewDefaultVersionAvailable",
+                "currentCapacity": "[parameters('modelSkuCapacity')]",
+                "raiPolicyName": "Microsoft.DefaultV2",
+                "deploymentState": "Running"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.CognitiveServices/accounts/projects",
+              "apiVersion": "2026-05-15-preview",
+              "name": "[format('{0}/{1}', parameters('accountName'), parameters('projectName'))]",
+              "location": "[parameters('location')]",
+              "identity": {
+                "type": "SystemAssigned"
+              },
+              "properties": {
+                "description": "[parameters('projectDescription')]",
+                "displayName": "[parameters('projectDisplayName')]"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "accountName": {
+              "type": "string",
+              "value": "[parameters('accountName')]"
+            },
+            "projectName": {
+              "type": "string",
+              "value": "[parameters('projectName')]"
+            },
+            "projectId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('accountName'), parameters('projectName'))]"
+            },
+            "openAiEndpoint": {
+              "type": "string",
+              "value": "[format('https://{0}.openai.azure.com/', parameters('accountName'))]"
+            },
+            "projectEndpoint": {
+              "type": "string",
+              "value": "[format('https://{0}.services.ai.azure.com/api/projects/{1}', parameters('accountName'), parameters('projectName'))]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', parameters('foundryResourceGroupName'))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "AZD_FOUNDRY_RESOURCE_GROUP_ID": {
+      "type": "string",
+      "value": "[subscriptionResourceId('Microsoft.Resources/resourceGroups', parameters('foundryResourceGroupName'))]"
+    },
+    "AZURE_FOUNDRY_RESOURCE_GROUP": {
+      "type": "string",
+      "value": "[parameters('foundryResourceGroupName')]"
+    },
+    "AZURE_RESOURCE_GROUP": {
+      "type": "string",
+      "value": "[parameters('foundryResourceGroupName')]"
+    },
+    "AZURE_AI_ACCOUNT_NAME": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('foundryResourceGroupName')), 'Microsoft.Resources/deployments', 'foundry-resources'), '2025-04-01').outputs.accountName.value]"
+    },
+    "AZURE_AI_PROJECT_NAME": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('foundryResourceGroupName')), 'Microsoft.Resources/deployments', 'foundry-resources'), '2025-04-01').outputs.projectName.value]"
+    },
+    "AZURE_AI_PROJECT_ID": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('foundryResourceGroupName')), 'Microsoft.Resources/deployments', 'foundry-resources'), '2025-04-01').outputs.projectId.value]"
+    },
+    "AZURE_OPENAI_ENDPOINT": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('foundryResourceGroupName')), 'Microsoft.Resources/deployments', 'foundry-resources'), '2025-04-01').outputs.openAiEndpoint.value]"
+    },
+    "FOUNDRY_PROJECT_ENDPOINT": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('foundryResourceGroupName')), 'Microsoft.Resources/deployments', 'foundry-resources'), '2025-04-01').outputs.projectEndpoint.value]"
+    },
+    "AI_PROJECT_DEPLOYMENTS": {
+      "type": "string",
+      "value": "[string(createArray(createObject('name', parameters('modelDeploymentName'), 'model', createObject('name', parameters('modelName'), 'format', 'OpenAI', 'version', parameters('modelVersion')), 'sku', createObject('name', parameters('modelSkuName'), 'capacity', parameters('modelSkuCapacity')))))]"
+    }
+  }
+}

@@ -40,6 +40,15 @@ public sealed class McpConnection(HttpClient http, IAgentUserTokenProvider token
 
         await SendAsync("notifications/initialized", new { }, true, ct);
     }
+
+    /// <summary>Starts a fresh MCP transport session so session-scoped tools can be rediscovered.</summary>
+    /// <param name="ct">A token that cancels initialization.</param>
+    public async Task ReconnectAsync(CancellationToken ct)
+    {
+        _transportSession = null;
+        _version = "2025-06-18";
+        await InitializeAsync(ct);
+    }
     /// <summary>Gets every page of the MCP tool catalog.</summary>
     /// <param name="ct">A token that cancels catalog retrieval.</param>
     /// <returns>The advertised tool schemas.</returns>

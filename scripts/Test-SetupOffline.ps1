@@ -9,6 +9,8 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
     $script:agentId = '22222222-2222-2222-2222-222222222222'
     $script:agentClientId = '33333333-3333-3333-3333-333333333333'
     $script:viewerId = '44444444-4444-4444-4444-444444444444'
+    $script:poolId = '55555555-5555-5555-5555-555555555555'
+    $script:billingPlanId = '66666666-6666-6666-6666-666666666666'
     $script:ledger = @{
         Blueprint = @{ id = 'blueprint-object'; appId = $script:blueprintId; keyCredentials = @('untouched-key'); requiredResourceAccess = @(
             @{ resourceAppId = 'unrelated-resource'; resourceAccess = @(@{ id = 'unrelated-scope'; type = 'Scope' }) }
@@ -16,6 +18,17 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
         Principal = @{ id = 'blueprint-sp'; appId = $script:blueprintId; '@odata.type' = '#microsoft.graph.agentIdentityBlueprintPrincipal' }
         Agent = @{ id = $script:agentId; appId = $script:agentClientId; displayName = 'Existing Foundry agent'
             agentIdentityBlueprintId = $script:blueprintId; '@odata.type' = '#microsoft.graph.agentIdentity' }
+        Pool = @{
+            '@odata.type' = '#microsoft.graph.cloudPcAgentPool'
+            id = $script:poolId
+            displayName = 'Existing pool'
+            description = 'Existing description'
+            billingConfiguration = @{ billingType = 'payAsYouGo'; billingPlanId = $script:billingPlanId }
+            capabilities = @{ enableSingleSignOn = $false }
+            cloudPcConfiguration = @{ imageId = 'gallery-image'; imageType = 'gallery'; osLocale = 'en-US' }
+            networkConfiguration = @{ geographicLocationType = 'usWest'; regionGroups = @(@{ regionGroup = 'usWest'; regions = @('westus2', 'westus3') }) }
+            scalingPolicy = @{ minimumCount = 1; maximumCount = 1 }
+        }
         User = $null; Grants = @(); Inheritance = @(); Assignments = @(); Fics = @(); Creates = 0; Writes = 0
     }
     function Connect-MgGraph {
@@ -43,7 +56,7 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
                 return @{ value = @(@{ id = "sp-$id"; appId = $id; oauth2PermissionScopes = @($names | ForEach-Object { @{ id = "scope-$_"; value = $_; isEnabled = $true } }) }) }
             }
             if ($path -like '*cloudPcPools/*/assignments') { return @{ value = $script:ledger.Assignments } }
-            if ($path -like '*cloudPcPools/*') { return @{ '@odata.type' = '#microsoft.graph.cloudPcAgentPool' } }
+            if ($path -like '*cloudPcPools/*') { return $script:ledger.Pool }
             if ($path.StartsWith('v1.0/applications/microsoft.graph.agentIdentityBlueprint?')) { return @{ value = @($script:ledger.Blueprint | Where-Object { $_ }) } }
             if ($path.StartsWith('v1.0/applications/blueprint-object?')) { return $script:ledger.Blueprint }
             if ($path -like 'v1.0/oauth2PermissionGrants?*') { return @{ value = $script:ledger.Grants } }
@@ -58,6 +71,15 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
                 $script:ledger.Blueprint.requiredResourceAccess = $bodyObject.requiredResourceAccess
                 return
             }
+            if ($path -like 'beta/deviceManagement/virtualEndpoint/cloudPcPools/*') {
+                foreach ($key in $bodyObject.Keys) {
+                    if ($key -eq '@odata.type') {
+                        continue
+                    }
+                    $script:ledger.Pool[$key] = $bodyObject[$key]
+                }
+                return
+            }
             if ($path -like 'v1.0/oauth2PermissionGrants/*') {
                 $grant = $script:ledger.Grants | Where-Object { $_.id -eq $path.Split('/')[-1] }
                 $grant.scope = $bodyObject.scope; return
@@ -68,6 +90,11 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
             switch -Wildcard ($path) {
                 'v1.0/oauth2PermissionGrants' {
                     $bodyObject.id = "grant-$($script:ledger.Grants.Count)"; $script:ledger.Grants += $bodyObject; return $bodyObject
+                }
+                'beta/deviceManagement/virtualEndpoint/cloudPcPools' {
+                    $bodyObject.id = '77777777-7777-7777-7777-777777777777'
+                    $script:ledger.Pool = $bodyObject
+                    return $bodyObject
                 }
                 '*/inheritablePermissions' { $script:ledger.Inheritance += $bodyObject; return $bodyObject }
                 '*/federatedIdentityCredentials' { $script:ledger.Fics += $bodyObject; return $bodyObject }
@@ -83,11 +110,19 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
     Export-ModuleMember -Function Connect-MgGraph, Get-MgContext, Invoke-MgGraphRequest
 }
 $module | Import-Module -Global
+$repoRoot = Split-Path $PSScriptRoot
+$localConfigPath = Join-Path $repoRoot 'config\deployment.local.json'
+$savedLocalConfig = if (Test-Path -LiteralPath $localConfigPath) {
+    Get-Content -LiteralPath $localConfigPath -Raw
+}
+else {
+    $null
+}
 try {
     $setupArgs = @{
         TenantId = [guid]::Empty; BlueprintId = '11111111-1111-1111-1111-111111111111'
         AgentIdentityId = '22222222-2222-2222-2222-222222222222'; AgentUserPrincipalName = 'agent@example.com'
-        PoolId = [guid]::Empty; BillingConfirmed = $true; Confirm = $false
+        PoolId = '55555555-5555-5555-5555-555555555555'; BillingConfirmed = $true; Confirm = $false; SkipAzdEnvironmentSync = $true
     }
     $output = & "$PSScriptRoot\Setup-W365.ps1" @setupArgs
     if ('W365_AGENT_ID=33333333-3333-3333-3333-333333333333' -notin $output -or
@@ -129,6 +164,76 @@ try {
         if (!$rejected -or (& $module { $script:ledger.Writes }) -ne $before) { throw "$scenario was not rejected before mutations." }
         & $module { param($saved) $script:ledger = $saved | ConvertFrom-Json -AsHashtable } $saved
     }
+    & $module {
+        $script:ledger.Pool = $null
+        $script:ledger.User = $null
+        $script:ledger.Assignments = @()
+    }
+    $createArgs = @{
+        TenantId = [guid]::Empty; BlueprintId = '11111111-1111-1111-1111-111111111111'
+        AgentIdentityId = '22222222-2222-2222-2222-222222222222'; AgentUserPrincipalName = 'new-agent@example.com'
+        PoolDisplayName = 'Created pool'; PoolDescription = 'Created by setup'; PoolBillingPlanId = '66666666-6666-6666-6666-666666666666'
+        PoolGeographicLocationType = 'usWest'; PoolRegionGroup = 'usWest'; PoolRegions = @('westus2', 'westus3')
+        PoolImageId = 'microsoftwindowsdesktop_windows-ent-cpc_win11-23h2-ent-cpc-m365'; PoolMinimumCount = 2; PoolMaximumCount = 4
+        PoolEnableSingleSignOn = $true; BillingConfirmed = $true; Confirm = $false; SkipAzdEnvironmentSync = $true
+    }
+    $createOutput = & "$PSScriptRoot\Setup-W365.ps1" @createArgs
+    if ('W365_POOL_ID=77777777-7777-7777-7777-777777777777' -notin $createOutput -or
+        'W365_ENABLED=true' -notin $createOutput) { throw 'Pool creation outputs were not persisted.' }
+    & $module {
+        $script:ledger.Pool = $null
+        $script:ledger.User = $null
+        $script:ledger.Assignments = @()
+    }
+    Set-Content -LiteralPath $localConfigPath -Value @'
+{
+  "w365": {
+    "poolDisplayName": "Configured pool",
+    "poolDescription": "Configured from deployment.local.json",
+    "poolBillingPlanId": "66666666-6666-6666-6666-666666666666",
+    "poolBillingType": "payAsYouGo",
+    "poolGeographicLocationType": "usWest",
+    "poolRegionGroup": "usWest",
+    "poolRegions": [
+      "westus2",
+      "westus3"
+    ],
+    "poolImageId": "microsoftwindowsdesktop_windows-ent-cpc_win11-23h2-ent-cpc-m365",
+    "poolImageType": "gallery",
+    "poolOsLocale": "en-US",
+    "poolMinimumCount": 2,
+    "poolMaximumCount": 4,
+    "poolEnableSingleSignOn": true
+  }
+}
+'@
+    $configCreateArgs = @{
+        TenantId = [guid]::Empty; BlueprintId = '11111111-1111-1111-1111-111111111111'
+        AgentIdentityId = '22222222-2222-2222-2222-222222222222'; AgentUserPrincipalName = 'config-agent@example.com'
+        BillingConfirmed = $true; Confirm = $false; SkipAzdEnvironmentSync = $true
+    }
+    $configCreateOutput = & "$PSScriptRoot\Setup-W365.ps1" @configCreateArgs
+    if ('W365_POOL_ID=77777777-7777-7777-7777-777777777777' -notin $configCreateOutput) {
+        throw 'Pool creation did not consume deployment.local.json values.'
+    }
+    & $module {
+        if ($script:ledger.Pool.displayName -ne 'Configured pool' -or
+            $script:ledger.Pool.billingConfiguration.billingPlanId -ne '66666666-6666-6666-6666-666666666666' -or
+            @($script:ledger.Pool.networkConfiguration.regionGroups[0].regions) -join ',' -ne 'westus2,westus3' -or
+            $script:ledger.Pool.scalingPolicy.minimumCount -ne 2 -or
+            $script:ledger.Pool.scalingPolicy.maximumCount -ne 4) {
+            throw 'deployment.local.json defaults were not applied to pool creation.'
+        }
+    }
     Write-Output 'Offline setup: existing identity reuse, distinct client/object IDs, parent preflight, preserved configuration and optional idempotent hosted/viewer federation passed.'
 }
-finally { Remove-Module Microsoft.Graph.Authentication }
+finally {
+    if ($null -ne $savedLocalConfig) {
+        Set-Content -LiteralPath $localConfigPath -Value $savedLocalConfig
+    }
+    elseif (Test-Path -LiteralPath $localConfigPath) {
+        Remove-Item -LiteralPath $localConfigPath
+    }
+
+    Remove-Module Microsoft.Graph.Authentication
+}

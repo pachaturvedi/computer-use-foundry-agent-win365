@@ -42,7 +42,27 @@ function Test-VersionAtLeast {
     return $actual.Label -eq $minimum.Label -and $actual.LabelVersion -ge $minimum.LabelVersion
 }
 
-if (!(Get-Command azd -ErrorAction SilentlyContinue)) {
+function Get-AzdPaths {
+    $azdPaths = [System.Collections.Generic.List[string]]::new()
+    foreach ($command in @(Get-Command azd -All -ErrorAction SilentlyContinue)) {
+        if ($null -ne $command -and !$azdPaths.Contains($command.Source)) {
+            $azdPaths.Add($command.Source)
+        }
+    }
+    foreach ($path in @(
+        (Join-Path $env:LOCALAPPDATA 'Programs\Azure Dev CLI\azd.exe'),
+        (Join-Path $env:ProgramFiles 'Azure Dev CLI\azd.exe')
+    )) {
+        if (![string]::IsNullOrWhiteSpace($path) -and (Test-Path $path) -and !$azdPaths.Contains($path)) {
+            $azdPaths.Add($path)
+        }
+    }
+
+    return $azdPaths
+}
+
+$azdPaths = @(Get-AzdPaths)
+if ($azdPaths.Count -eq 0) {
     throw 'Azure Developer CLI (azd) is not installed or is not on PATH.'
 }
 
@@ -52,8 +72,7 @@ if ($manifest -notmatch "(?m)^\s*azd:\s*'>=([^']+)'") {
 }
 $requiredAzd = $Matches[1]
 
-$azdCandidates = Get-Command azd -All |
-    Select-Object -ExpandProperty Source -Unique |
+$azdCandidates = $azdPaths |
     ForEach-Object {
         $output = & $_ version 2>$null
         if ($LASTEXITCODE -eq 0 -and $output -match 'azd version\s+([^\s]+)') {
@@ -75,7 +94,7 @@ if (!$azdCandidate) {
 }
 $azdPath = $azdCandidate.Path
 $installedAzd = $azdCandidate.Version
-$defaultAzdPath = (Get-Command azd).Source
+$defaultAzdPath = (Get-Command azd -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source)
 if ($azdPath -ne $defaultAzdPath) {
     $azdDirectory = Split-Path $azdPath
     Write-Warning "PATH resolves an older azd before $azdPath. This check will use azd $installedAzd. Before direct azd commands in this PowerShell session, run: `$env:Path = '$azdDirectory;' + `$env:Path"

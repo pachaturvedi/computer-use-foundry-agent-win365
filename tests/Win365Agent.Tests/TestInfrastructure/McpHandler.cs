@@ -102,8 +102,9 @@ internal sealed class McpHandler : HttpMessageHandler
                             text = name switch
                             {
                                 "StartSession" =>
-                                    """{"sessionId":"desktop","sessionLink":"https://screen.example/session"}""",
-                                "GetSessionDetails" => """{"status":"Ready"}""",
+                                    """{"sessionId":"desktop"}""",
+                                "GetSessionDetails" =>
+                                    """{"sessionId":"desktop","environment":"PROD","screenShareUrl":"https://screen.example/session"}""",
                                 _ => "ok"
                             }
                         }

@@ -11,8 +11,8 @@ then **bind W365 to those exact identities and enable the runtime**.
 | Stage | Operation | Current status |
 | --- | --- | --- |
 | Phase 1 | Deploy `win365-desktop-agent` with `W365_ENABLED=false` | Completed; active version `1` |
-| Binding | Discover version `1`, run W365 setup, create/reuse the agent user, and assign it to an existing W365 agent pool | Completed against existing pool `su-cua-test`; Intune readiness confirmation remains |
-| Phase 2 | Apply returned IDs and state/operator values, set `W365_ENABLED=true`, and redeploy the same service | Not run; requires W365 prerequisites and explicit confirmation |
+| Binding | Discover version `1`, run W365 setup, create/reuse the agent user, and create or update the W365 agent pool | Scripted; live pool creation still requires tenant-specific billing and image inputs |
+| Phase 2 | Apply returned IDs and state/operator values, keep `W365_ENABLED=true`, and redeploy the same service | Scripted through the W365 flow wrapper or by rerunning `DeployAgent` |
 
 Ordinary Responses hosting still must be validated for blueprint-selected
 managed identity after phase 2; the public reference helper is from an
@@ -39,9 +39,11 @@ data-plane access.
 For users without either resource, the checked-in project service declares a
 default GA `gpt-6-astra` deployment using GlobalStandard capacity 50. In a new,
 dedicated environment, azd can create the Foundry project, model deployment,
-and required project RBAC. Existing-project users can override the deployment
-name through `AZURE_AI_MODEL_DEPLOYMENT_NAME` and must not run provisioning
-against an unreviewed shared project.
+and required project RBAC. Defaults are committed in
+`config/deployment.defaults.json`. Existing-project users can override the
+deployment name, model version, SKU, location, viewer image, or project
+endpoint through `config/deployment.local.json` or environment variables and
+must not run provisioning against an unreviewed shared project.
 
 Install .NET 10, PowerShell 7.4+, Azure CLI and Azure Developer CLI. From the
 repository root, verify the exact versions required by `azure.yaml`:
@@ -112,7 +114,6 @@ set the model deployment name, and keep the safe feature gate disabled:
 ```powershell
 azd env set FOUNDRY_PROJECT_ENDPOINT "<existing-foundry-project-endpoint>"
 azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME "<existing-model-deployment-name>"
-azd env set W365_ENABLED false
 azd ai agent doctor --local-only
 azd ai agent doctor
 ```
@@ -207,6 +208,27 @@ role rather than infer one from the other. If discovery does not return the requ
 or the actual host cannot provide a matching blueprint identity endpoint, stop
 and investigate the preview hosting contract; do not create a substitute identity.
 
+The stitched azd flow wraps this discovery automatically. After bootstrap
+deployment, `Invoke-W365SetupFlow.ps1` reads the selected azd environment,
+discovers the deployed blueprint and agent identity from the current hosted
+agent version, runs `Setup-W365.ps1`, persists the returned `W365_*` values,
+and redeploys the same agent name:
+
+```powershell
+pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
+   -Environment "<azd-environment-name>" `
+   -AgentUserPrincipalName "foundry-w365-agent@YOUR-TENANT.onmicrosoft.com" `
+   -PoolIdOrUrl "<existing-pool-guid-or-intune-url>" `
+   -BillingConfirmed `
+   -ConfirmResourceChanges `
+   -UseDeviceCode
+```
+
+If `W365_POOL_ID` is already persisted in the azd environment, reruns update
+that pool instead of creating another one. If no pool ID is present, the setup
+script can create a pool when you supply the billing, geography, region, image,
+and scaling inputs.
+
 ## Optional phase-1 viewer bootstrap
 
 The viewer is a separate process built from the same project (`--viewer`).
@@ -243,6 +265,9 @@ pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
 `-TenantId` is optional and should be supplied only to override the tenant
 selected by `azd auth login`. Omit `-DeployViewer` unless the dedicated viewer
 resources and Container Apps environment quota have been explicitly approved.
+The initializer uses reusable config helpers in `scripts/DeploymentConfig.ps1`
+so later hosted and cleanup workflows can consume the same defaults and
+override precedence without duplicating parsing logic.
 
 For an environment already bound to a Foundry project, set the viewer layer
 explicitly. Resource names remain derived from the supplied prefix:
@@ -354,7 +379,7 @@ Set non-secret values using `azd env set KEY VALUE`:
 | `OPERATOR_TENANT_ID`, `OPERATOR_OBJECT_ID` | Exact human operator's tenant/object IDs. |
 | `HOSTED_ALLOWED_USER_ID` | **Foundry agent only:** platform user partition or `sha256:` fingerprint; see binding below. Not a viewer parameter. |
 | `VIEWER_PUBLIC_URL` | Optional for an agent-only deployment. When omitted, desktop execution remains available but live-view/take-control links are returned as unavailable. Required for the viewer itself. |
-| `W365_ENABLED` | Set to `true` only after the phase-2 prerequisites are ready. |
+| `W365_ENABLED` | Internal phase switch. Bootstrap sets it to `false`; `Setup-W365.ps1` persists `true` only after phase-2 prerequisites are ready. |
 
 Enabled configuration requires valid identity IDs and same-tenant Foundry/W365/
 viewer Azure identities. The human OIDC tenant can differ. The runtime requires
@@ -380,7 +405,6 @@ selects its UAMI; never overwrite Foundry's credential selection.
 
 ```powershell
 # All phase-2 values above must already be set.
-azd env set W365_ENABLED true
 azd ai agent doctor
 pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
     -Mode DeployAgent `

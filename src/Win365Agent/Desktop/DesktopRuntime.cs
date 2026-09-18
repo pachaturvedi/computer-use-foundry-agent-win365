@@ -156,21 +156,19 @@ public sealed class DesktopRuntime : IDisposable
 
         }
 
+        string? lastStatus = null;
         for (var attempt = 0; attempt < _options.ReadyPollAttempts; attempt++)
         {
             var details = await _mcp.CallAsync(Require("GetSessionDetails").Name,
                 new { sessionId = state.SessionId }, ct);
-            if (McpConnection.Field(details, "status")?.Equals("Ready", StringComparison.OrdinalIgnoreCase) == true)
+            lastStatus = SessionStatus(details);
+            state.SessionLink ??= McpConnection.Field(details, "sessionLink") ??
+                McpConnection.Field(details, "screenShareUrl");
+            var ready = lastStatus?.Equals("Ready", StringComparison.OrdinalIgnoreCase) == true ||
+                ValidSessionLink(state.SessionLink);
+            if (ready)
             {
-                state.SessionLink ??= McpConnection.Field(details, "sessionLink") ?? McpConnection.Field(details, "screenShareUrl");
-                if (state.SessionLink is not null &&
-                    (!Uri.TryCreate(state.SessionLink, UriKind.Absolute, out var share) ||
-                        share.Scheme != "https" || !string.IsNullOrEmpty(share.UserInfo)))
-                {
-                    throw new InvalidOperationException("W365 returned an invalid screen-share link.");
-
-                }
-
+                await _mcp.ReconnectAsync(ct);
                 _catalog = await _mcp.ListAsync(ct);
                 state.OperationInFlight = false;
                 state.Phase = DesktopSessionPhase.Active;
@@ -181,8 +179,34 @@ public sealed class DesktopRuntime : IDisposable
             await Task.Delay(_options.ReadyPollInterval, ct);
         }
 
-        throw new TimeoutException("Cloud PC did not become Ready. No second session was allocated.");
+        var safeStatus = lastStatus is not null &&
+            lastStatus.Length <= 64 &&
+            lastStatus.All(character => char.IsLetterOrDigit(character) || character is '_' or '-')
+                ? lastStatus
+                : "unknown";
+        throw new TimeoutException(
+            $"Cloud PC did not become Ready (last status: {safeStatus}). No second session was allocated.");
     }
+
+    private static string? SessionStatus(JsonElement details)
+    {
+        foreach (var name in new[] { "status", "sessionStatus", "state", "sessionState", "provisioningStatus" })
+        {
+            if (McpConnection.Field(details, name) is { Length: <= 64 } value &&
+                value.All(character => char.IsLetterOrDigit(character) || character is '_' or '-'))
+            {
+                return value;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool ValidSessionLink(string? value) =>
+        value is not null &&
+        Uri.TryCreate(value, UriKind.Absolute, out var link) &&
+        link.Scheme == "https" &&
+        string.IsNullOrEmpty(link.UserInfo);
 
     /// <summary>Gets the currently advertised MCP tools that are permitted by policy.</summary>
     /// <returns>Descriptors for the permitted tools.</returns>
