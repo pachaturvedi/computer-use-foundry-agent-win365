@@ -35,7 +35,8 @@ from a real tenant, allocate a Cloud PC, or call a live model by default.
 PowerShell tests under `tests\PowerShell` must declare exactly one leading
 `# TestCategory: Offline`, `Platform`, or `Live` marker. The recursive
 `Invoke-PowerShellTests.ps1` driver runs only `Offline` tests by default and
-fails closed when category metadata is missing or invalid.
+fails closed when category metadata is missing or invalid. CI runs `Platform`
+tests separately on Windows after installing the required tooling.
 
 For azd changes, keep `azure.yaml` aligned with the current official Foundry
 hosted-agent schema and preserve its minimum CLI/extension versions. Validate

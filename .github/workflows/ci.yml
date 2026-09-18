@@ -34,4 +34,4 @@ jobs:
         shell: pwsh
         run: |
           azd ext install microsoft.foundry
-          ./tests/PowerShell/Test-AzdPrerequisites.ps1
+          ./tests/PowerShell/Invoke-PowerShellTests.ps1 -Category Platform

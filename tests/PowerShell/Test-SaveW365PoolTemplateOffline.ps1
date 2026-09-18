@@ -1,5 +1,5 @@
 #Requires -Version 7.4
-# TestCategory: Offline
+# TestCategory: Platform
 [CmdletBinding()]
 param()
 
