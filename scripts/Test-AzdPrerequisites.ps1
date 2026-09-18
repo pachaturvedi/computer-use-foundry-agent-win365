@@ -61,7 +61,7 @@ function Get-AzdPaths {
     return $azdPaths
 }
 
-$azdPaths = Get-AzdPaths
+$azdPaths = @(Get-AzdPaths)
 if ($azdPaths.Count -eq 0) {
     throw 'Azure Developer CLI (azd) is not installed or is not on PATH.'
 }
