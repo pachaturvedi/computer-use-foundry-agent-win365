@@ -28,8 +28,7 @@ param agentObjectId string = ''
 param agentUserId string = ''
 param screenShareSdkUrl string = ''
 param screenShareFrameOrigins string = ''
-#disable-next-line no-hardcoded-env-urls
-param screenShareAppUrl string = 'https://w365ssviewer7f05ac.z13.web.core.windows.net'
+param screenShareAppUrl string = ''
 
 var viewerEnabled = toLower(deployViewer) == 'true'
 var liveViewerEnabled = viewerEnabled && toLower(viewerLiveEnabled) == 'true'

@@ -22,6 +22,6 @@
     "agentUserId": { "value": "YOUR-W365-AGENT-USER-OBJECT-ID" },
     "screenShareSdkUrl": { "value": "https://YOUR-ONBOARDING-HOST/sdk.js" },
     "screenShareFrameOrigins": { "value": "https://YOUR-ONBOARDING-FRAME-HOST" },
-    "screenShareAppUrl": { "value": "https://w365ssviewer7f05ac.z13.web.core.windows.net" }
+    "screenShareAppUrl": { "value": "https://YOUR-W365-SCREENSHARE-APP-HOST" }
   }
 }

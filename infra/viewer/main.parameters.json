@@ -20,6 +20,6 @@
     "agentUserId": { "value": "${W365_AGENT_USER_ID}" },
     "screenShareSdkUrl": { "value": "${SCREENSHARE_SDK_URL}" },
     "screenShareFrameOrigins": { "value": "${SCREENSHARE_FRAME_ORIGINS}" },
-    "screenShareAppUrl": { "value": "${SCREENSHARE_APP_URL=https://w365ssviewer7f05ac.z13.web.core.windows.net}" }
+    "screenShareAppUrl": { "value": "${SCREENSHARE_APP_URL}" }
   }
 }

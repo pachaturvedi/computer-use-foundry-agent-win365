@@ -8,9 +8,6 @@ namespace Win365Agent;
 /// <param name="config">The configuration source.</param>
 public sealed class Settings(IConfiguration config)
 {
-    private const string _defaultScreenShareAppUrl =
-        "https://w365ssviewer7f05ac.z13.web.core.windows.net";
-
     /// <summary>Gets a non-empty configuration value.</summary>
     /// <param name="key">The configuration key.</param>
     /// <returns>The configured value.</returns>
@@ -111,7 +108,7 @@ public sealed class Settings(IConfiguration config)
     {
         get
         {
-            var uri = new Uri((Optional("SCREENSHARE_APP_URL") ?? _defaultScreenShareAppUrl).TrimEnd('/') + "/");
+            var uri = new Uri(Required("SCREENSHARE_APP_URL").TrimEnd('/') + "/");
             if (uri.Scheme != "https" || !string.IsNullOrEmpty(uri.UserInfo) ||
                 !string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment))
             {

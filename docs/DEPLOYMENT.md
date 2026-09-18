@@ -300,10 +300,9 @@ pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
     -ConfirmResourceChanges
 ```
 
-If you are deploying the viewer, also set `SCREENSHARE_APP_URL` in the azd
-environment or your untracked parameter file. The checked-in defaults now leave
-that value empty on purpose so repo docs and templates do not publish a
-tenant-specific onboarding host.
+If you are deploying the viewer, set `SCREENSHARE_APP_URL` in the azd
+environment or an untracked parameter file to the endpoint supplied by W365
+onboarding. The repository intentionally does not contain a concrete endpoint.
 
 `azd up` provisions the conditional Bicep layer using the `SCREENSHARE_APP_URL`
 you supplied,
@@ -402,7 +401,7 @@ Set non-secret values using `azd env set KEY VALUE`:
 | `OPERATOR_TENANT_ID`, `OPERATOR_OBJECT_ID` | Exact human operator's tenant/object IDs. |
 | `HOSTED_ALLOWED_USER_ID` | **Foundry agent only:** platform user partition or `sha256:` fingerprint; see binding below. Not a viewer parameter. |
 | `VIEWER_PUBLIC_URL` | Optional for an agent-only deployment. When omitted, desktop execution remains available but live-view/take-control links are returned as unavailable. Required for the viewer itself. |
-| `SCREENSHARE_APP_URL` | **Viewer only:** W365-hosted view-only application origin. Defaults to the Microsoft-hosted sample endpoint; override only when onboarding supplies another approved origin. |
+| `SCREENSHARE_APP_URL` | **Viewer only:** W365-hosted view-only application origin supplied by W365 onboarding. It is required only when `VIEWER_LIVE_ENABLED=true`. |
 | `VIEWER_LIVE_ENABLED` | Explicit viewer phase switch. Leave `false` for bootstrap; set `true` only after OIDC, state, W365, SDK/frame-origin values, and the Key Vault secret are ready. |
 | `W365_ENABLED` | Internal phase switch. Bootstrap sets it to `false`; `Setup-W365.ps1` persists `true` only after phase-2 prerequisites are ready. |
 

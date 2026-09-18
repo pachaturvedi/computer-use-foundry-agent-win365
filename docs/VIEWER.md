@@ -74,9 +74,9 @@ and W365 must share the same tenant**. Its Azure identity must have access to
 the configured Key Vault and Blob resource.
 
 `SCREENSHARE_APP_URL` selects the W365-hosted view-only application. Pass it
-through the azd environment or viewer deployment parameters. The sample defaults
-to `https://w365ssviewer7f05ac.z13.web.core.windows.net`; override it only when
-W365 onboarding supplies a different approved endpoint.
+through the azd environment or an untracked viewer deployment parameter file.
+Use only the approved endpoint supplied by W365 onboarding; the repository does
+not contain a concrete live-screen hostname.
 
 `Initialize-Greenfield.ps1` persists this non-secret endpoint in the azd
 environment, and the viewer Bicep layer passes it to the companion viewer. The

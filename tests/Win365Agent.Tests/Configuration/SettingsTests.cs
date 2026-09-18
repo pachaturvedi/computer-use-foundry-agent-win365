@@ -98,11 +98,9 @@ public sealed class SettingsTests
     }
 
     [Fact]
-    public void ScreenShareAppUsesDefaultAndRequiresSafeHttps()
+    public void ScreenShareAppRequiresConfiguredSafeHttps()
     {
-        Assert.Equal(
-            "https://w365ssviewer7f05ac.z13.web.core.windows.net/",
-            Config([]).ScreenShareAppUrl.ToString());
+        Assert.Throws<InvalidOperationException>(() => Config([]).ScreenShareAppUrl);
 
         var values = EnabledValues();
         values["SCREENSHARE_APP_URL"] = "https://screenshare.example.com/app";
