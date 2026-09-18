@@ -361,6 +361,36 @@ new binding and hosting token flow are accepted, check all consumers before
 retiring separate identities, certificate registrations, private files and
 old Key Vault certificate secrets. Preserve the viewer's separate OIDC secret.
 
+## Protected live acceptance
+
+Maintainers can prove the complete lifecycle with the manually dispatched
+`W365 live acceptance` workflow. It never runs for a push or pull request and
+targets the protected `w365-live-acceptance` GitHub environment. Configure a
+required reviewer and these environment values before approving a run:
+
+- secret `AZURE_CLIENT_ID`: GitHub-federated deployment application;
+- variables `AZURE_SUBSCRIPTION_ID`, `AZURE_TENANT_ID`, and `AZURE_LOCATION`;
+- variables `W365_POOL_BILLING_PLAN_ID`,
+  `W365_POOL_GEOGRAPHIC_LOCATION_TYPE`, `W365_POOL_REGION_GROUP`,
+  `W365_POOL_REGIONS` (comma-separated), and `W365_POOL_IMAGE_ID`.
+
+The dispatcher repeats the exact subscription, tenant, and location, supplies a
+unique 2-12 character lowercase resource prefix, and types
+`I_APPROVE_W365_BILLING_AND_CLEANUP`. The protected reviewer must verify model
+quota, W365 licensing, billing plan, image, region, and minimum-capacity
+availability before approval.
+
+The Azure deployment application must trust only the GitHub environment subject
+for this repository and have the least Azure RBAC needed to deploy the isolated
+resource groups and create the template's scoped role assignments.
+
+Azure provisioning uses GitHub OIDC without a client secret. W365 setup and
+cleanup retain delegated Graph device-code authentication, so an approved
+tenant operator must monitor the run and complete any displayed device code.
+The workflow deploys, checks sanitized ownership state and Foundry readiness,
+reruns to prove manifest stability, and always attempts `azd down`. Uploaded
+evidence contains no tenant IDs, resource IDs, UPNs, endpoints, or tokens.
+
 ## Cleanup
 
 End active sessions first. `azd down` now invokes

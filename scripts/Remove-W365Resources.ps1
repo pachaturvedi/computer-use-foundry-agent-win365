@@ -297,7 +297,13 @@ if ($projectOwnership -eq 'existing' -and !$allowExistingProjectCleanup) {
     throw 'This environment is bound to an existing Foundry project. Set ALLOW_EXISTING_FOUNDRY_CLEANUP=true or pass -AllowExistingProjectCleanup only after confirming azd down may delete that shared project resource group.'
 }
 
-if (!$PSCmdlet.ShouldProcess(($context.EnvironmentName ?? 'current azd environment'), 'Remove W365 and Entra resources before azd down')) {
+$cleanupApproval = [Environment]::GetEnvironmentVariable('W365_CLEANUP_CONFIRMED')
+if (![string]::IsNullOrWhiteSpace($cleanupApproval) -and $cleanupApproval -notin @('true', 'false')) {
+    throw "W365_CLEANUP_CONFIRMED must be 'true' or 'false', received '$cleanupApproval'."
+}
+$protectedCleanupApproved = $cleanupApproval -eq 'true'
+if (!$protectedCleanupApproved -and
+    !$PSCmdlet.ShouldProcess(($context.EnvironmentName ?? 'current azd environment'), 'Remove W365 and Entra resources before azd down')) {
     throw 'Cleanup confirmation was declined.'
 }
 

@@ -1,0 +1,223 @@
+name: W365 live acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      azure_subscription_id:
+        description: Exact protected-environment Azure subscription ID
+        required: true
+        type: string
+      azure_tenant_id:
+        description: Exact protected-environment Entra tenant ID
+        required: true
+        type: string
+      azure_location:
+        description: Exact protected-environment Azure location
+        required: true
+        type: string
+      resource_prefix:
+        description: Unique 2-12 character lowercase acceptance prefix
+        required: true
+        type: string
+      agent_user_domain:
+        description: Optional verified tenant domain; leave empty for automatic default
+        required: false
+        type: string
+      billing_approval:
+        description: Type I_APPROVE_W365_BILLING_AND_CLEANUP
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: w365-live-acceptance
+  cancel-in-progress: false
+
+jobs:
+  live-acceptance:
+    runs-on: windows-latest
+    timeout-minutes: 180
+    environment: w365-live-acceptance
+    env:
+      AZD_NON_INTERACTIVE: 'true'
+      AZURE_DEV_USER_AGENT: microsoft_foundry_skill
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate protected inputs
+        shell: pwsh
+        env:
+          INPUT_SUBSCRIPTION_ID: ${{ inputs.azure_subscription_id }}
+          INPUT_TENANT_ID: ${{ inputs.azure_tenant_id }}
+          INPUT_LOCATION: ${{ inputs.azure_location }}
+          INPUT_PREFIX: ${{ inputs.resource_prefix }}
+          INPUT_BILLING_APPROVAL: ${{ inputs.billing_approval }}
+          APPROVED_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          APPROVED_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          APPROVED_LOCATION: ${{ vars.AZURE_LOCATION }}
+        run: |
+          if ($env:INPUT_BILLING_APPROVAL -cne 'I_APPROVE_W365_BILLING_AND_CLEANUP') {
+            throw 'The exact W365 billing and cleanup approval phrase is required.'
+          }
+          if ($env:INPUT_SUBSCRIPTION_ID -ne $env:APPROVED_SUBSCRIPTION_ID -or
+              $env:INPUT_TENANT_ID -ne $env:APPROVED_TENANT_ID -or
+              $env:INPUT_LOCATION -ne $env:APPROVED_LOCATION) {
+            throw 'Dispatch context does not match the protected GitHub environment.'
+          }
+          if ($env:INPUT_PREFIX -notmatch '^[a-z][a-z0-9]{1,11}$') {
+            throw 'resource_prefix must contain 2-12 lowercase letters or digits and start with a letter.'
+          }
+          "AZD_ENVIRONMENT_NAME=$($env:INPUT_PREFIX)-live" >> $env:GITHUB_ENV
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install azd
+        uses: Azure/setup-azd@v2
+
+      - name: Sign in to Azure with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ inputs.azure_tenant_id }}
+          subscription-id: ${{ inputs.azure_subscription_id }}
+
+      - name: Authenticate azd and install prerequisites
+        shell: pwsh
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ inputs.azure_tenant_id }}
+        run: |
+          azd auth login `
+            --client-id $env:AZURE_CLIENT_ID `
+            --tenant-id $env:AZURE_TENANT_ID `
+            --federated-credential-provider github `
+            --no-prompt
+          azd ext install microsoft.foundry
+          Install-Module Microsoft.Graph.Authentication -Scope CurrentUser -Force -AllowClobber
+          ./tests/PowerShell/Invoke-PowerShellTests.ps1 -Category Platform
+
+      - name: Create protected W365 profile
+        shell: pwsh
+        env:
+          BILLING_PLAN_ID: ${{ vars.W365_POOL_BILLING_PLAN_ID }}
+          GEOGRAPHIC_LOCATION_TYPE: ${{ vars.W365_POOL_GEOGRAPHIC_LOCATION_TYPE }}
+          REGION_GROUP: ${{ vars.W365_POOL_REGION_GROUP }}
+          REGIONS: ${{ vars.W365_POOL_REGIONS }}
+          IMAGE_ID: ${{ vars.W365_POOL_IMAGE_ID }}
+        run: |
+          $billingPlanId = [guid]::Empty
+          if (![guid]::TryParse($env:BILLING_PLAN_ID, [ref]$billingPlanId) -or
+              $billingPlanId -eq [guid]::Empty) {
+            throw 'W365_POOL_BILLING_PLAN_ID must be a non-empty GUID.'
+          }
+          $regions = @($env:REGIONS -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+          if ([string]::IsNullOrWhiteSpace($env:GEOGRAPHIC_LOCATION_TYPE) -or
+              [string]::IsNullOrWhiteSpace($env:REGION_GROUP) -or
+              [string]::IsNullOrWhiteSpace($env:IMAGE_ID) -or
+              $regions.Count -eq 0) {
+            throw 'The protected W365 pool profile is incomplete.'
+          }
+          $config = @{
+            w365 = @{
+              poolBillingPlanId = $billingPlanId.ToString()
+              poolBillingType = 'payAsYouGo'
+              poolGeographicLocationType = $env:GEOGRAPHIC_LOCATION_TYPE
+              poolRegionGroup = $env:REGION_GROUP
+              poolRegions = $regions
+              poolImageId = $env:IMAGE_ID
+              poolImageType = 'gallery'
+              poolOsLocale = 'en-US'
+              poolMinimumCount = 1
+              poolMaximumCount = 1
+              poolEnableSingleSignOn = $false
+            }
+          }
+          $config | ConvertTo-Json -Depth 10 |
+            Set-Content -LiteralPath .\config\deployment.local.json -Encoding utf8
+
+      - name: Initialize isolated environment
+        shell: pwsh
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ inputs.azure_subscription_id }}
+          AZURE_TENANT_ID: ${{ inputs.azure_tenant_id }}
+          AZURE_LOCATION: ${{ inputs.azure_location }}
+          RESOURCE_PREFIX: ${{ inputs.resource_prefix }}
+          AGENT_USER_DOMAIN: ${{ inputs.agent_user_domain }}
+        run: |
+          $arguments = @{
+            SubscriptionId = [guid]$env:AZURE_SUBSCRIPTION_ID
+            TenantId = [guid]$env:AZURE_TENANT_ID
+            Prefix = $env:RESOURCE_PREFIX
+            Environment = 'live'
+            Location = $env:AZURE_LOCATION
+            EnableW365 = $true
+            SkipPreview = $true
+          }
+          if (![string]::IsNullOrWhiteSpace($env:AGENT_USER_DOMAIN)) {
+            $arguments.AgentUserDomain = $env:AGENT_USER_DOMAIN
+          }
+          ./scripts/Initialize-Greenfield.ps1 @arguments
+
+      - name: Deploy and complete delegated W365 setup
+        shell: pwsh
+        timeout-minutes: 90
+        env:
+          W365_RESOURCE_CHANGES_CONFIRMED: 'true'
+        run: |
+          Write-Host 'Monitor this step for the Microsoft Graph device code and complete it as the approved tenant operator.'
+          azd up --environment $env:AZD_ENVIRONMENT_NAME --no-prompt
+
+      - name: Verify deployment
+        shell: pwsh
+        run: |
+          $result = ./scripts/Test-W365LiveDeployment.ps1 `
+            -EnvironmentName $env:AZD_ENVIRONMENT_NAME `
+            -EvidencePath .\artifacts\live-acceptance-first.json
+          "OWNERSHIP_MANIFEST_SHA256=$($result.ownershipManifestSha256)" >> $env:GITHUB_ENV
+          azd ai agent doctor --environment $env:AZD_ENVIRONMENT_NAME --no-prompt
+
+      - name: Verify safe rerun
+        shell: pwsh
+        timeout-minutes: 60
+        env:
+          W365_RESOURCE_CHANGES_CONFIRMED: 'true'
+        run: |
+          azd up --environment $env:AZD_ENVIRONMENT_NAME --no-prompt
+          ./scripts/Test-W365LiveDeployment.ps1 `
+            -EnvironmentName $env:AZD_ENVIRONMENT_NAME `
+            -ExpectedManifestSha256 $env:OWNERSHIP_MANIFEST_SHA256 `
+            -EvidencePath .\artifacts\live-acceptance-rerun.json | Out-Null
+          azd ai agent doctor --environment $env:AZD_ENVIRONMENT_NAME --no-prompt
+
+      - name: Tear down environment-owned resources
+        if: always()
+        shell: pwsh
+        timeout-minutes: 60
+        env:
+          W365_CLEANUP_CONFIRMED: 'true'
+        run: |
+          $environmentPath = ".\.azure\$env:AZD_ENVIRONMENT_NAME"
+          if (!(Test-Path -LiteralPath $environmentPath)) {
+            Write-Host 'The azd environment was not created; teardown is not required.'
+            return
+          }
+          Write-Host 'Monitor this step for a Microsoft Graph device code if the cached delegated context requires renewal.'
+          azd down --environment $env:AZD_ENVIRONMENT_NAME --force --purge --no-prompt
+          ./scripts/Test-W365LiveDeployment.ps1 `
+            -EnvironmentName $env:AZD_ENVIRONMENT_NAME `
+            -RequireCleanupComplete `
+            -EvidencePath .\artifacts\live-acceptance-cleanup.json | Out-Null
+
+      - name: Upload sanitized acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: w365-live-acceptance-${{ github.run_id }}
+          path: artifacts/live-acceptance-*.json
+          if-no-files-found: warn
+          retention-days: 14
