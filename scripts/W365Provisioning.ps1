@@ -152,6 +152,84 @@ function Get-W365PoolDisplayName {
     return "$($name.Substring(0, $baseLength).TrimEnd('-'))-$suffix"
 }
 
+function ConvertTo-W365PoolId {
+    param([string]$Value)
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return [guid]::Empty
+    }
+
+    $parsed = [guid]::Empty
+    if ([guid]::TryParse($Value, [ref]$parsed) -and $parsed -ne [guid]::Empty) {
+        return $parsed
+    }
+    if ($Value -match 'poolId/([0-9a-fA-F-]{36})') {
+        return [guid]$Matches[1]
+    }
+
+    throw 'PoolIdOrUrl must be a pool GUID or an Intune pool URL containing poolId/<guid>.'
+}
+
+function Resolve-W365OwnedPoolId {
+    param(
+        [guid]$ExplicitPoolId = [guid]::Empty,
+        [string]$PoolReference,
+        [System.Collections.IDictionary]$OwnershipManifest,
+        [string]$PersistedPoolId
+    )
+
+    $requestedPoolId = if ($ExplicitPoolId -ne [guid]::Empty) {
+        $ExplicitPoolId
+    }
+    else {
+        ConvertTo-W365PoolId -Value $PoolReference
+    }
+
+    $manifestPoolId = [guid]::Empty
+    if ($null -ne $OwnershipManifest) {
+        $w365 = if ($OwnershipManifest.Contains('w365') -and
+            $OwnershipManifest.w365 -is [System.Collections.IDictionary]) {
+            $OwnershipManifest.w365
+        }
+        else {
+            $null
+        }
+        $pool = if ($null -ne $w365 -and
+            $w365.Contains('pool') -and
+            $w365.pool -is [System.Collections.IDictionary]) {
+            $w365.pool
+        }
+        else {
+            $null
+        }
+        $manifestValue = if ($null -ne $pool -and $pool.Contains('id')) {
+            [string]$pool.id
+        }
+        else {
+            ''
+        }
+        if ([string]::IsNullOrWhiteSpace($manifestValue)) {
+            throw 'The ownership manifest exists but does not contain w365.pool.id. Reconcile or tear down the partial environment before continuing.'
+        }
+
+        $manifestPoolId = ConvertTo-W365PoolId -Value $manifestValue
+        if ($requestedPoolId -ne [guid]::Empty -and $requestedPoolId -ne $manifestPoolId) {
+            throw "The requested W365 pool '$requestedPoolId' does not match the environment-owned pool '$manifestPoolId'."
+        }
+
+        return $manifestPoolId
+    }
+
+    if ($requestedPoolId -ne [guid]::Empty) {
+        return $requestedPoolId
+    }
+    if (![string]::IsNullOrWhiteSpace($PersistedPoolId)) {
+        throw 'W365_POOL_ID exists without an ownership manifest. It cannot be reused automatically; reconcile or tear down the legacy state first.'
+    }
+
+    return [guid]::Empty
+}
+
 function Assert-W365ResourceApproval {
     param(
         [Parameter(Mandatory)][bool]$EnableW365,

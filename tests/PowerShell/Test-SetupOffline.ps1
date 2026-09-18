@@ -11,6 +11,7 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
     $script:viewerId = '44444444-4444-4444-4444-444444444444'
     $script:poolId = '55555555-5555-5555-5555-555555555555'
     $script:billingPlanId = '66666666-6666-6666-6666-666666666666'
+    $script:failBlueprintPatch = $false
     $script:ledger = @{
         Blueprint = @{ id = 'blueprint-object'; appId = $script:blueprintId; keyCredentials = @('untouched-key'); requiredResourceAccess = @(
             @{ resourceAppId = 'unrelated-resource'; resourceAccess = @(@{ id = 'unrelated-scope'; type = 'Scope' }) }
@@ -67,6 +68,9 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
         if ($Method -eq 'PATCH') {
             $script:ledger.Writes++
             if ($path -eq 'v1.0/applications/blueprint-object') {
+                if ($script:failBlueprintPatch) {
+                    throw 'Simulated failure after pool creation.'
+                }
                 if ($bodyObject.Keys.Count -ne 1 -or !$bodyObject.ContainsKey('requiredResourceAccess')) { throw 'Attempted to modify Foundry credentials.' }
                 $script:ledger.Blueprint.requiredResourceAccess = $bodyObject.requiredResourceAccess
                 return
@@ -214,13 +218,68 @@ try {
         $manifest.w365.pool.disposition -ne 'created') {
         throw 'Created pool ownership was not persisted.'
     }
+    $createCountAfterFirstRun = & $module { $script:ledger.Creates }
+    $rerunOutput = & "$scriptsRoot\Setup-W365.ps1" @createArgs
+    if ('W365_POOL_ID=77777777-7777-7777-7777-777777777777' -notin $rerunOutput) {
+        throw 'Pool rerun did not reuse the environment-owned pool.'
+    }
+    if ((& $module { $script:ledger.Creates }) -ne $createCountAfterFirstRun) {
+        throw 'Pool rerun created duplicate W365 or Graph resources.'
+    }
+    $mismatchedArgs = @{} + $createArgs
+    $mismatchedArgs.PoolId = '88888888-8888-8888-8888-888888888888'
+    $rejected = $false
+    try {
+        & "$scriptsRoot\Setup-W365.ps1" @mismatchedArgs | Out-Null
+    }
+    catch {
+        $rejected = $true
+    }
+    if (!$rejected) {
+        throw 'Setup accepted a pool ID that differed from the environment ownership manifest.'
+    }
     if (Test-Path -LiteralPath $ownershipManifestPath) {
         Remove-Item -LiteralPath $ownershipManifestPath
     }
     & $module {
         $script:ledger.Pool = $null
         $script:ledger.User = $null
+        $script:ledger.Grants = @()
+        $script:ledger.Inheritance = @()
         $script:ledger.Assignments = @()
+        $script:ledger.Fics = @()
+        $script:ledger.Blueprint.requiredResourceAccess = @(
+            @{ resourceAppId = 'unrelated-resource'; resourceAccess = @(@{ id = 'unrelated-scope'; type = 'Scope' }) }
+        )
+        $script:failBlueprintPatch = $true
+    }
+    $rejected = $false
+    try {
+        & "$scriptsRoot\Setup-W365.ps1" @createArgs | Out-Null
+    }
+    catch {
+        $rejected = $true
+    }
+    if (!$rejected) {
+        throw 'Setup did not surface the simulated post-pool failure.'
+    }
+    $checkpoint = Get-Content -LiteralPath $ownershipManifestPath -Raw | ConvertFrom-Json -AsHashtable
+    if ($checkpoint.w365.pool.id -ne '77777777-7777-7777-7777-777777777777' -or
+        $checkpoint.w365.pool.disposition -ne 'created') {
+        throw 'Setup did not checkpoint newly created pool ownership before later Graph mutations.'
+    }
+    Remove-Item -LiteralPath $ownershipManifestPath
+    & $module {
+        $script:ledger.Pool = $null
+        $script:ledger.User = $null
+        $script:ledger.Grants = @()
+        $script:ledger.Inheritance = @()
+        $script:ledger.Assignments = @()
+        $script:ledger.Fics = @()
+        $script:ledger.Blueprint.requiredResourceAccess = @(
+            @{ resourceAppId = 'unrelated-resource'; resourceAccess = @(@{ id = 'unrelated-scope'; type = 'Scope' }) }
+        )
+        $script:failBlueprintPatch = $false
     }
     Set-Content -LiteralPath $localConfigPath -Value @'
 {

@@ -33,8 +33,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-. (Join-Path $PSScriptRoot 'DeploymentConfig.ps1')
-. (Join-Path $PSScriptRoot 'W365OwnershipManifest.ps1')
+. (Join-Path $PSScriptRoot 'W365Provisioning.ps1')
 
 $repositoryRoot = Split-Path $PSScriptRoot
 $deploymentConfig = Get-DeploymentConfig -RepositoryRoot $repositoryRoot
@@ -337,54 +336,6 @@ function Invoke-Azd {
     }
 
     return $output
-}
-function TryParse-GuidValue {
-    param([string]$Value)
-
-    $parsed = [guid]::Empty
-    if ([guid]::TryParse($Value, [ref]$parsed)) {
-        return $parsed
-    }
-
-    return [guid]::Empty
-}
-function Resolve-PoolIdFromInput {
-    param(
-        [guid]$ExplicitPoolId,
-        [string]$PoolReference,
-        $Azd
-    )
-
-    if ($ExplicitPoolId -ne [guid]::Empty) {
-        return $ExplicitPoolId
-    }
-
-    if (![string]::IsNullOrWhiteSpace($PoolReference)) {
-        $parsed = TryParse-GuidValue $PoolReference
-        if ($parsed -ne [guid]::Empty) {
-            return $parsed
-        }
-
-        if ($PoolReference -match 'poolId/([0-9a-fA-F-]{36})') {
-            return [guid]$Matches[1]
-        }
-
-        throw 'PoolIdOrUrl must be a pool GUID or an Intune pool URL containing poolId/<guid>.'
-    }
-
-    if ($Azd) {
-        try {
-            $persistedPoolId = Invoke-Azd -Azd $Azd -Arguments @('env', 'get-value', 'W365_POOL_ID') -CaptureOutput
-            $parsed = TryParse-GuidValue $persistedPoolId
-            if ($parsed -ne [guid]::Empty) {
-                return $parsed
-            }
-        }
-        catch {
-        }
-    }
-
-    return [guid]::Empty
 }
 function Get-RequiredPoolValue {
     param(
@@ -707,9 +658,16 @@ function New-PoolUpdateRequest {
     return $patch
 }
 function Resolve-OrCreatePool {
-    param($Azd)
+    param(
+        [System.Collections.IDictionary]$OwnershipManifest,
+        [string]$PersistedPoolId
+    )
 
-    $resolvedPoolId = Resolve-PoolIdFromInput -ExplicitPoolId $PoolId -PoolReference $PoolIdOrUrl -Azd $Azd
+    $resolvedPoolId = Resolve-W365OwnedPoolId `
+        -ExplicitPoolId $PoolId `
+        -PoolReference $PoolIdOrUrl `
+        -OwnershipManifest $OwnershipManifest `
+        -PersistedPoolId $persistedPoolId
     if ($resolvedPoolId -ne [guid]::Empty) {
         $existingPool = Graph GET "beta/deviceManagement/virtualEndpoint/cloudPcPools/$resolvedPoolId"
         if ($existingPool['@odata.type'] -ne '#microsoft.graph.cloudPcAgentPool') {
@@ -825,9 +783,57 @@ $existingManifest = if ($manifestTarget) {
 else {
     $null
 }
-$poolState = Resolve-OrCreatePool -Azd $azd
+$environmentValues = [ordered]@{}
+if ($manifestTarget -and ![string]::IsNullOrWhiteSpace($manifestTarget.EnvironmentName)) {
+    $environmentFilePath = Join-Path `
+        (Join-Path $repositoryRoot ".azure\$($manifestTarget.EnvironmentName)") `
+        '.env'
+    if (Test-Path -LiteralPath $environmentFilePath) {
+        $environmentValues = Read-AzdEnvironmentFile -Path $environmentFilePath
+    }
+}
+if ($null -eq $existingManifest -and
+    $PoolId -eq [guid]::Empty -and
+    [string]::IsNullOrWhiteSpace($PoolIdOrUrl) -and
+    [string]::IsNullOrWhiteSpace($PoolDisplayName)) {
+    if ($null -eq $azd -or $null -eq $manifestTarget -or [string]::IsNullOrWhiteSpace($manifestTarget.EnvironmentName)) {
+        throw 'PoolDisplayName is required when a new pool is created outside a selected azd environment.'
+    }
+
+    $resourcePrefix = [string]$environmentValues['RESOURCE_PREFIX']
+    if ([string]::IsNullOrWhiteSpace($resourcePrefix)) {
+        throw 'RESOURCE_PREFIX is required to derive the environment-owned W365 pool name.'
+    }
+    $PoolDisplayName = Get-W365PoolDisplayName `
+        -ResourcePrefix $resourcePrefix `
+        -EnvironmentName $manifestTarget.EnvironmentName
+}
+$poolState = Resolve-OrCreatePool `
+    -OwnershipManifest $existingManifest `
+    -PersistedPoolId ([string]$environmentValues['W365_POOL_ID'])
 $pool = $poolState.Pool
 $PoolId = $poolState.Id
+if ($poolState.Created -and $manifestTarget) {
+    $existingManifest = New-OwnershipManifest `
+        -ExistingManifest $existingManifest `
+        -EnvironmentName $manifestTarget.EnvironmentName
+    $existingManifest.w365['pool'] = [ordered]@{
+        id = $PoolId.ToString()
+        displayName = [string]$pool.displayName
+        description = [string]$pool.description
+        disposition = 'created'
+    }
+    $existingManifest.graph['blueprint'] = [ordered]@{
+        appId = [string]$blueprint.appId
+        objectId = [string]$blueprint.id
+        principalId = [string]$principal.id
+    }
+    $existingManifest.graph['agent'] = [ordered]@{
+        appId = [string]$agent.appId
+        objectId = [string]$agent.id
+    }
+    Write-W365OwnershipManifest -Path $manifestTarget.Path -Manifest $existingManifest
+}
 $inheritPath = "v1.0/applications/microsoft.graph.agentIdentityBlueprint/$($blueprint.appId)/inheritablePermissions"
 $inheritances = @(List $inheritPath)
 $grants = @(List "v1.0/oauth2PermissionGrants?`$filter=clientId eq '$($principal.id)'")
