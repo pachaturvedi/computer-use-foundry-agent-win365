@@ -10,6 +10,9 @@ param(
     [ValidatePattern('^[a-z][a-z0-9-]{0,6}[a-z0-9]$')]
     [string]$Environment = 'dev',
     [string]$Location,
+    [switch]$EnableW365,
+    [ValidatePattern('^[a-zA-Z0-9._+-]+@[a-zA-Z0-9.-]+$')]
+    [string]$AgentUserPrincipalName,
     [switch]$DeployViewer,
     [switch]$SkipPreview,
     [string]$ConfigPath
@@ -20,6 +23,9 @@ Set-StrictMode -Version Latest
 
 if (!$IsWindows) {
     throw 'This greenfield initializer is Windows-only.'
+}
+if ($EnableW365 -and [string]::IsNullOrWhiteSpace($AgentUserPrincipalName)) {
+    throw 'EnableW365 requires AgentUserPrincipalName until tenant-domain-based naming is implemented.'
 }
 
 $root = Split-Path $PSScriptRoot
@@ -91,6 +97,8 @@ $values = [ordered]@{
     VIEWER_RESOURCE_GROUP_NAME = "$resourcePrefix-$($config.viewer.resourceGroupSuffix)"
     VIEWER_IMAGE_NAME = $viewerImageName
     SCREENSHARE_APP_URL = $screenShareAppUrl
+    ENABLE_W365 = $EnableW365.IsPresent.ToString().ToLowerInvariant()
+    W365_AGENT_USER_PRINCIPAL_NAME = [string]$AgentUserPrincipalName
     W365_ENABLED = 'false'
 }
 if ($PSBoundParameters.ContainsKey('TenantId')) {
@@ -126,6 +134,7 @@ try {
     Write-Host "  Model name/version:     $($values.FOUNDRY_MODEL_NAME) / $($values.FOUNDRY_MODEL_VERSION)"
     Write-Host "  Model SKU:              $($values.FOUNDRY_MODEL_SKU_NAME) x $($values.FOUNDRY_MODEL_SKU_CAPACITY)"
     Write-Host "  W365 bootstrap mode:    $($values.W365_ENABLED)"
+    Write-Host "  Complete W365 in azd up: $($values.ENABLE_W365)"
     if (![string]::IsNullOrWhiteSpace($values.FOUNDRY_PROJECT_ENDPOINT)) {
         Write-Host "  Existing project:       $($values.FOUNDRY_PROJECT_ENDPOINT)"
     }

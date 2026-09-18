@@ -145,6 +145,29 @@ for the deploying principal, and `Foundry User` for the project managed
 identity. `DeployAgent` publishes the first immutable hosted-agent version only
 after the project endpoint and role checks are green.
 
+To opt into the stitched W365 path, supply the agent-user UPN while initializing
+the environment, confirm the W365 pool profile in the ignored
+`config\deployment.local.json`, and then run one `azd up`:
+
+```powershell
+pwsh -NoProfile -File .\scripts\Initialize-Greenfield.ps1 `
+   -SubscriptionId "<subscription-id>" `
+   -Prefix "fawin365" `
+   -Environment "dev" `
+   -EnableW365 `
+   -AgentUserPrincipalName "foundry-w365-agent@YOUR-TENANT.onmicrosoft.com"
+
+azd up
+```
+
+The normal deployment publishes the bootstrap version with
+`W365_ENABLED=false`. The Windows `postup` hook then requests explicit W365
+resource approval, uses device-code Graph authentication, creates or validates
+the environment-owned pool and agent user, persists the ownership manifest,
+and deploys the same agent name again with `W365_ENABLED=true`. A failed W365
+step leaves the bootstrap agent disabled and prints the manifest path needed
+for recovery or teardown.
+
 Keep `W365_ENABLED=false`, `DEPLOY_STATE=false`, and `DEPLOY_VIEWER=false` for
 this bootstrap pass unless the later phases are explicitly approved. Existing-
 project mode still expects preexisting Foundry access and does not grant roles

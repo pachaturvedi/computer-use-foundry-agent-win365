@@ -168,21 +168,30 @@ azd ai agent doctor --local-only
 Use the same tenant and subscription for `az` and `azd`. Review the validation
 output before making resource changes.
 
-### 2. Create and validate a fresh azd environment
+### 2. Create and deploy a fresh azd environment
 
-For a fresh environment, do not set existing-project identifiers up front. The
-initializer creates the local azd environment values needed for the first pass.
+For a fresh environment, do not set existing-project identifiers up front. If
+you want azd to create a dedicated Foundry project and perform the W365-enabled
+deployment flow, initialize the local environment values and then run one
+`azd up`:
 
 ```powershell
 pwsh -NoProfile -File .\scripts\Initialize-Greenfield.ps1 `
     -SubscriptionId "<subscription-id>" `
     -Prefix "<resource-prefix>" `
-    -Environment "dev"
+    -Environment "dev" `
+    -EnableW365 `
+    -AgentUserPrincipalName "foundry-w365-agent@YOUR-TENANT.onmicrosoft.com"
 
-pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
-    -Mode Validate `
-    -Environment "<resource-prefix>-dev"
+azd up
 ```
+
+Review the tenant-specific W365 billing plan, image, region, and capacity in
+the ignored `config\deployment.local.json` first. The hook requests explicit
+approval before creating or updating billable W365 resources.
+
+If you want only the phase-1 bootstrap first, omit `-EnableW365` and
+`-AgentUserPrincipalName`, then use the staged flow below.
 
 ### 3. Deploy the Foundry bootstrap
 
