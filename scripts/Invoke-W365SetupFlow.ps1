@@ -3,7 +3,8 @@
 param(
     [string]$Environment,
     [guid]$TenantId,
-    [ValidatePattern('^[a-zA-Z0-9._+-]+@[a-zA-Z0-9.-]+$')][Parameter(Mandatory)][string]$AgentUserPrincipalName,
+    [ValidatePattern('^[a-zA-Z0-9._+-]+@[a-zA-Z0-9.-]+$')][string]$AgentUserPrincipalName,
+    [ValidatePattern('^[a-zA-Z0-9.-]+$')][string]$AgentUserDomain,
     [string]$AgentName,
     [string]$AgentVersion,
     [guid]$PoolId = [guid]::Empty,
@@ -121,10 +122,15 @@ try {
         TenantId = $discoveredTenantId
         BlueprintId = $discoveredBlueprintId
         AgentIdentityId = $discoveredAgentIdentityId
-        AgentUserPrincipalName = $AgentUserPrincipalName
         BillingConfirmed = $BillingConfirmed
         GraphClientTimeoutSeconds = $GraphClientTimeoutSeconds
         Confirm = $false
+    }
+    foreach ($name in @('AgentUserPrincipalName', 'AgentUserDomain')) {
+        if ($PSBoundParameters.ContainsKey($name) -and
+            ![string]::IsNullOrWhiteSpace([string]$PSBoundParameters[$name])) {
+            $setupArguments[$name] = $PSBoundParameters[$name]
+        }
     }
     foreach ($name in @(
         'PoolId', 'PoolIdOrUrl', 'PoolDisplayName', 'PoolDescription', 'PoolBillingPlanId', 'PoolBillingType',

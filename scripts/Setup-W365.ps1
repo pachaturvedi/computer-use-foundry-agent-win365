@@ -4,7 +4,8 @@ param(
     [Parameter(Mandatory)][guid]$TenantId,
     [Parameter(Mandatory)][guid]$BlueprintId,
     [Parameter(Mandatory)][guid]$AgentIdentityId,
-    [Parameter(Mandatory)][ValidatePattern('^[a-zA-Z0-9._+-]+@[a-zA-Z0-9.-]+$')][string]$AgentUserPrincipalName,
+    [ValidatePattern('^[a-zA-Z0-9._+-]+@[a-zA-Z0-9.-]+$')][string]$AgentUserPrincipalName,
+    [ValidatePattern('^[a-zA-Z0-9.-]+$')][string]$AgentUserDomain,
     [guid]$PoolId = [guid]::Empty,
     [string]$PoolIdOrUrl,
     [string]$PoolDisplayName,
@@ -188,7 +189,13 @@ if ($WhatIfPreference) {
     else {
         'create or update the Cloud PC pool from the supplied pool configuration'
     }
-    Write-Output "Reconcile permissions, create or reuse agent user '$AgentUserPrincipalName', and $poolPlan. No blueprint, agent identity, certificate or secret will be created."
+    $agentUserPlan = if ([string]::IsNullOrWhiteSpace($AgentUserPrincipalName)) {
+        'derive the agent-user UPN from the verified tenant domain, then create or reuse it'
+    }
+    else {
+        "create or reuse agent user '$AgentUserPrincipalName'"
+    }
+    Write-Output "Reconcile permissions, $agentUserPlan, and $poolPlan. No blueprint, agent identity, certificate or secret will be created."
     if ($AuthorizeHostedRuntimeFederation) { Write-Output "Explicitly trust hosted runtime identity $HostedRuntimeIdentityObjectId on the existing blueprint. This trust can impersonate sibling agents." }
     if ($AuthorizeViewerFederation) { Write-Output "Explicitly trust viewer managed identity $ViewerManagedIdentityObjectId on the existing blueprint. This trust can impersonate sibling agents, not only screen sharing." }
     return
@@ -210,6 +217,7 @@ if (!$PSCmdlet.ShouldProcess("$TenantId / $BlueprintId / $AgentIdentityId", 'Con
 Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
 $scopes = @(
     'Application.Read.All',
+    'Domain.Read.All',
     'AgentIdentityBlueprint.ReadWrite.All', 'AgentIdentityBlueprint.UpdateAuthProperties.All',
     'AgentIdentity.Read.All', 'AgentIdUser.ReadWrite.All',
     'DelegatedPermissionGrant.ReadWrite.All', 'CloudPC.ReadWrite.All'
@@ -719,8 +727,6 @@ $principal = SingleOrNone (List "v1.0/servicePrincipals?`$filter=appId eq '$Blue
 if (!$principal -or $principal['@odata.type'] -ne '#microsoft.graph.agentIdentityBlueprintPrincipal') {
     throw 'Foundry blueprint principal is missing or has the wrong type. Setup will not create a replacement.'
 }
-$agentUser = SingleOrNone (List "beta/users/microsoft.graph.agentUser?`$filter=userPrincipalName eq '$AgentUserPrincipalName'") 'agent user'
-if ($agentUser -and $agentUser.identityParentId -ne $agent.id) { throw 'Existing agent user belongs to a different agent identity. Use a new UPN; never reparent implicitly.' }
 $federations = @()
 $ficPath = "$bpPath/microsoft.graph.agentIdentityBlueprint/federatedIdentityCredentials"
 $existingFics = if ($AuthorizeHostedRuntimeFederation -or $AuthorizeViewerFederation) {
@@ -792,6 +798,17 @@ if ($manifestTarget -and ![string]::IsNullOrWhiteSpace($manifestTarget.Environme
         $environmentValues = Read-AzdEnvironmentFile -Path $environmentFilePath
     }
 }
+$domains = @(List 'v1.0/domains?$select=id,isDefault,isVerified')
+$AgentUserPrincipalName = Resolve-W365OwnedAgentUserPrincipalName `
+    -ExplicitPrincipalName $AgentUserPrincipalName `
+    -ExplicitDomain $AgentUserDomain `
+    -PersistedPrincipalName ([string]$environmentValues['W365_AGENT_USER_PRINCIPAL_NAME']) `
+    -OwnershipManifest $existingManifest `
+    -Domains $domains `
+    -ResourcePrefix ([string]$environmentValues['RESOURCE_PREFIX']) `
+    -EnvironmentName $(if ($manifestTarget) { $manifestTarget.EnvironmentName } else { '' })
+$agentUser = SingleOrNone (List "beta/users/microsoft.graph.agentUser?`$filter=userPrincipalName eq '$AgentUserPrincipalName'") 'agent user'
+if ($agentUser -and $agentUser.identityParentId -ne $agent.id) { throw 'Existing agent user belongs to a different agent identity. Use a new UPN; never reparent implicitly.' }
 if ($null -eq $existingManifest -and
     $PoolId -eq [guid]::Empty -and
     [string]::IsNullOrWhiteSpace($PoolIdOrUrl) -and
@@ -975,6 +992,7 @@ $phaseTwoValues = [ordered]@{
     W365_AGENT_ID = $agent.appId
     W365_AGENT_OBJECT_ID = $agent.id
     W365_AGENT_USER_ID = $agentUser.id
+    W365_AGENT_USER_PRINCIPAL_NAME = $AgentUserPrincipalName
     W365_POOL_ID = $PoolId.ToString()
     W365_ENABLED = 'true'
 }

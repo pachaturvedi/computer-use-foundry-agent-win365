@@ -180,18 +180,19 @@ pwsh -NoProfile -File .\scripts\Initialize-Greenfield.ps1 `
     -SubscriptionId "<subscription-id>" `
     -Prefix "<resource-prefix>" `
     -Environment "dev" `
-    -EnableW365 `
-    -AgentUserPrincipalName "foundry-w365-agent@YOUR-TENANT.onmicrosoft.com"
-
+    -EnableW365
 azd up
 ```
 
 Review the tenant-specific W365 billing plan, image, region, and capacity in
 the ignored `config\deployment.local.json` first. The hook requests explicit
-approval before creating or updating billable W365 resources.
+approval before creating or updating billable W365 resources. The agent-user
+UPN uses the tenant's verified default user-creation domain, including custom
+domains. Use `-AgentUserPrincipalName` or `-AgentUserDomain` only when an
+explicit override is required.
 
-If you want only the phase-1 bootstrap first, omit `-EnableW365` and
-`-AgentUserPrincipalName`, then use the staged flow below.
+If you want only the phase-1 bootstrap first, omit `-EnableW365`, then use the
+staged flow below.
 
 ### 3. Deploy the Foundry bootstrap
 
@@ -226,7 +227,7 @@ If you want a single stitched command after bootstrap, use:
 ```powershell
 pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
      -Environment "<azd-environment-name>" `
-     -AgentUserPrincipalName "foundry-w365-agent@YOUR-TENANT.onmicrosoft.com" `
+     -AgentUserPrincipalName "foundry-w365-agent@YOUR-VERIFIED-DOMAIN.example" `
      -PoolIdOrUrl "https://intune.microsoft.com/#view/Microsoft_Azure_CloudPC/CloudPCAgentPoolDetail.ReactView/poolId/<pool-guid>" `
      -BillingConfirmed `
      -ConfirmResourceChanges `

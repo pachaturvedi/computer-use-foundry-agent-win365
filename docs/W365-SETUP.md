@@ -39,7 +39,7 @@ $setup = @{
     TenantId = "<same-W365-and-Foundry-tenant-GUID>"
     BlueprintId = "<Foundry-blueprint-app-client-GUID>"
     AgentIdentityId = "<Foundry-agent-object-principal-GUID>"
-    AgentUserPrincipalName = "foundry-w365-agent@YOUR-TENANT.onmicrosoft.com"
+    AgentUserPrincipalName = "foundry-w365-agent@YOUR-VERIFIED-DOMAIN.example"
     PoolId = "<existing-agent-pool-GUID>"
 }
 .\scripts\Setup-W365.ps1 @setup -WhatIf
@@ -51,7 +51,7 @@ $setup = @{
 ```powershell
 pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
     -Environment "<azd-environment-name>" `
-    -AgentUserPrincipalName "foundry-w365-agent@YOUR-TENANT.onmicrosoft.com" `
+    -AgentUserPrincipalName "foundry-w365-agent@YOUR-VERIFIED-DOMAIN.example" `
     -PoolIdOrUrl "<existing-pool-guid-or-intune-url>" `
     -BillingConfirmed `
     -ConfirmResourceChanges `
@@ -162,9 +162,13 @@ the validated local profile and derives its display name from `RESOURCE_PREFIX`
 and `AZURE_ENV_NAME`.
 
 When `ENABLE_W365=true`, the project `postup` hook drives this setup after the
-bootstrap hosted-agent version exists. It requires
-`W365_AGENT_USER_PRINCIPAL_NAME` and asks for W365 resource approval before
-mutations. Protected noninteractive automation may set
+bootstrap hosted-agent version exists. It reads the tenant's verified default
+domain used for user creation and derives an environment-owned agent-user UPN.
+Custom verified tenant domains are supported; the workflow does not assume an
+`onmicrosoft.com` suffix. `W365_AGENT_USER_PRINCIPAL_NAME` can override the
+full UPN, while `W365_AGENT_USER_DOMAIN` can select another verified tenant
+domain. The hook asks for W365 resource approval before mutations. Protected
+noninteractive automation may set
 `W365_RESOURCE_CHANGES_CONFIRMED=true` for that process; do not commit or
 persist this approval as a reusable default.
 
@@ -295,6 +299,7 @@ probe succeeds.
 | Graph scope | Purpose |
 | --- | --- |
 | `Application.Read.All` | Existing entities and service metadata. |
+| `Domain.Read.All` | Read verified tenant domains and select the default domain used for agent-user creation. |
 | `AgentIdentityBlueprint.ReadWrite.All` | Existing blueprint reconciliation and inheritance. |
 | `AgentIdentityBlueprint.UpdateAuthProperties.All` | Auth properties / resource declarations. |
 | `DelegatedPermissionGrant.ReadWrite.All` | Admin consent. |

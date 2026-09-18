@@ -30,6 +30,11 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
             networkConfiguration = @{ geographicLocationType = 'usWest'; regionGroups = @(@{ regionGroup = 'usWest'; regions = @('westus2', 'westus3') }) }
             scalingPolicy = @{ minimumCount = 1; maximumCount = 1 }
         }
+        Domains = @(
+            @{ id = 'customer.example'; isDefault = $true; isVerified = $true },
+            @{ id = 'tenant.onmicrosoft.com'; isDefault = $false; isVerified = $true },
+            @{ id = 'example.com'; isDefault = $false; isVerified = $true }
+        )
         User = $null; Grants = @(); Inheritance = @(); Assignments = @(); Fics = @(); Creates = 0; Writes = 0
     }
     function Connect-MgGraph {
@@ -43,6 +48,7 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
         $path = $Uri.Replace('https://graph.microsoft.com/', '')
         $bodyObject = if ($Body) { $Body | ConvertFrom-Json -AsHashtable } else { @{} }
         if ($Method -eq 'GET') {
+            if ($path -eq 'v1.0/domains?$select=id,isDefault,isVerified') { return @{ value = $script:ledger.Domains } }
             if ($path.StartsWith("v1.0/servicePrincipals/$script:agentId`?")) { return $script:ledger.Agent }
             if ($path -eq "v1.0/servicePrincipals/$script:viewerId") { return @{ servicePrincipalType = 'ManagedIdentity' } }
             if ($path -match "^v1.0/servicePrincipals\?\`$filter=appId eq '([^']+)'") {
@@ -173,7 +179,15 @@ try {
     & "$scriptsRoot\Setup-W365.ps1" @setupArgs | Out-Null
     & "$scriptsRoot\Setup-W365.ps1" @setupArgs | Out-Null
     & $module { if ($script:ledger.Fics.Count -ne 2 -or $script:ledger.Creates -ne 10) { throw 'Viewer federation was duplicated.' } }
-    foreach ($scenario in @('agent-parent', 'user-parent', 'missing-blueprint', 'missing-principal', 'fic-mismatch', 'inheritance-mismatch')) {
+    foreach ($scenario in @(
+        'agent-parent',
+        'user-parent',
+        'missing-blueprint',
+        'missing-principal',
+        'fic-mismatch',
+        'inheritance-mismatch',
+        'unverified-domain'
+    )) {
         $saved = & $module { $script:ledger | ConvertTo-Json -Depth 30 }
         $before = & $module { $script:ledger.Writes }
         & $module {
@@ -185,6 +199,9 @@ try {
                 'missing-principal' { $script:ledger.Principal = $null }
                 'fic-mismatch' { $script:ledger.Fics[0].issuer = 'https://untrusted.example' }
                 'inheritance-mismatch' { $script:ledger.Inheritance[0].inheritableScopes.kind = 'enumerated' }
+                'unverified-domain' {
+                    ($script:ledger.Domains | Where-Object { $_.id -eq 'example.com' }).isVerified = $false
+                }
             }
         } $scenario
         $rejected = $false

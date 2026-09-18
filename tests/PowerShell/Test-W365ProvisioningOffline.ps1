@@ -73,6 +73,81 @@ try {
         throw 'W365 pool display-name hashing is not deterministic.'
     }
 
+    $domains = @(
+        [pscustomobject]@{
+            id = 'customer.example'
+            isDefault = $true
+            isVerified = $true
+        },
+        [pscustomobject]@{
+            id = 'tenant.onmicrosoft.com'
+            isDefault = $false
+            isVerified = $true
+        },
+        [pscustomobject]@{
+            id = 'unverified.example'
+            isDefault = $false
+            isVerified = $false
+        }
+    )
+    if ((Resolve-W365AgentUserDomain -Domains $domains) -ne 'customer.example') {
+        throw 'W365 agent-user domain resolution did not use the verified tenant default domain.'
+    }
+    if ((Resolve-W365AgentUserDomain -Domains $domains -ExplicitDomain 'tenant.onmicrosoft.com') -ne
+        'tenant.onmicrosoft.com') {
+        throw 'W365 agent-user domain resolution rejected a verified nondefault override.'
+    }
+    Assert-Throws {
+        Resolve-W365AgentUserDomain -Domains $domains -ExplicitDomain 'unverified.example' | Out-Null
+    } 'W365 agent-user domain resolution accepted an unverified domain override.'
+    Assert-Throws {
+        Resolve-W365AgentUserDomain -Domains @(
+            [pscustomobject]@{ id = 'one.example'; isDefault = $true; isVerified = $true },
+            [pscustomobject]@{ id = 'two.example'; isDefault = $true; isVerified = $true }
+        ) | Out-Null
+    } 'W365 agent-user domain resolution accepted ambiguous default domains.'
+
+    $agentUserPrincipalName = Get-W365AgentUserPrincipalName `
+        -ResourcePrefix 'Contoso Sample' `
+        -EnvironmentName 'Dev 01' `
+        -Domain 'customer.example'
+    if ($agentUserPrincipalName -ne 'foundry-w365-contoso-sample-dev-01@customer.example') {
+        throw "Unexpected deterministic W365 agent-user UPN '$agentUserPrincipalName'."
+    }
+    $longAgentUserPrincipalName = Get-W365AgentUserPrincipalName `
+        -ResourcePrefix ('prefix-' + ('a' * 80)) `
+        -EnvironmentName ('environment-' + ('b' * 80)) `
+        -Domain 'customer.example'
+    $longLocalPart = $longAgentUserPrincipalName.Split('@')[0]
+    if ($longLocalPart.Length -gt 64 -or $longLocalPart -notmatch '-[0-9a-f]{8}$') {
+        throw "Long W365 agent-user UPN was not bounded deterministically: '$longAgentUserPrincipalName'."
+    }
+    $resolvedAgentUserPrincipalName = Resolve-W365OwnedAgentUserPrincipalName `
+        -Domains $domains `
+        -ResourcePrefix 'contoso' `
+        -EnvironmentName 'contoso-dev'
+    if ($resolvedAgentUserPrincipalName -ne 'foundry-w365-contoso-contoso-dev@customer.example') {
+        throw "Automatic W365 agent-user UPN did not use the generic default domain: '$resolvedAgentUserPrincipalName'."
+    }
+    $ownedAgentUser = [ordered]@{
+        w365 = [ordered]@{
+            agentUser = [ordered]@{
+                userPrincipalName = 'owned-agent@tenant.onmicrosoft.com'
+            }
+        }
+    }
+    if ((Resolve-W365OwnedAgentUserPrincipalName `
+        -OwnershipManifest $ownedAgentUser `
+        -Domains $domains) -ne 'owned-agent@tenant.onmicrosoft.com') {
+        throw 'W365 agent-user UPN resolution did not preserve the manifest-owned UPN.'
+    }
+    Assert-Throws {
+        Resolve-W365OwnedAgentUserPrincipalName `
+            -ExplicitPrincipalName 'different@customer.example' `
+            -OwnershipManifest $ownedAgentUser `
+            -Domains $domains | Out-Null
+    } 'W365 agent-user UPN resolution accepted an override that conflicted with the ownership manifest.'
+
     $ownedPoolId = '11111111-1111-1111-1111-111111111111'
     $ownership = [ordered]@{
         w365 = [ordered]@{
@@ -128,7 +203,10 @@ try {
         environmentName = $environmentName
         w365 = [ordered]@{
             pool = [ordered]@{ id = 'pool-id' }
-            agentUser = [ordered]@{ id = 'agent-user-id' }
+            agentUser = [ordered]@{
+                id = 'agent-user-id'
+                userPrincipalName = 'foundry-w365-contoso-contoso-dev@customer.example'
+            }
             assignment = [ordered]@{
                 poolId = 'pool-id'
                 userPrincipalId = 'agent-user-id'
@@ -147,6 +225,7 @@ try {
     $persisted = [ordered]@{
         W365_POOL_ID = 'pool-id'
         W365_AGENT_USER_ID = 'agent-user-id'
+        W365_AGENT_USER_PRINCIPAL_NAME = 'foundry-w365-contoso-contoso-dev@customer.example'
         W365_AGENT_ID = 'agent-client-id'
         W365_AGENT_OBJECT_ID = 'agent-object-id'
         W365_BLUEPRINT_ID = 'blueprint-id'
@@ -176,8 +255,16 @@ try {
             -EnvironmentName $environmentName `
             -EnvironmentValues $persisted | Out-Null
     } 'W365 provisioning accepted environment state that drifted from the ownership manifest.'
+    $persisted.W365_POOL_ID = 'pool-id'
+    $persisted.W365_AGENT_USER_PRINCIPAL_NAME = 'different@customer.example'
+    Assert-Throws {
+        Get-W365ProvisioningState `
+            -RepositoryRoot $tempRoot `
+            -EnvironmentName $environmentName `
+            -EnvironmentValues $persisted | Out-Null
+    } 'W365 provisioning accepted an agent-user UPN that drifted from the ownership manifest.'
 
-    Write-Output 'Offline W365 provisioning: config precedence, deterministic naming, approval, and fail-closed ownership state passed.'
+    Write-Output 'Offline W365 provisioning: generic tenant domains, deterministic naming, approval, and fail-closed ownership state passed.'
 }
 finally {
     if (Test-Path -LiteralPath $tempRoot) {

@@ -84,6 +84,12 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
         $bodyObject = if ($Body) { $Body | ConvertFrom-Json -AsHashtable } else { @{} }
 
         if ($Method -eq 'GET') {
+            if ($path -eq 'v1.0/domains?$select=id,isDefault,isVerified') {
+                return @{ value = @(
+                    @{ id = 'example.com'; isDefault = $true; isVerified = $true },
+                    @{ id = 'tenant.onmicrosoft.com'; isDefault = $false; isVerified = $true }
+                ) }
+            }
             if ($path.StartsWith("v1.0/servicePrincipals/$script:agentObjectId`?")) { return $script:state.Agent }
             if ($path -eq "v1.0/servicePrincipals/$script:viewerObjectId") { return $script:state.Viewer }
             if ($path.StartsWith("v1.0/servicePrincipals?`$filter=appId eq '")) {
