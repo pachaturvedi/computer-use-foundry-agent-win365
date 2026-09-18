@@ -113,10 +113,21 @@ set the model deployment name, and keep the safe feature gate disabled:
 
 ```powershell
 azd env set FOUNDRY_PROJECT_ENDPOINT "<existing-foundry-project-endpoint>"
+azd env set FOUNDRY_PROJECT_OWNERSHIP "existing"
+azd env set AZURE_AI_ACCOUNT_NAME "<existing-foundry-account-name>"
+azd env set AZURE_AI_PROJECT_NAME "<existing-foundry-project-name>"
+azd env set AZURE_AI_PROJECT_ID "<existing-foundry-project-resource-id>"
+azd env set AZD_FOUNDRY_RESOURCE_GROUP_ID "<existing-foundry-resource-group-id>"
+azd env set AZURE_FOUNDRY_RESOURCE_GROUP "<existing-foundry-resource-group-name>"
 azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME "<existing-model-deployment-name>"
 azd ai agent doctor --local-only
 azd ai agent doctor
 ```
+
+The explicit ownership value prevents a project endpoint emitted by a managed
+deployment from silently switching later Bicep runs into existing-project mode.
+Existing-project mode fails closed unless the endpoint, project resource ID, and
+Foundry resource-group ID and name are all supplied.
 
 For a validation-only review, stop here. Both doctor commands are read-only:
 the first checks the local manifest/environment, and the second also checks the
@@ -212,7 +223,8 @@ The stitched azd flow wraps this discovery automatically. After bootstrap
 deployment, `Invoke-W365SetupFlow.ps1` reads the selected azd environment,
 discovers the deployed blueprint and agent identity from the current hosted
 agent version, runs `Setup-W365.ps1`, persists the returned `W365_*` values,
-and redeploys the same agent name:
+writes a non-secret ownership manifest used for teardown, and redeploys the
+same agent name:
 
 ```powershell
 pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
@@ -228,6 +240,11 @@ If `W365_POOL_ID` is already persisted in the azd environment, reruns update
 that pool instead of creating another one. If no pool ID is present, the setup
 script can create a pool when you supply the billing, geography, region, image,
 and scaling inputs.
+
+The setup script prints `W365_OWNERSHIP_MANIFEST=<path>` after it records the
+created or reused pool, assignment, agent user, grants, inheritance entries,
+federated credentials, and the blueprint's prior `requiredResourceAccess`.
+`azd down` uses that manifest to prove what the sample is allowed to remove.
 
 ## Optional phase-1 viewer bootstrap
 
@@ -467,10 +484,29 @@ do not automatically delete or reparent existing resources. Remove sample-only
 resources/RBAC following [cleanup](W365-SETUP.md#cleanup). Azure resource-group
 deletion does not cancel W365 billing.
 
+`azure.yaml` now runs `scripts/Remove-W365Resources.ps1` as an interactive
+`predown` hook. Teardown order is intentionally reversed from setup:
+assignment first, then agent user, then sample-created federated credentials,
+then created permission grants or restored reused grant scopes, then
+sample-created inheritance entries, then blueprint `requiredResourceAccess`,
+and finally a sample-created W365 pool. Only after that succeeds does `azd down`
+continue with Azure resource deletion.
+
+The cleanup hook fails closed when it cannot prove ownership. If W365 state is
+configured but no ownership manifest exists, `azd down` is blocked. The same
+guard applies to environments bound to an existing Foundry project: cleanup
+stops before any mutation unless you explicitly set
+`ALLOW_EXISTING_FOUNDRY_CLEANUP=true` or pass
+`-AllowExistingProjectCleanup` to the script after confirming the target
+project resource group is disposable. Cleanup also verifies that reused shared
+grants and reused inheritance entries are still present before it deletes any
+sample-owned W365 or Entra objects.
+
 Do not run `azd down` against an environment bound to a shared or pre-existing
-Foundry project. Remove only resources created specifically for this sample,
-review role assignments and viewer federation separately, and cancel W365
-capacity through its owning service when applicable.
+Foundry project unless you have deliberately reviewed that override. Even with
+the W365 predown hook, remove only resources created specifically for this
+sample, review role assignments and viewer federation separately, and cancel
+W365 capacity through its owning service when applicable.
 
 ## Live acceptance
 

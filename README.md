@@ -163,6 +163,12 @@ azd auth login
 pwsh -NoProfile -File .\scripts\Test-AzdPrerequisites.ps1 -RequireLogin
 azd env new <environment-name>
 azd env set FOUNDRY_PROJECT_ENDPOINT "<existing-foundry-project-endpoint>"
+azd env set FOUNDRY_PROJECT_OWNERSHIP "existing"
+azd env set AZURE_AI_ACCOUNT_NAME "<existing-foundry-account-name>"
+azd env set AZURE_AI_PROJECT_NAME "<existing-foundry-project-name>"
+azd env set AZURE_AI_PROJECT_ID "<existing-foundry-project-resource-id>"
+azd env set AZD_FOUNDRY_RESOURCE_GROUP_ID "<existing-foundry-resource-group-id>"
+azd env set AZURE_FOUNDRY_RESOURCE_GROUP "<existing-foundry-resource-group-name>"
 azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME "<existing-model-deployment-name>"
 azd ai agent doctor --local-only
 azd ai agent doctor

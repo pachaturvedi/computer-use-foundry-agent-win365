@@ -68,6 +68,12 @@ infra:
       dependsOn:
         - foundry
 hooks:
+  predown:
+    windows:
+      shell: pwsh
+      run: ./scripts/Remove-W365Resources.ps1
+      interactive: true
+      continueOnError: false
   postup:
     windows:
       shell: pwsh
