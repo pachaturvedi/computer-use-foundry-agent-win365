@@ -8,6 +8,7 @@ TestResults/
 .env.*
 !.env.example
 .azure/
+azd-*.log
 .vs/
 .idea/
 .local/
