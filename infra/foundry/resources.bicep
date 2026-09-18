@@ -19,6 +19,8 @@ param publicNetworkAccess string = 'Enabled'
 param storedCompletionsDisabled bool = false
 param tags object = {}
 
+var deployerPrincipalId = deployer().objectId
+
 resource account 'Microsoft.CognitiveServices/accounts@2026-05-15-preview' = {
   name: accountName
   location: location
@@ -56,9 +58,66 @@ resource defender 'Microsoft.CognitiveServices/accounts/defenderForAISettings@20
   }
 }
 
+resource deployerProjectManagerRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(account.id, deployerPrincipalId, 'foundry-project-manager')
+  scope: account
+  properties: {
+    principalId: deployerPrincipalId
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      'eadc314b-1a2d-4efa-be10-5d325db5065e'
+    )
+  }
+}
+
+resource deployerFoundryUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(account.id, deployerPrincipalId, 'foundry-user')
+  scope: account
+  properties: {
+    principalId: deployerPrincipalId
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      '53ca6127-db72-4b80-b1b0-d745d6d5456d'
+    )
+  }
+}
+
+resource project 'Microsoft.CognitiveServices/accounts/projects@2026-05-15-preview' = {
+  parent: account
+  name: projectName
+  location: location
+  dependsOn: [
+    defender
+  ]
+  identity: {
+    type: 'SystemAssigned'
+  }
+  properties: {
+    description: projectDescription
+    displayName: projectDisplayName
+  }
+}
+
+resource projectFoundryUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(account.id, project.id, 'project-foundry-user')
+  scope: account
+  properties: {
+    principalId: project.identity.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      '53ca6127-db72-4b80-b1b0-d745d6d5456d'
+    )
+  }
+}
+
 resource deployment 'Microsoft.CognitiveServices/accounts/deployments@2026-05-15-preview' = {
   parent: account
   name: modelDeploymentName
+  dependsOn: [
+    project
+    deployerProjectManagerRole
+  ]
   sku: {
     name: modelSkuName
     capacity: modelSkuCapacity
@@ -73,19 +132,6 @@ resource deployment 'Microsoft.CognitiveServices/accounts/deployments@2026-05-15
     currentCapacity: modelSkuCapacity
     raiPolicyName: 'Microsoft.DefaultV2'
     deploymentState: 'Running'
-  }
-}
-
-resource project 'Microsoft.CognitiveServices/accounts/projects@2026-05-15-preview' = {
-  parent: account
-  name: projectName
-  location: location
-  identity: {
-    type: 'SystemAssigned'
-  }
-  properties: {
-    description: projectDescription
-    displayName: projectDisplayName
   }
 }
 

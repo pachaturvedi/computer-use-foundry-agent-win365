@@ -38,11 +38,12 @@ data-plane access.
 
 For users without either resource, the checked-in project service declares a
 default GA `gpt-6-astra` deployment using GlobalStandard capacity 50. In a new,
-dedicated environment, azd can create the Foundry project, model deployment,
-and required project RBAC. Defaults are committed in
-`config/deployment.defaults.json`. Existing-project users can override the
+dedicated environment, azd can create the Foundry account, project, model
+deployment, and the minimum Foundry RBAC required for the deploying developer
+and project managed identity. Defaults are committed in
+`config\deployment.defaults.json`. Existing-project users can override the
 deployment name, model version, SKU, location, viewer image, or project
-endpoint through `config/deployment.local.json` or environment variables and
+endpoint through `config\deployment.local.json` or environment variables and
 must not run provisioning against an unreviewed shared project.
 
 Install .NET 10, PowerShell 7.4+, Azure CLI and Azure Developer CLI. From the
@@ -102,11 +103,46 @@ directory before running subsequent commands. Do not run it from the repository
 clone or target the existing clone directory.
 
 When the user has no existing Foundry resources, choose **create a new project**
-and review the subscription, region, and resource group selected by the wizard.
-The model declaration in `azure.yaml` supplies the default deployment. After
-reviewing the generated environment and billable-resource preview, use `azd up`
-for this dedicated greenfield environment only. azd manages the project/model
-provisioning and initial project RBAC in this path.
+and use a dedicated environment. The minimum successful path is staged so each
+boundary is validated before the first live agent publish:
+
+```powershell
+pwsh -NoProfile -File .\scripts\Initialize-Greenfield.ps1 `
+   -SubscriptionId "<subscription-id>" `
+   -Prefix "fawin365" `
+   -Environment "dev"
+
+pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
+   -Mode Validate `
+   -Environment "fawin365-dev"
+
+pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
+   -Mode ProvisionFoundry `
+   -Environment "fawin365-dev" `
+   -ConfirmResourceChanges
+
+azd ai agent doctor --environment fawin365-dev
+
+pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
+   -Mode DeployAgent `
+   -Environment "fawin365-dev" `
+   -ConfirmResourceChanges
+
+azd ai agent doctor --environment fawin365-dev
+```
+
+`Initialize-Greenfield.ps1` creates only local azd environment state and a
+Foundry preview. `ProvisionFoundry` then creates the resource group, Foundry
+account, project, model deployment, and the minimum Foundry roles needed for
+the next step: `Foundry Project Manager` plus `Foundry User` on the new account
+for the deploying principal, and `Foundry User` for the project managed
+identity. `DeployAgent` publishes the first immutable hosted-agent version only
+after the project endpoint and role checks are green.
+
+Keep `W365_ENABLED=false`, `DEPLOY_STATE=false`, and `DEPLOY_VIEWER=false` for
+this bootstrap pass unless the later phases are explicitly approved. Existing-
+project mode still expects preexisting Foundry access and does not grant roles
+on a shared project for you.
 
 For phase 1 in an existing clone, bind the existing Foundry project endpoint,
 set the model deployment name, and keep the safe feature gate disabled:

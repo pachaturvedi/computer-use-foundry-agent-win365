@@ -81,6 +81,27 @@ pwsh -NoProfile -File .\scripts\Save-W365PoolTemplate.ps1 `
     -UseDeviceCode
 ```
 
+When `-UseDeviceCode` is supplied, the helper now skips the default Windows
+interactive path and goes directly to the device-code prompt. In embedded
+terminals, complete that prompt promptly after the code appears.
+
+If you miss the first prompt, the helper retries device-code sign-in once by
+default and shows a fresh code. Adjust that bounded retry count with
+`-DeviceCodeMaxAttempts` when needed.
+
+In this workflow, device-code Graph sign-in is the primary path. If the Graph
+PowerShell sign-in attempt fails, the helper can fall back to an existing Azure
+CLI Microsoft Graph token. `GraphClientTimeoutSeconds` only affects Graph HTTP
+requests; it does not extend the fixed device-code sign-in window.
+
+If the helper reports that the Azure CLI token lacks CloudPC consent, refresh
+the CLI sign-in with the required Graph scope and rerun the helper:
+
+```powershell
+az logout
+az login --tenant "01eed126-9f96-4d2d-a127-dc2e786a898b" --scope "https://graph.microsoft.com/CloudPC.Read.All"
+```
+
 Rerun the same command whenever the source pool changes. The script updates the
 stored `w365` values in place while preserving unrelated settings in
 `config\deployment.local.json`.
