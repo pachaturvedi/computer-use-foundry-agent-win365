@@ -73,6 +73,33 @@ try {
         throw 'W365 pool display-name hashing is not deterministic.'
     }
 
+    $ownedPoolId = '11111111-1111-1111-1111-111111111111'
+    $ownership = [ordered]@{
+        w365 = [ordered]@{
+            pool = [ordered]@{ id = $ownedPoolId }
+        }
+    }
+    if ((Resolve-W365OwnedPoolId -OwnershipManifest $ownership) -ne [guid]$ownedPoolId) {
+        throw 'W365 pool resolution did not use the manifest-owned pool.'
+    }
+    Assert-Throws {
+        Resolve-W365OwnedPoolId `
+            -ExplicitPoolId '22222222-2222-2222-2222-222222222222' `
+            -OwnershipManifest $ownership | Out-Null
+    } 'W365 pool resolution accepted an explicit pool that differed from the ownership manifest.'
+    Assert-Throws {
+        Resolve-W365OwnedPoolId -PersistedPoolId $ownedPoolId | Out-Null
+    } 'W365 pool resolution trusted an azd pool ID without an ownership manifest.'
+    Assert-Throws {
+        Resolve-W365OwnedPoolId -OwnershipManifest ([ordered]@{ schemaVersion = 1 }) | Out-Null
+    } 'W365 pool resolution accepted a partial ownership manifest without a pool ID.'
+    if ((Resolve-W365OwnedPoolId -ExplicitPoolId $ownedPoolId) -ne [guid]$ownedPoolId) {
+        throw 'W365 pool resolution broke the explicit advanced compatibility path.'
+    }
+    if ((Resolve-W365OwnedPoolId) -ne [guid]::Empty) {
+        throw 'W365 first-run pool resolution should return an empty ID so setup creates a pool.'
+    }
+
     Assert-W365ResourceApproval -EnableW365:$false -ConfirmResourceChanges:$false
     Assert-Throws {
         Assert-W365ResourceApproval -EnableW365:$true -ConfirmResourceChanges:$false
