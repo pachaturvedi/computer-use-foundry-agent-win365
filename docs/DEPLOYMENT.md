@@ -154,8 +154,7 @@ pwsh -NoProfile -File .\scripts\Initialize-Greenfield.ps1 `
    -SubscriptionId "<subscription-id>" `
    -Prefix "fawin365" `
    -Environment "dev" `
-   -EnableW365 `
-   -AgentUserPrincipalName "foundry-w365-agent@YOUR-TENANT.onmicrosoft.com"
+   -EnableW365
 
 azd up
 ```
@@ -166,7 +165,10 @@ resource approval, uses device-code Graph authentication, creates or validates
 the environment-owned pool and agent user, persists the ownership manifest,
 and deploys the same agent name again with `W365_ENABLED=true`. A failed W365
 step leaves the bootstrap agent disabled and prints the manifest path needed
-for recovery or teardown.
+for recovery or teardown. The agent-user UPN is derived from the tenant's
+verified default user-creation domain; it does not assume an
+`onmicrosoft.com` suffix. `-AgentUserPrincipalName` and `-AgentUserDomain`
+remain optional overrides.
 
 Keep `W365_ENABLED=false`, `DEPLOY_STATE=false`, and `DEPLOY_VIEWER=false` for
 this bootstrap pass unless the later phases are explicitly approved. Existing-

@@ -21,6 +21,7 @@ $trackedEnvironmentVariables = @(
     'ENABLE_W365',
     'W365_ENABLED',
     'W365_AGENT_USER_PRINCIPAL_NAME',
+    'W365_AGENT_USER_DOMAIN',
     'W365_RESOURCE_CHANGES_CONFIRMED',
     'W365_POSTUP_IN_PROGRESS',
     'AZD_NON_INTERACTIVE',
@@ -41,7 +42,11 @@ function Reset-Calls {
 }
 
 function Write-TestEnvironment {
-    param([bool]$Complete)
+    param(
+        [bool]$Complete,
+        [string]$AgentUserPrincipalName,
+        [string]$AgentUserDomain
+    )
 
     New-Item -ItemType Directory -Path $environmentDirectory -Force | Out-Null
     $lines = @(
@@ -49,6 +54,12 @@ function Write-TestEnvironment {
         'RESOURCE_PREFIX="sample-dev"',
         "W365_ENABLED=`"$($Complete.ToString().ToLowerInvariant())`""
     )
+    if (![string]::IsNullOrWhiteSpace($AgentUserPrincipalName)) {
+        $lines += "W365_AGENT_USER_PRINCIPAL_NAME=`"$AgentUserPrincipalName`""
+    }
+    if (![string]::IsNullOrWhiteSpace($AgentUserDomain)) {
+        $lines += "W365_AGENT_USER_DOMAIN=`"$AgentUserDomain`""
+    }
     if ($Complete) {
         $lines += @(
             'W365_POOL_ID="11111111-1111-1111-1111-111111111111"',
@@ -69,7 +80,10 @@ function Write-CompleteManifest {
         environmentName = $environmentName
         w365 = [ordered]@{
             pool = [ordered]@{ id = '11111111-1111-1111-1111-111111111111' }
-            agentUser = [ordered]@{ id = '22222222-2222-2222-2222-222222222222' }
+            agentUser = [ordered]@{
+                id = '22222222-2222-2222-2222-222222222222'
+                userPrincipalName = 'foundry-w365-sample-dev@customer.example'
+            }
             assignment = [ordered]@{
                 poolId = '11111111-1111-1111-1111-111111111111'
                 userPrincipalId = '22222222-2222-2222-2222-222222222222'
@@ -97,6 +111,7 @@ param()
 param(
     [string]$Environment,
     [string]$AgentUserPrincipalName,
+    [string]$AgentUserDomain,
     [switch]$BillingConfirmed,
     [switch]$ConfirmResourceChanges,
     [switch]$UseDeviceCode
@@ -104,6 +119,7 @@ param(
 @{
     environment = $Environment
     agentUserPrincipalName = $AgentUserPrincipalName
+    agentUserDomain = $AgentUserDomain
     billingConfirmed = $BillingConfirmed.IsPresent
     confirmResourceChanges = $ConfirmResourceChanges.IsPresent
     useDeviceCode = $UseDeviceCode.IsPresent
@@ -115,6 +131,7 @@ Set-Content -LiteralPath (Join-Path $environmentDirectory '.env') -Value @(
     "AZURE_ENV_NAME=`"$Environment`"",
     'RESOURCE_PREFIX="sample-dev"',
     'W365_ENABLED="true"',
+    'W365_AGENT_USER_PRINCIPAL_NAME="foundry-w365-sample-dev@customer.example"',
     'W365_POOL_ID="11111111-1111-1111-1111-111111111111"',
     'W365_AGENT_USER_ID="22222222-2222-2222-2222-222222222222"',
     'W365_AGENT_ID="33333333-3333-3333-3333-333333333333"',
@@ -128,7 +145,10 @@ Write-W365OwnershipManifest -Path $manifestPath -Manifest ([ordered]@{
     environmentName = $Environment
     w365 = [ordered]@{
         pool = [ordered]@{ id = '11111111-1111-1111-1111-111111111111' }
-        agentUser = [ordered]@{ id = '22222222-2222-2222-2222-222222222222' }
+        agentUser = [ordered]@{
+            id = '22222222-2222-2222-2222-222222222222'
+            userPrincipalName = 'foundry-w365-sample-dev@customer.example'
+        }
         assignment = [ordered]@{
             poolId = '11111111-1111-1111-1111-111111111111'
             userPrincipalId = '22222222-2222-2222-2222-222222222222'
@@ -147,6 +167,7 @@ Write-W365OwnershipManifest -Path $manifestPath -Manifest ([ordered]@{
 param(
     [string]$Environment,
     [string]$AgentUserPrincipalName,
+    [string]$AgentUserDomain,
     [switch]$BillingConfirmed,
     [switch]$ConfirmResourceChanges,
     [switch]$UseDeviceCode
@@ -167,7 +188,8 @@ throw 'Simulated W365 setup failure.'
     $env:TEST_W365_CALLS_PATH = $w365CallsPath
     $env:TEST_VIEWER_CALLS_PATH = $viewerCallsPath
     $env:AZURE_ENV_NAME = $environmentName
-    $env:W365_AGENT_USER_PRINCIPAL_NAME = 'agent@example.com'
+    $env:W365_AGENT_USER_PRINCIPAL_NAME = ''
+    $env:W365_AGENT_USER_DOMAIN = ''
     $env:W365_RESOURCE_CHANGES_CONFIRMED = 'true'
     $env:AZD_NON_INTERACTIVE = 'true'
 
@@ -185,6 +207,8 @@ throw 'Simulated W365 setup failure.'
 
     Reset-Calls
     Write-TestEnvironment -Complete:$false
+    $env:W365_AGENT_USER_PRINCIPAL_NAME = 'stale@wrong.example'
+    $env:W365_AGENT_USER_DOMAIN = 'wrong.example'
     $env:ENABLE_W365 = 'true'
     $env:W365_ENABLED = 'false'
     $env:W365_RESOURCE_CHANGES_CONFIRMED = ''
@@ -204,7 +228,8 @@ throw 'Simulated W365 setup failure.'
     & $scriptPath -RepositoryRoot $tempRoot -W365SetupScriptPath $mockW365Path -ViewerBootstrapScriptPath $mockViewerPath
     $w365Call = Get-Content -LiteralPath $w365CallsPath -Raw | ConvertFrom-Json
     if ($w365Call.environment -ne $environmentName -or
-        $w365Call.agentUserPrincipalName -ne 'agent@example.com' -or
+        ![string]::IsNullOrWhiteSpace([string]$w365Call.agentUserPrincipalName) -or
+        ![string]::IsNullOrWhiteSpace([string]$w365Call.agentUserDomain) -or
         !$w365Call.billingConfirmed -or
         !$w365Call.confirmResourceChanges -or
         !$w365Call.useDeviceCode -or
@@ -214,6 +239,21 @@ throw 'Simulated W365 setup failure.'
     $viewerCall = Get-Content -LiteralPath $viewerCallsPath -Raw | ConvertFrom-Json
     if ($viewerCall.w365Enabled -ne 'true') {
         throw 'Postup did not refresh persisted W365 values before viewer bootstrap.'
+    }
+    if ($env:W365_AGENT_USER_PRINCIPAL_NAME -ne 'foundry-w365-sample-dev@customer.example') {
+        throw 'Postup did not refresh the automatically resolved W365 agent-user UPN.'
+    }
+
+    Reset-Calls
+    Write-TestEnvironment `
+        -Complete:$false `
+        -AgentUserPrincipalName 'explicit@custom.example' `
+        -AgentUserDomain 'custom.example'
+    & $scriptPath -RepositoryRoot $tempRoot -W365SetupScriptPath $mockW365Path -ViewerBootstrapScriptPath $mockViewerPath
+    $overrideCall = Get-Content -LiteralPath $w365CallsPath -Raw | ConvertFrom-Json
+    if ($overrideCall.agentUserPrincipalName -ne 'explicit@custom.example' -or
+        $overrideCall.agentUserDomain -ne 'custom.example') {
+        throw 'Postup did not preserve explicit W365 agent-user naming overrides.'
     }
 
     Reset-Calls
@@ -258,7 +298,7 @@ throw 'Simulated W365 setup failure.'
         throw 'Nested postup execution was not fully suppressed.'
     }
 
-    Write-Output 'Offline azd postup: disabled, enabled, completed, failed, refreshed-state, and recursion-guard transitions passed.'
+    Write-Output 'Offline azd postup: automatic and explicit agent-user naming, state transitions, and recursion guard passed.'
 }
 finally {
     foreach ($name in $trackedEnvironmentVariables) {

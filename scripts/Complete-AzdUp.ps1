@@ -66,10 +66,6 @@ if ($enableW365) {
     if ([string]::IsNullOrWhiteSpace($env:AZURE_ENV_NAME)) {
         throw 'ENABLE_W365=true requires AZURE_ENV_NAME.'
     }
-    if ([string]::IsNullOrWhiteSpace($env:W365_AGENT_USER_PRINCIPAL_NAME)) {
-        throw 'ENABLE_W365=true requires W365_AGENT_USER_PRINCIPAL_NAME until tenant-domain-based naming is implemented.'
-    }
-
     $environmentName = $env:AZURE_ENV_NAME
     $currentValues = Import-AzdEnvironmentValues -Root $RepositoryRoot -EnvironmentName $environmentName
     $w365AlreadyEnabled = Test-EnabledValue -Value ([string]$currentValues['W365_ENABLED'])
@@ -89,12 +85,21 @@ if ($enableW365) {
         $previousPostUpGuard = $env:W365_POSTUP_IN_PROGRESS
         $env:W365_POSTUP_IN_PROGRESS = 'true'
         try {
-            & $W365SetupScriptPath `
-                -Environment $environmentName `
-                -AgentUserPrincipalName $env:W365_AGENT_USER_PRINCIPAL_NAME `
-                -BillingConfirmed `
-                -ConfirmResourceChanges `
-                -UseDeviceCode
+            $setupArguments = @{
+                Environment = $environmentName
+                BillingConfirmed = $true
+                ConfirmResourceChanges = $true
+                UseDeviceCode = $true
+            }
+            $configuredPrincipalName = [string]$currentValues['W365_AGENT_USER_PRINCIPAL_NAME']
+            if (![string]::IsNullOrWhiteSpace($configuredPrincipalName)) {
+                $setupArguments.AgentUserPrincipalName = $configuredPrincipalName
+            }
+            $configuredDomain = [string]$currentValues['W365_AGENT_USER_DOMAIN']
+            if (![string]::IsNullOrWhiteSpace($configuredDomain)) {
+                $setupArguments.AgentUserDomain = $configuredDomain
+            }
+            & $W365SetupScriptPath @setupArguments
         }
         catch {
             $manifestPath = Get-W365OwnershipManifestPath `

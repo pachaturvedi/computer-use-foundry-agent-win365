@@ -13,6 +13,8 @@ param(
     [switch]$EnableW365,
     [ValidatePattern('^[a-zA-Z0-9._+-]+@[a-zA-Z0-9.-]+$')]
     [string]$AgentUserPrincipalName,
+    [ValidatePattern('^[a-zA-Z0-9.-]+$')]
+    [string]$AgentUserDomain,
     [switch]$DeployViewer,
     [switch]$SkipPreview,
     [string]$ConfigPath
@@ -24,8 +26,18 @@ Set-StrictMode -Version Latest
 if (!$IsWindows) {
     throw 'This greenfield initializer is Windows-only.'
 }
-if ($EnableW365 -and [string]::IsNullOrWhiteSpace($AgentUserPrincipalName)) {
-    throw 'EnableW365 requires AgentUserPrincipalName until tenant-domain-based naming is implemented.'
+if (![string]::IsNullOrWhiteSpace($AgentUserDomain)) {
+    $normalizedAgentUserDomain = $AgentUserDomain.Trim().TrimEnd('.').ToLowerInvariant()
+    if (!$normalizedAgentUserDomain.Contains('.') -or
+        [Uri]::CheckHostName($normalizedAgentUserDomain) -ne [UriHostNameType]::Dns) {
+        throw "AgentUserDomain '$AgentUserDomain' is not a valid DNS domain name."
+    }
+    $AgentUserDomain = $normalizedAgentUserDomain
+}
+if (![string]::IsNullOrWhiteSpace($AgentUserPrincipalName) -and
+    ![string]::IsNullOrWhiteSpace($AgentUserDomain) -and
+    !$AgentUserPrincipalName.EndsWith("@$AgentUserDomain", [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'AgentUserPrincipalName and AgentUserDomain must identify the same tenant domain.'
 }
 
 $root = Split-Path $PSScriptRoot
@@ -98,8 +110,13 @@ $values = [ordered]@{
     VIEWER_IMAGE_NAME = $viewerImageName
     SCREENSHARE_APP_URL = $screenShareAppUrl
     ENABLE_W365 = $EnableW365.IsPresent.ToString().ToLowerInvariant()
-    W365_AGENT_USER_PRINCIPAL_NAME = [string]$AgentUserPrincipalName
     W365_ENABLED = 'false'
+}
+if (![string]::IsNullOrWhiteSpace($AgentUserPrincipalName)) {
+    $values.W365_AGENT_USER_PRINCIPAL_NAME = $AgentUserPrincipalName
+}
+if (![string]::IsNullOrWhiteSpace($AgentUserDomain)) {
+    $values.W365_AGENT_USER_DOMAIN = $AgentUserDomain
 }
 if ($PSBoundParameters.ContainsKey('TenantId')) {
     $values.AZURE_TENANT_ID = $TenantId

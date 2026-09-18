@@ -152,6 +152,143 @@ function Get-W365PoolDisplayName {
     return "$($name.Substring(0, $baseLength).TrimEnd('-'))-$suffix"
 }
 
+function ConvertTo-W365DomainName {
+    param([Parameter(Mandatory)][string]$Value)
+
+    $domain = $Value.Trim().TrimEnd('.').ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($domain) -or
+        !$domain.Contains('.') -or
+        [Uri]::CheckHostName($domain) -ne [UriHostNameType]::Dns) {
+        throw "Value '$Value' is not a valid DNS domain name."
+    }
+
+    return $domain
+}
+
+function Resolve-W365AgentUserDomain {
+    param(
+        [Parameter(Mandatory)][object[]]$Domains,
+        [string]$ExplicitDomain
+    )
+
+    $verifiedDomains = @($Domains | Where-Object {
+        $_ -and $_.isVerified -eq $true -and
+        ![string]::IsNullOrWhiteSpace([string]$_.id)
+    })
+    if (![string]::IsNullOrWhiteSpace($ExplicitDomain)) {
+        $requestedDomain = ConvertTo-W365DomainName -Value $ExplicitDomain
+        $matches = @($verifiedDomains | Where-Object {
+            (ConvertTo-W365DomainName -Value ([string]$_.id)) -eq $requestedDomain
+        })
+        if ($matches.Count -ne 1) {
+            throw "W365 agent-user domain '$requestedDomain' is not a unique verified domain in the requested tenant."
+        }
+
+        return $requestedDomain
+    }
+
+    $defaultDomains = @($verifiedDomains | Where-Object { $_.isDefault -eq $true })
+    if ($defaultDomains.Count -ne 1) {
+        throw "Expected exactly one verified default tenant domain for W365 agent-user creation, found $($defaultDomains.Count)."
+    }
+
+    return ConvertTo-W365DomainName -Value ([string]$defaultDomains[0].id)
+}
+
+function Get-W365AgentUserPrincipalName {
+    param(
+        [Parameter(Mandatory)][string]$ResourcePrefix,
+        [Parameter(Mandatory)][string]$EnvironmentName,
+        [Parameter(Mandatory)][string]$Domain,
+        [ValidateRange(32, 64)][int]$MaximumLocalPartLength = 64
+    )
+
+    $prefixToken = ConvertTo-W365NameToken -Value $ResourcePrefix
+    $environmentToken = ConvertTo-W365NameToken -Value $EnvironmentName
+    $ownershipToken = if ($prefixToken -eq $environmentToken) {
+        $environmentToken
+    }
+    else {
+        "$prefixToken-$environmentToken"
+    }
+    $localPart = "foundry-w365-$ownershipToken"
+    if ($localPart.Length -gt $MaximumLocalPartLength) {
+        $hashBytes = [Security.Cryptography.SHA256]::HashData(
+            [Text.Encoding]::UTF8.GetBytes($localPart))
+        $suffix = ([Convert]::ToHexString($hashBytes)).Substring(0, 8).ToLowerInvariant()
+        $baseLength = $MaximumLocalPartLength - $suffix.Length - 1
+        $localPart = "$($localPart.Substring(0, $baseLength).TrimEnd('-'))-$suffix"
+    }
+
+    return "$localPart@$(ConvertTo-W365DomainName -Value $Domain)"
+}
+
+function Resolve-W365OwnedAgentUserPrincipalName {
+    param(
+        [string]$ExplicitPrincipalName,
+        [string]$ExplicitDomain,
+        [string]$PersistedPrincipalName,
+        [System.Collections.IDictionary]$OwnershipManifest,
+        [Parameter(Mandatory)][object[]]$Domains,
+        [string]$ResourcePrefix,
+        [string]$EnvironmentName
+    )
+
+    $manifestPrincipalName = ''
+    if ($OwnershipManifest -and
+        $OwnershipManifest.Contains('w365') -and
+        $OwnershipManifest.w365 -is [System.Collections.IDictionary] -and
+        $OwnershipManifest.w365.Contains('agentUser') -and
+        $OwnershipManifest.w365.agentUser -is [System.Collections.IDictionary] -and
+        $OwnershipManifest.w365.agentUser.Contains('userPrincipalName')) {
+        $manifestPrincipalName = [string]$OwnershipManifest.w365.agentUser.userPrincipalName
+    }
+
+    $requestedPrincipalName = if (![string]::IsNullOrWhiteSpace($ExplicitPrincipalName)) {
+        $ExplicitPrincipalName.Trim().ToLowerInvariant()
+    }
+    elseif (![string]::IsNullOrWhiteSpace($PersistedPrincipalName)) {
+        $PersistedPrincipalName.Trim().ToLowerInvariant()
+    }
+    else {
+        ''
+    }
+
+    if (![string]::IsNullOrWhiteSpace($manifestPrincipalName)) {
+        $ownedPrincipalName = $manifestPrincipalName.Trim().ToLowerInvariant()
+        if (![string]::IsNullOrWhiteSpace($requestedPrincipalName) -and
+            $requestedPrincipalName -ne $ownedPrincipalName) {
+            throw "The requested W365 agent-user UPN '$requestedPrincipalName' does not match the environment-owned UPN '$ownedPrincipalName'."
+        }
+        $requestedPrincipalName = $ownedPrincipalName
+    }
+
+    if (![string]::IsNullOrWhiteSpace($requestedPrincipalName)) {
+        if ($requestedPrincipalName -notmatch '^[a-z0-9._+-]+@([a-z0-9.-]+)$') {
+            throw "W365 agent-user UPN '$requestedPrincipalName' is invalid."
+        }
+        $principalDomainValue = $Matches[1]
+        $principalDomain = Resolve-W365AgentUserDomain -Domains $Domains -ExplicitDomain $principalDomainValue
+        if (![string]::IsNullOrWhiteSpace($ExplicitDomain) -and
+            (ConvertTo-W365DomainName -Value $ExplicitDomain) -ne $principalDomain) {
+            throw "W365 agent-user UPN domain '$principalDomain' conflicts with explicit domain '$ExplicitDomain'."
+        }
+
+        return "$($requestedPrincipalName.Split('@')[0])@$principalDomain"
+    }
+
+    if ([string]::IsNullOrWhiteSpace($ResourcePrefix) -or
+        [string]::IsNullOrWhiteSpace($EnvironmentName)) {
+        throw 'AgentUserPrincipalName is required outside a selected azd environment because deterministic ownership naming cannot be derived.'
+    }
+
+    $resolvedDomain = Resolve-W365AgentUserDomain -Domains $Domains -ExplicitDomain $ExplicitDomain
+    return Get-W365AgentUserPrincipalName `
+        -ResourcePrefix $ResourcePrefix `
+        -EnvironmentName $EnvironmentName `
+        -Domain $resolvedDomain
+}
+
 function ConvertTo-W365PoolId {
     param([string]$Value)
 
@@ -281,6 +418,7 @@ function Get-W365ProvisioningState {
     foreach ($required in @(
         @{ Path = 'w365.pool.id'; Value = $manifest.w365.pool.id },
         @{ Path = 'w365.agentUser.id'; Value = $manifest.w365.agentUser.id },
+        @{ Path = 'w365.agentUser.userPrincipalName'; Value = $manifest.w365.agentUser.userPrincipalName },
         @{ Path = 'w365.assignment.poolId'; Value = $manifest.w365.assignment.poolId },
         @{ Path = 'w365.assignment.userPrincipalId'; Value = $manifest.w365.assignment.userPrincipalId }
     )) {
@@ -292,6 +430,7 @@ function Get-W365ProvisioningState {
     $comparisons = @(
         @{ Key = 'W365_POOL_ID'; ManifestValue = $manifest.w365.pool.id },
         @{ Key = 'W365_AGENT_USER_ID'; ManifestValue = $manifest.w365.agentUser.id },
+        @{ Key = 'W365_AGENT_USER_PRINCIPAL_NAME'; ManifestValue = $manifest.w365.agentUser.userPrincipalName },
         @{ Key = 'W365_AGENT_ID'; ManifestValue = $manifest.graph.agent.appId },
         @{ Key = 'W365_AGENT_OBJECT_ID'; ManifestValue = $manifest.graph.agent.objectId },
         @{ Key = 'W365_BLUEPRINT_ID'; ManifestValue = $manifest.graph.blueprint.appId }
