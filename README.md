@@ -145,50 +145,44 @@ identity before they are bound to Windows 365.
 
 - An Azure subscription and tenant onboarded for Foundry and Windows 365.
 - An existing W365 agent pool with licensing, billing, image, and capacity ready.
-- A Foundry project with a deployed model that supports function calling and images.
-- **Foundry Project Manager** access to the project and the delegated permissions
-  listed in [W365 setup](docs/W365-SETUP.md#setup-permissions-delegated-not-runtime).
+- For Foundry, choose one path:
+    - create a fresh environment that provisions a dedicated Foundry account, project, and model deployment
+    - reuse an existing Foundry project that already has a deployed model that supports function calling and images
+- If you are reusing an existing Foundry project, you need **Foundry Project Manager** access to that project and the delegated permissions listed in [W365 setup](docs/W365-SETUP.md#setup-permissions-delegated-not-runtime).
 - Azure CLI, Azure Developer CLI with the required Foundry extensions,
   PowerShell 7.4+, and .NET 10.
 
 The repository already contains `azure.yaml`; do not run `azd init` or
 `azd ai agent init` inside the clone.
 
-### 1. Configure and validate
+### 1. Authenticate and validate tooling
 
 ```powershell
 az login
 az account set --subscription "<subscription-id>"
 azd auth login
 pwsh -NoProfile -File .\tests\PowerShell\Test-AzdPrerequisites.ps1 -RequireLogin
-azd env new <environment-name>
-azd env set FOUNDRY_PROJECT_ENDPOINT "<existing-foundry-project-endpoint>"
-azd env set FOUNDRY_PROJECT_OWNERSHIP "existing"
-azd env set AZURE_AI_ACCOUNT_NAME "<existing-foundry-account-name>"
-azd env set AZURE_AI_PROJECT_NAME "<existing-foundry-project-name>"
-azd env set AZURE_AI_PROJECT_ID "<existing-foundry-project-resource-id>"
-azd env set AZD_FOUNDRY_RESOURCE_GROUP_ID "<existing-foundry-resource-group-id>"
-azd env set AZURE_FOUNDRY_RESOURCE_GROUP "<existing-foundry-resource-group-name>"
-azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME "<existing-model-deployment-name>"
 azd ai agent doctor --local-only
-azd ai agent doctor
-pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 -Mode Validate
 ```
 
 Use the same tenant and subscription for `az` and `azd`. Review the validation
 output before making resource changes.
 
-For a new dedicated environment that should create its own W365 pool, initialize
-the opt-in values and let one `azd up` perform the bootstrap and enabled agent
-deployments:
+### 2. Create and deploy a fresh azd environment
+
+For a fresh environment, do not set existing-project identifiers up front. If
+you want azd to create a dedicated Foundry project and perform the W365-enabled
+deployment flow, initialize the local environment values and then run one
+`azd up`:
 
 ```powershell
 pwsh -NoProfile -File .\scripts\Initialize-Greenfield.ps1 `
     -SubscriptionId "<subscription-id>" `
-    -Prefix "fawin365" `
+    -Prefix "<resource-prefix>" `
     -Environment "dev" `
     -EnableW365 `
     -AgentUserPrincipalName "foundry-w365-agent@YOUR-TENANT.onmicrosoft.com"
+
 azd up
 ```
 
@@ -196,10 +190,14 @@ Review the tenant-specific W365 billing plan, image, region, and capacity in
 the ignored `config\deployment.local.json` first. The hook requests explicit
 approval before creating or updating billable W365 resources.
 
-### 2. Deploy the Foundry bootstrap
+If you want only the phase-1 bootstrap first, omit `-EnableW365` and
+`-AgentUserPrincipalName`, then use the staged flow below.
+
+### 3. Deploy the Foundry bootstrap
 
 ```powershell
 pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
+    -Environment "<resource-prefix>-dev" `
     -Mode DeployAgent `
     -ConfirmResourceChanges
 ```
@@ -208,7 +206,7 @@ This deploys the agent with `W365_ENABLED=false`. A healthy agent returns a
 phase-2 configuration response instead of attempting desktop access. See
 [phase 1](docs/DEPLOYMENT.md#phase-1-deploy-bootstrap) for verification.
 
-### 3. Bind Foundry identity to W365
+### 4. Bind Foundry identity to W365
 
 1. Run the read-only
    [identity discovery](docs/DEPLOYMENT.md#discover-the-foundry-identity) for
@@ -235,7 +233,7 @@ pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
      -UseDeviceCode
 ```
 
-### 4. Enable desktop access
+### 5. Enable desktop access
 
 Configure the remaining private Blob session state, allowed operator,
 and approved blueprint credential mode, then redeploy the same agent name:
@@ -243,6 +241,7 @@ and approved blueprint credential mode, then redeploy the same agent name:
 ```powershell
 azd ai agent doctor
 pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
+    -Environment "<resource-prefix>-dev" `
     -Mode DeployAgent `
     -ConfirmResourceChanges
 ```
@@ -252,7 +251,7 @@ list and state deployment. Keep credentials out of source control and plain azd
 environment values; follow [authentication](docs/AUTHENTICATION.md) for the
 supported credential paths.
 
-### 5. Run live acceptance
+### 6. Run live acceptance
 
 Run the bounded checks in [live acceptance](docs/DEPLOYMENT.md#live-acceptance)
 before allowing real tasks. Confirm identity continuity, token scopes, pool
@@ -260,6 +259,25 @@ readiness, session cleanup, and fail-closed behavior.
 
 The optional [viewer](docs/VIEWER.md) adds authenticated live view and human
 handoff. It is not required for direct W365 MCP execution.
+
+### Existing Foundry project instead of a fresh environment
+
+Only use the following `azd env set` values when you are binding this sample to
+an already existing Foundry project. They are not part of the initial fresh
+environment setup.
+
+```powershell
+azd env new <environment-name>
+azd env set FOUNDRY_PROJECT_ENDPOINT "<existing-foundry-project-endpoint>"
+azd env set FOUNDRY_PROJECT_OWNERSHIP "existing"
+azd env set AZURE_AI_ACCOUNT_NAME "<existing-foundry-account-name>"
+azd env set AZURE_AI_PROJECT_NAME "<existing-foundry-project-name>"
+azd env set AZURE_AI_PROJECT_ID "<existing-foundry-project-resource-id>"
+azd env set AZD_FOUNDRY_RESOURCE_GROUP_ID "<existing-foundry-resource-group-id>"
+azd env set AZURE_FOUNDRY_RESOURCE_GROUP "<existing-foundry-resource-group-name>"
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME "<existing-model-deployment-name>"
+pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 -Mode Validate
+```
 
 ### No existing Foundry project or model
 
