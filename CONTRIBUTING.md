@@ -47,12 +47,13 @@ pwsh -NoProfile -File .\tests\PowerShell\Test-AzdPrerequisites.ps1
 azd ai agent doctor --local-only
 ```
 
-Live W365 allocation is never part of push or pull-request CI. Maintainers use
-the manual `W365 live acceptance` workflow only after configuring and approving
-the protected `w365-live-acceptance` GitHub environment. The dispatcher must
-repeat the protected tenant, subscription, and location and type the exact
-billing approval phrase. The workflow always attempts ownership-driven teardown
-and uploads only sanitized evidence.
+Live W365 allocation is never part of push or pull-request CI. The authoritative
+acceptance path is the Windows-only `Invoke-W365LiveAcceptance.ps1` driver,
+which creates one isolated `<prefix>-live` azd environment, requires the exact
+billing approval phrase, proves a stable rerun, always attempts
+ownership-driven teardown, and writes only sanitized evidence. The manual
+`W365 live acceptance` workflow is an optional wrapper and does not require a
+GitHub Environment.
 
 Keep `README.md` as the short entry point. Put detailed cloud deployment steps
 in `docs/DEPLOYMENT.md`, W365 tenant changes in `docs/W365-SETUP.md`, and viewer
