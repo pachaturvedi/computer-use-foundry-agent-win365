@@ -178,6 +178,24 @@ pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 -Mode Validate
 Use the same tenant and subscription for `az` and `azd`. Review the validation
 output before making resource changes.
 
+For a new dedicated environment that should create its own W365 pool, initialize
+the opt-in values and let one `azd up` perform the bootstrap and enabled agent
+deployments:
+
+```powershell
+pwsh -NoProfile -File .\scripts\Initialize-Greenfield.ps1 `
+    -SubscriptionId "<subscription-id>" `
+    -Prefix "fawin365" `
+    -Environment "dev" `
+    -EnableW365 `
+    -AgentUserPrincipalName "foundry-w365-agent@YOUR-TENANT.onmicrosoft.com"
+azd up
+```
+
+Review the tenant-specific W365 billing plan, image, region, and capacity in
+the ignored `config\deployment.local.json` first. The hook requests explicit
+approval before creating or updating billable W365 resources.
+
 ### 2. Deploy the Foundry bootstrap
 
 ```powershell

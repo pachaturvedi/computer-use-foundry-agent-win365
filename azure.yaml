@@ -78,6 +78,6 @@ hooks:
   postup:
     windows:
       shell: pwsh
-      run: ./scripts/Deploy-ViewerBootstrap.ps1
-      interactive: false
+      run: ./scripts/Complete-AzdUp.ps1
+      interactive: true
       continueOnError: false
