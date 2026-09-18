@@ -22,19 +22,25 @@ publication or hiring workflow is required here. See
 
 ## Phase 1: deploy bootstrap
 
-Prepare an existing Foundry project with hosted-agent support and an existing
-vision/function-calling model deployment. `gpt-6-astra` is the suggested model;
-use its actual deployment name if available in your subscription/region. The
-template does not invent a model version or SKU.
+Choose one Foundry path for phase 1:
 
-The user must provide **both** the project and a deployed model available to
-that project. An empty project is not deployable with this sample because
-`AZURE_AI_MODEL_DEPLOYMENT_NAME` is mandatory. The model may be deployed on the
-project's parent Foundry account or exposed through a project connection, but
-its deployment name must be known and it must support function calling and
-image input. The developer running azd needs **Foundry Project Manager** at the
-project scope; generic subscription `Owner` alone does not grant Foundry
-data-plane access.
+- reuse an existing Foundry project that already has hosted-agent support and a
+   deployed model that supports function calling and image input
+- create a dedicated Foundry account, project, and model deployment in a fresh
+   azd environment
+
+`gpt-6-astra` is the suggested model; use its actual deployment name if
+available in your subscription/region. The template does not invent a model
+version or SKU.
+
+When reusing an existing project, the user must provide **both** the project
+and a deployed model available to that project. An empty project is not
+deployable with this sample because `AZURE_AI_MODEL_DEPLOYMENT_NAME` is
+mandatory. The model may be deployed on the project's parent Foundry account or
+exposed through a project connection, but its deployment name must be known and
+it must support function calling and image input. The developer running azd
+needs **Foundry Project Manager** at the project scope; generic subscription
+`Owner` alone does not grant Foundry data-plane access.
 
 For users without either resource, the checked-in project service declares a
 default GA `gpt-6-astra` deployment using GlobalStandard capacity 50. In a new,
@@ -144,8 +150,10 @@ this bootstrap pass unless the later phases are explicitly approved. Existing-
 project mode still expects preexisting Foundry access and does not grant roles
 on a shared project for you.
 
-For phase 1 in an existing clone, bind the existing Foundry project endpoint,
-set the model deployment name, and keep the safe feature gate disabled:
+Only when reusing an existing Foundry project in an existing clone, bind the
+existing Foundry project endpoint, set the model deployment name, and keep the
+safe feature gate disabled. These values are not part of the initial fresh
+environment setup:
 
 ```powershell
 azd env set FOUNDRY_PROJECT_ENDPOINT "<existing-foundry-project-endpoint>"
@@ -157,7 +165,7 @@ azd env set AZD_FOUNDRY_RESOURCE_GROUP_ID "<existing-foundry-resource-group-id>"
 azd env set AZURE_FOUNDRY_RESOURCE_GROUP "<existing-foundry-resource-group-name>"
 azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME "<existing-model-deployment-name>"
 azd ai agent doctor --local-only
-azd ai agent doctor
+pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 -Mode Validate
 ```
 
 The explicit ownership value prevents a project endpoint emitted by a managed
@@ -165,9 +173,10 @@ deployment from silently switching later Bicep runs into existing-project mode.
 Existing-project mode fails closed unless the endpoint, project resource ID, and
 Foundry resource-group ID and name are all supplied.
 
-For a validation-only review, stop here. Both doctor commands are read-only:
-the first checks the local manifest/environment, and the second also checks the
-remote project, role, hosted-agent capability, and configured connections.
+For a validation-only review, stop here. Both the local-only doctor command and
+`Invoke-AzdDeployment.ps1 -Mode Validate` are read-only. The first checks the
+local manifest/environment, and the second also checks the remote project,
+role, hosted-agent capability, and configured connections.
 
 Only after the validation output and deployment plan are reviewed:
 
