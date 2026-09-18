@@ -7,6 +7,19 @@
     "deployViewer": { "value": "${DEPLOY_VIEWER}" },
     "resourcePrefix": { "value": "${RESOURCE_PREFIX}" },
     "viewerResourceGroupName": { "value": "${VIEWER_RESOURCE_GROUP_NAME}" },
-    "viewerImageName": { "value": "${VIEWER_IMAGE_NAME}" }
+    "viewerImageName": { "value": "${VIEWER_IMAGE_NAME}" },
+    "viewerLiveEnabled": { "value": "${VIEWER_LIVE_ENABLED=false}" },
+    "viewerPublicUrl": { "value": "${VIEWER_PUBLIC_URL}" },
+    "viewerClientId": { "value": "${VIEWER_CLIENT_ID}" },
+    "operatorTenantId": { "value": "${OPERATOR_TENANT_ID}" },
+    "operatorObjectId": { "value": "${OPERATOR_OBJECT_ID}" },
+    "w365TenantId": { "value": "${W365_TENANT_ID}" },
+    "blueprintId": { "value": "${W365_BLUEPRINT_ID}" },
+    "agentId": { "value": "${W365_AGENT_ID}" },
+    "agentObjectId": { "value": "${W365_AGENT_OBJECT_ID}" },
+    "agentUserId": { "value": "${W365_AGENT_USER_ID}" },
+    "screenShareSdkUrl": { "value": "${SCREENSHARE_SDK_URL}" },
+    "screenShareFrameOrigins": { "value": "${SCREENSHARE_FRAME_ORIGINS}" },
+    "screenShareAppUrl": { "value": "${SCREENSHARE_APP_URL=https://w365ssviewer7f05ac.z13.web.core.windows.net}" }
   }
 }

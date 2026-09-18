@@ -121,6 +121,38 @@ public static class ViewerEndpoints
             return Results.Content(File.ReadAllText(Path.Combine(app.Environment.ContentRootPath, "wwwroot", "viewer.html")),
                 "text/html");
         });
+        group.MapGet("/live/{id}", async (string id, ISessionStore store,
+            IAgentUserTokenProvider tokens, HttpContext ctx) =>
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ctx.RequestAborted);
+            timeout.CancelAfter(TimeSpan.FromSeconds(65));
+            string sessionLink;
+            await using (var tx = await store.OpenAsync(timeout.Token))
+            {
+                if (!Owns(tx.State, id, ctx.User))
+                {
+                    return Results.NotFound();
+                }
+
+                if (tx.State!.Phase is not (DesktopSessionPhase.Active or DesktopSessionPhase.Paused) ||
+                    string.IsNullOrWhiteSpace(tx.State.SessionLink) ||
+                    !ValidComputerUrl(tx.State.SessionLink))
+                {
+                    return Results.Content(
+                        "The live view is not ready. Return to the agent task and retry after the desktop is active.",
+                        "text/plain",
+                        statusCode: StatusCodes.Status409Conflict);
+                }
+
+                sessionLink = tx.State.SessionLink;
+            }
+
+            var token = await tokens.GetAsync(AgentUserTokenProvider.AriView, timeout.Token);
+            return Results.Redirect(BuildLiveViewUrl(
+                settings.ScreenShareAppUrl,
+                sessionLink,
+                token.Token));
+        });
         group.MapGet("/viewer.js", () => Results.File(Path.Combine(app.Environment.ContentRootPath, "wwwroot", "viewer.js"), "text/javascript"));
         group.MapGet("/viewer.css", () => Results.File(Path.Combine(app.Environment.ContentRootPath, "wwwroot", "viewer.css"), "text/css"));
         group.MapGet("/api/{id}", async (string id, ISessionStore store, HttpContext ctx, IAntiforgery csrf) =>
@@ -190,6 +222,30 @@ public static class ViewerEndpoints
             return Results.Ok(new { sessionLink = state.SessionLink, token = token.Token, expiresAt = token.ExpiresOn });
         });
     }
+
+    internal static string BuildLiveViewUrl(Uri appUrl, string computerUrl, string token)
+    {
+        if (!ValidComputerUrl(computerUrl))
+        {
+            throw new InvalidOperationException("The Windows 365 session has no valid screen-share computer URL.");
+        }
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            throw new InvalidOperationException("The Windows 365 view token is empty.");
+        }
+
+        var computer = new Uri(computerUrl);
+        var fragment =
+            $"mode=viewOnly&computerUrl={Uri.EscapeDataString(computer.ToString())}" +
+            $"&token={Uri.EscapeDataString(token)}";
+        return $"{appUrl.ToString().TrimEnd('/')}/#{fragment}";
+    }
+
+    private static bool ValidComputerUrl(string value) =>
+        Uri.TryCreate(value, UriKind.Absolute, out var computer) &&
+        computer.Scheme == "https" &&
+        string.IsNullOrEmpty(computer.UserInfo);
+
     internal static bool Owns(DesktopSession? state, string id, ClaimsPrincipal user) =>
         state is not null && state.LinkId == id && state.OwnerTenantId == user.FindFirstValue("tid") &&
         state.OwnerObjectId == user.FindFirstValue("oid") && state.ExpiresAt > DateTimeOffset.UtcNow;

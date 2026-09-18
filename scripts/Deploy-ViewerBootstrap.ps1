@@ -50,6 +50,42 @@ $identityPrincipalId = $env:VIEWER_IDENTITY_PRINCIPAL_ID
 $identityResourceId = $env:VIEWER_IDENTITY_RESOURCE_ID
 $imageName = $env:VIEWER_IMAGE_NAME
 
+if ($env:VIEWER_LIVE_ENABLED -eq 'true') {
+    $liveRequired = @(
+        'VIEWER_PUBLIC_URL',
+        'VIEWER_CLIENT_ID',
+        'OPERATOR_TENANT_ID',
+        'OPERATOR_OBJECT_ID',
+        'W365_TENANT_ID',
+        'W365_BLUEPRINT_ID',
+        'W365_AGENT_ID',
+        'W365_AGENT_OBJECT_ID',
+        'W365_AGENT_USER_ID',
+        'SCREENSHARE_SDK_URL',
+        'SCREENSHARE_FRAME_ORIGINS',
+        'SCREENSHARE_APP_URL',
+        'VIEWER_KEY_VAULT_NAME'
+    )
+    foreach ($name in $liveRequired) {
+        if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
+            throw "VIEWER_LIVE_ENABLED=true requires $name."
+        }
+    }
+    if ($env:W365_ENABLED -ne 'true') {
+        throw 'VIEWER_LIVE_ENABLED=true requires W365_ENABLED=true.'
+    }
+
+    & az keyvault secret show `
+        --subscription $subscription `
+        --vault-name $env:VIEWER_KEY_VAULT_NAME `
+        --name 'w365-viewer-client-secret' `
+        --query id `
+        --output none 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Key Vault '$($env:VIEWER_KEY_VAULT_NAME)' must contain secret 'w365-viewer-client-secret'."
+    }
+}
+
 Invoke-Az @(
     'acr', 'build',
     '--subscription', $subscription,

@@ -97,6 +97,21 @@ public sealed class SettingsTests
         Config(values).Validate();
     }
 
+    [Fact]
+    public void ScreenShareAppUsesDefaultAndRequiresSafeHttps()
+    {
+        Assert.Equal(
+            "https://w365ssviewer7f05ac.z13.web.core.windows.net/",
+            Config([]).ScreenShareAppUrl.ToString());
+
+        var values = EnabledValues();
+        values["SCREENSHARE_APP_URL"] = "https://screenshare.example.com/app";
+        Assert.Equal("https://screenshare.example.com/app/", Config(values).ScreenShareAppUrl.ToString());
+
+        values["SCREENSHARE_APP_URL"] = "https://user:password@screenshare.example.com";
+        Assert.Throws<InvalidOperationException>(() => Config(values).Validate(viewerMode: true));
+    }
+
     private static Dictionary<string, string?> EnabledValues() => new()
     {
         ["W365_ENABLED"] = "true",

@@ -63,7 +63,8 @@ Set `OPERATOR_TENANT_ID` and `OPERATOR_OBJECT_ID` to the **human operator's** En
 tenant and object ID. Both claims must match before any protected viewer page or
 API is accessible; `/health` remains public. Possession of a random URL alone
 is insufficient. Token endpoints use CSRF protection and `no-store` responses;
-the browser holds tokens in memory, not localStorage or links.
+the browser does not persist tokens in localStorage or azd state, and the
+live-view flow passes the short-lived W365 token only in the redirect fragment.
 
 Configure `VIEWER_PUBLIC_URL` with the exact HTTPS origin used by the browser.
 OIDC redirect and token redemption use this configured origin, not untrusted
@@ -71,6 +72,21 @@ forwarded headers. The ACA template allows HTTPS-only ingress. The viewer can
 have a different human sign-in tenant from W365, but its **Azure UAMI, Foundry
 and W365 must share the same tenant**. Its Azure identity must have access to
 the configured Key Vault and Blob resource.
+
+`SCREENSHARE_APP_URL` selects the W365-hosted view-only application. Pass it
+through the azd environment or viewer deployment parameters. The sample defaults
+to `https://w365ssviewer7f05ac.z13.web.core.windows.net`; override it only when
+W365 onboarding supplies a different approved endpoint.
+
+`Initialize-Greenfield.ps1` persists this non-secret endpoint in the azd
+environment, and the viewer Bicep layer passes it to the companion viewer. The
+agent still returns only its authenticated opaque `/live/<id>` URL. After the
+operator signs in and ownership is verified, that endpoint mints a short-lived
+`Computer.See` token and redirects the browser to the W365 viewer with
+`mode=viewOnly`, the W365 `screenShareUrl`, and token in the URL fragment. The
+token is never stored in azd state or returned in the agent/model response.
+Take-control continues to use the authenticated companion `/view/<id>#control`
+flow.
 
 Agent and viewer must share the same valid W365 blueprint/agent/user IDs and
 the exact `SESSION_BLOB_URI`. Both require `W365_AGENT_OBJECT_ID` when active;
@@ -82,10 +98,13 @@ list of exact HTTPS origins, without paths, wildcards or trailing slashes,
 for CSP's iframe allowlist. Do not substitute an arbitrary CDN or weaken CSP.
 
 Fill the [viewer parameter example](../infra/viewer.parameters.example.json),
-set `w365Enabled=true` only after FIC/OIDC/state configuration, and redeploy the
-same app/UAMI. For the default ACA hostname, use `viewerHostname` from phase 1;
-make `viewerPublicUrl`, the web-app callback and the agent's `VIEWER_PUBLIC_URL`
-agree. A custom domain needs its own binding/certificate. Bicep manages the
+then set `VIEWER_LIVE_ENABLED=true` only after FIC/OIDC/state configuration,
+the Key Vault OIDC secret, and all screen-share values are ready. The template
+rejects live viewer activation unless `W365_ENABLED=true` and the required
+non-secret values are present. Redeploy the same app/UAMI. For the default
+ACA hostname, use `viewerHostname` from phase 1; make `viewerPublicUrl`, the
+web-app callback and the agent's `VIEWER_PUBLIC_URL` agree. A custom domain
+needs its own binding/certificate. Bicep manages the
 viewer UAMI's `AZURE_CLIENT_ID`; do not set Foundry's platform-owned identity
 variables on the viewer.
 
@@ -107,10 +126,12 @@ any in-flight action's shared lock, persists Paused, then issues a control token
 performs an explicit CSRF-protected resume. Closing a tab, reconnecting,
 switching to watch mode or a token-refresh error does not resume automation.
 
-Both live-view and take-control links open the same authenticated page. The
-`#control` fragment is an affordance only; it never automatically takes control.
-The human must click the button. At task expiry the browser stops its viewer,
-the server denies new tokens/actions, and request cleanup attempts EndSession.
+Live-view links enter through the authenticated `/live/<id>` route and then
+redirect into the W365-hosted view-only app. Take-control links stay on the
+authenticated companion `/view/<id>#control` page. The `#control` fragment is
+an affordance only; it never automatically takes control. The human must click
+the button. At task expiry the browser stops its viewer, the server denies new
+tokens/actions, and request cleanup attempts EndSession.
 
 If the model returns without closing while a handoff is pending, the request
 retains the slot until explicit resume or its deadline, then cleans up. For

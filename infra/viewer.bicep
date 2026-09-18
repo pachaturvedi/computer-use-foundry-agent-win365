@@ -21,6 +21,8 @@ param agentObjectId string = ''
 param agentUserId string = ''
 param screenShareSdkUrl string = ''
 param screenShareFrameOrigins string = ''
+#disable-next-line no-hardcoded-env-urls
+param screenShareAppUrl string = 'https://w365ssviewer7f05ac.z13.web.core.windows.net'
 param useRegistry bool = true
 param tags object = {}
 
@@ -45,7 +47,7 @@ resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' 
   location: location
   tags: tags
 }
-resource vaultRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (w365Enabled) {
+resource vaultRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(vault.id, identity.id, 'secrets')
   scope: vault
   properties: {
@@ -118,6 +120,7 @@ resource viewer 'Microsoft.App/containerApps@2024-03-01' = {
           { name: 'VIEWER_CLIENT_ID', value: viewerClientId }
           { name: 'SCREENSHARE_SDK_URL', value: screenShareSdkUrl }
           { name: 'SCREENSHARE_FRAME_ORIGINS', value: screenShareFrameOrigins }
+          { name: 'SCREENSHARE_APP_URL', value: screenShareAppUrl }
         ], w365Enabled ? [{ name: 'VIEWER_CLIENT_SECRET', secretRef: 'oidc-secret' }] : [])
         probes: [{
           type: 'Liveness'

@@ -8,6 +8,9 @@ namespace Win365Agent;
 /// <param name="config">The configuration source.</param>
 public sealed class Settings(IConfiguration config)
 {
+    private const string _defaultScreenShareAppUrl =
+        "https://w365ssviewer7f05ac.z13.web.core.windows.net";
+
     /// <summary>Gets a non-empty configuration value.</summary>
     /// <param name="key">The configuration key.</param>
     /// <returns>The configured value.</returns>
@@ -103,6 +106,23 @@ public sealed class Settings(IConfiguration config)
         }
     }
 
+    /// <summary>Gets the W365-hosted view-only application URI.</summary>
+    public Uri ScreenShareAppUrl
+    {
+        get
+        {
+            var uri = new Uri((Optional("SCREENSHARE_APP_URL") ?? _defaultScreenShareAppUrl).TrimEnd('/') + "/");
+            if (uri.Scheme != "https" || !string.IsNullOrEmpty(uri.UserInfo) ||
+                !string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment))
+            {
+                throw new InvalidOperationException(
+                    "SCREENSHARE_APP_URL must be an HTTPS URL without credentials, query or fragment.");
+            }
+
+            return uri;
+        }
+    }
+
     /// <summary>Validates configuration for the active application mode.</summary>
     /// <param name="viewerMode">
     /// <see langword="true"/> to validate viewer identity settings; otherwise, validates hosted-agent settings.
@@ -148,6 +168,7 @@ public sealed class Settings(IConfiguration config)
         if (viewerMode)
         {
             _ = ViewerUrl;
+            _ = ScreenShareAppUrl;
             _ = Guid.Parse(Required("AZURE_CLIENT_ID"));
         }
         else
