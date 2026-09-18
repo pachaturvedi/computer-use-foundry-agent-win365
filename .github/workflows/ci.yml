@@ -19,17 +19,17 @@ jobs:
         shell: pwsh
         run: |
           $failed = @()
-          Get-ChildItem scripts/*.ps1 | ForEach-Object {
+          Get-ChildItem scripts/*.ps1, tests/PowerShell/*.ps1 | ForEach-Object {
             $tokens = $null; $errors = $null
             [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors) | Out-Null
             $failed += $errors
           }
           if ($failed.Count) { $failed | Format-List; exit 1 }
           ./scripts/Setup-W365.ps1 -TenantId ([guid]::Empty) -BlueprintId ([guid]::Empty) -AgentIdentityId ([guid]::Empty) -AgentUserPrincipalName agent@example.com -PoolId ([guid]::Empty) -WhatIf
-          ./scripts/Test-SetupOffline.ps1
-          ./scripts/Test-RemoveW365ResourcesOffline.ps1
-          ./scripts/Test-W365TeardownFlowOffline.ps1
-          ./scripts/Test-DiscoveryOffline.ps1
+          ./tests/PowerShell/Test-SetupOffline.ps1
+          ./tests/PowerShell/Test-RemoveW365ResourcesOffline.ps1
+          ./tests/PowerShell/Test-W365TeardownFlowOffline.ps1
+          ./tests/PowerShell/Test-DiscoveryOffline.ps1
   windows-quickstart:
     runs-on: windows-latest
     steps:
@@ -46,4 +46,4 @@ jobs:
         shell: pwsh
         run: |
           azd ext install microsoft.foundry
-          ./scripts/Test-AzdPrerequisites.ps1
+          ./tests/PowerShell/Test-AzdPrerequisites.ps1

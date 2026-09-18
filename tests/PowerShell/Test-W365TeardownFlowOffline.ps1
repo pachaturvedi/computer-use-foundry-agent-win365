@@ -229,7 +229,8 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
 
 $module | Import-Module -Global
 
-$repoRoot = Split-Path $PSScriptRoot
+$repoRoot = Split-Path (Split-Path $PSScriptRoot)
+$scriptsRoot = Join-Path $repoRoot 'scripts'
 $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("w365-teardown-flow-{0}" -f ([guid]::NewGuid()))
 $envName = 'teardown-flow-test'
 $envDir = Join-Path $tempRoot $envName
@@ -301,7 +302,7 @@ try {
         OwnershipManifestPath = $ownershipManifestPath
     }
 
-    $setupOutput = & "$PSScriptRoot\Setup-W365.ps1" @setupArgs
+    $setupOutput = & "$scriptsRoot\Setup-W365.ps1" @setupArgs
     $poolId = Get-OutputValue -Lines $setupOutput -Name 'W365_POOL_ID'
     $agentUserId = Get-OutputValue -Lines $setupOutput -Name 'W365_AGENT_USER_ID'
     $manifestOutputPath = Get-OutputValue -Lines $setupOutput -Name 'W365_OWNERSHIP_MANIFEST'
@@ -335,7 +336,7 @@ try {
 
     Write-TestEnvironment -PoolId $poolId -AgentUserId $agentUserId
 
-    & "$PSScriptRoot\Remove-W365Resources.ps1" -EnvironmentName $envName -EnvironmentFilePath $envFilePath -OwnershipManifestPath $ownershipManifestPath -Confirm:$false | Out-Null
+    & "$scriptsRoot\Remove-W365Resources.ps1" -EnvironmentName $envName -EnvironmentFilePath $envFilePath -OwnershipManifestPath $ownershipManifestPath -Confirm:$false | Out-Null
 
     $state = Get-MockGraphState
     if ($null -ne $state.Pool -or $null -ne $state.User) {

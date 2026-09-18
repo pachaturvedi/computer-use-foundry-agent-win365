@@ -160,7 +160,7 @@ The repository already contains `azure.yaml`; do not run `azd init` or
 az login
 az account set --subscription "<subscription-id>"
 azd auth login
-pwsh -NoProfile -File .\scripts\Test-AzdPrerequisites.ps1 -RequireLogin
+pwsh -NoProfile -File .\tests\PowerShell\Test-AzdPrerequisites.ps1 -RequireLogin
 azd env new <environment-name>
 azd env set FOUNDRY_PROJECT_ENDPOINT "<existing-foundry-project-endpoint>"
 azd env set FOUNDRY_PROJECT_OWNERSHIP "existing"

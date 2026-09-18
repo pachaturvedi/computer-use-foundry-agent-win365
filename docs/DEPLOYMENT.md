@@ -53,7 +53,7 @@ az login
 az account set --subscription "<subscription-id>"
 azd ext install microsoft.foundry
 azd auth login
-.\scripts\Test-AzdPrerequisites.ps1 -RequireLogin
+.\tests\PowerShell\Test-AzdPrerequisites.ps1 -RequireLogin
 ```
 
 Use the same intended identity for Azure CLI and azd. Confirm the subscription,
@@ -94,7 +94,7 @@ Foundry-specific initializer at this repository's raw `azure.yaml` URL:
 ```powershell
 azd auth login
 azd ai agent init -m "https://raw.githubusercontent.com/pachaturvedi/computer-use-foundry-agent-win365/main/azure.yaml"
-.\scripts\Test-AzdPrerequisites.ps1 -RequireLogin
+.\tests\PowerShell\Test-AzdPrerequisites.ps1 -RequireLogin
 ```
 
 The no-clone command creates a new project directory. Change into that generated

@@ -38,7 +38,7 @@ hosted-agent schema and preserve its minimum CLI/extension versions. Validate
 tooling before authenticated tests:
 
 ```powershell
-pwsh -NoProfile -File .\scripts\Test-AzdPrerequisites.ps1
+pwsh -NoProfile -File .\tests\PowerShell\Test-AzdPrerequisites.ps1
 azd ai agent doctor --local-only
 ```
 
@@ -83,8 +83,8 @@ Validate Bicep locally and exercise setup `-WhatIf` without a Graph sign-in.
 Run the setup/discovery regressions without Azure or Graph sign-in:
 
 ```powershell
-pwsh -NoProfile -File .\scripts\Test-SetupOffline.ps1
-pwsh -NoProfile -File .\scripts\Test-DiscoveryOffline.ps1
+pwsh -NoProfile -File .\tests\PowerShell\Test-SetupOffline.ps1
+pwsh -NoProfile -File .\tests\PowerShell\Test-DiscoveryOffline.ps1
 ```
 
 Both scripts mock their external endpoints and must remain offline. See

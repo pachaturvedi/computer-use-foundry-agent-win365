@@ -187,7 +187,7 @@ try {
         Invoke-Azd @('env', 'select', $Environment)
     }
 
-    & (Join-Path $PSScriptRoot 'Test-AzdPrerequisites.ps1') -RequireLogin
+    & (Join-Path (Split-Path $PSScriptRoot) 'tests\PowerShell\Test-AzdPrerequisites.ps1') -RequireLogin
     if ($LASTEXITCODE -ne 0) {
         throw 'azd prerequisite validation failed.'
     }

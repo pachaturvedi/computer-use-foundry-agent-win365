@@ -1,5 +1,5 @@
 ---
-applyTo: "azure.yaml,infra/**/*.bicep,infra/**/*.json,.azure/**/*.md,scripts/Invoke-AzdDeployment.ps1,scripts/Invoke-W365SetupFlow.ps1,scripts/Setup-W365.ps1,scripts/Get-FoundryIdentity.ps1,scripts/Deploy-*.ps1,scripts/Test-AzdPrerequisites.ps1"
+applyTo: "azure.yaml,infra/**/*.bicep,infra/**/*.json,.azure/**/*.md,scripts/Invoke-AzdDeployment.ps1,scripts/Invoke-W365SetupFlow.ps1,scripts/Setup-W365.ps1,scripts/Get-FoundryIdentity.ps1,scripts/Deploy-*.ps1,tests/PowerShell/Test-AzdPrerequisites.ps1"
 ---
 
 # Azure and Foundry deployment
