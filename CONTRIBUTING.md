@@ -46,6 +46,31 @@ Keep `README.md` as the short entry point. Put detailed cloud deployment steps
 in `docs/DEPLOYMENT.md`, W365 tenant changes in `docs/W365-SETUP.md`, and viewer
 identity/OIDC steps in `docs/VIEWER.md`. When a command changes, update every
 guide that references it and keep Windows PowerShell examples copy/paste ready.
+When a code change affects architecture, lifecycle, ownership, cleanup,
+authentication, environment variables, or operational behavior, read the
+affected docs before editing and update them in the same change. Reflect
+component or control-flow changes in `docs/ARCHITECTURE.md`, deployment and
+teardown flow changes in `docs/DEPLOYMENT.md`, and W365 or Entra changes in
+`docs/W365-SETUP.md`.
+
+Use this documentation impact matrix when changing code:
+
+| If you change... | Update at least... |
+| --- | --- |
+| Public entry points, setup shortcuts, or quickstart wording | `README.md` |
+| Component boundaries, request flow, state ownership, recovery, teardown design, or resource lifecycle | `docs/ARCHITECTURE.md` |
+| `azure.yaml`, Bicep, azd workflows, environment variables, deployment modes, provision/deploy/down behavior, or rollback steps | `docs/DEPLOYMENT.md` |
+| W365 pool behavior, Intune steps, Entra agent users, Graph permissions, billing confirmations, or tenant cleanup | `docs/W365-SETUP.md` |
+| Token exchange, caller binding, permission model, blueprint trust, or identity sourcing | `docs/AUTHENTICATION.md` |
+| Viewer deployment, OIDC secrets, federation, screen-sharing, or handoff behavior | `docs/VIEWER.md` |
+| Checked-in live validation outcomes or operator-tested status | `docs/VALIDATION-REPORT.md` |
+
+For mixed changes, update every affected guide, not only the most obvious one.
+Examples:
+
+- A teardown change usually requires `docs/ARCHITECTURE.md`, `docs/DEPLOYMENT.md`, and `docs/W365-SETUP.md`.
+- A new environment variable usually requires `README.md` if user-facing and `docs/DEPLOYMENT.md` or `docs/AUTHENTICATION.md` depending on behavior.
+- A change to identity or permissions should update both the behavioral guide and the operator workflow guide.
 
 Do not run template initialization inside a repository clone; its checked-in
 `azure.yaml` is already the project manifest. Create or select only the local
@@ -74,14 +99,18 @@ Keep discovery read-only and distinguish blueprint/agent app IDs from object
 IDs. Setup must validate supplied existing identities and parents before any
 mutation, reject existing grant/inheritance ambiguity before writes, preserve
 unrelated grants/policies, and never create a separate
-blueprint, blueprint principal, agent identity, certificate or secret.
+blueprint, blueprint principal, or agent identity. Credential creation and
+rotation are separate, explicitly authorized authentication-mode operations;
+setup must not create them implicitly.
 
-Cover process-selected managed identity token paths with fake handlers, with no
-DAC/CLI/certificate fallback for W365. Viewer federation must stay opt-in with
-explicit administrator approval and documented blueprint/sibling-identity trust,
-not an ARI-only claim. Keep Key Vault limited to the viewer's OIDC secret and
-reserved Foundry identity variables platform-owned. Add cases for bootstrap 503/
-health behavior, missing IDs, parent mismatch and unchanged identity reuse.
+Cover every process-selected authentication mode with fake handlers and prove
+there is no automatic fallback. Never use DAC, Azure CLI, developer credentials,
+or an interactive user as a hidden W365 credential source. Viewer federation
+must stay opt-in with explicit administrator approval and documented
+blueprint/sibling-identity trust, not an ARI-only claim. Keep reserved Foundry
+identity variables platform-owned. Add cases for bootstrap 503/health behavior,
+missing IDs, invalid modes, missing credential material, parent mismatch, and
+unchanged identity reuse.
 
 Do not infer ordinary Responses hosting support from the activity/autopilot
 reference helper. Record actual authorized live acceptance separately before
@@ -98,3 +127,57 @@ NuGet vulnerability/downgrade warnings to force a build.
 Never contribute tenant IDs, private endpoints, credentials, session state or
 screenshots from real users. The existing [license](LICENSE) governs this repo;
 follow the destination organization's contribution/CLA process when publishing.
+
+## Copilot customization
+
+Repository AI guidance is intentionally modular:
+
+- `.github\copilot-instructions.md` contains short, repository-wide invariants.
+- `.github\instructions\*.instructions.md` adds path-specific .NET, identity,
+  lifecycle, PowerShell, Azure, and documentation rules.
+- `.github\agents\*.agent.md` defines specialist implementation and validation
+  agents.
+- `.github\prompts\*.prompt.md` provides reusable feature, authentication, and
+  validation entry points.
+
+Instruction precedence and routing:
+
+1. The user's explicit request and safety constraints define the task.
+2. Repository-wide instructions define invariants that cannot be weakened.
+3. Matching path-specific instructions refine those invariants.
+4. The selected custom agent defines role, workflow, deliverables, and tools.
+5. A prompt file frames a repeatable invocation.
+6. Documentation examples are operational guidance, not permission to bypass a
+   higher-level safety or ownership rule.
+
+Use `auth-mode-implementer` for credential modes, token providers, FICs, or
+identity configuration. Use `w365-implementer` for runtime lifecycle, MCP,
+state, hosting, or viewer behavior. Use `validation-reviewer` after
+implementation; it is read-only. Use the principal reviewer personas for
+independent architecture, engineering, QA, product, and field-readiness reviews.
+Use `principal-operations-documentation-engineer` to create Windows-first
+runbooks, diagnostic query catalogs, troubleshooting decision trees, evidence
+templates, rollback procedures, and administrator handoff documentation.
+Use `final-change-gate` before the final proposal for any non-trivial code,
+configuration, authentication, lifecycle, deployment, infrastructure, or
+operational documentation change. The gate invokes the relevant principal
+reviewers, consolidates findings, validates evidence, and returns `READY`,
+`READY_WITH_DECLARED_LIMITS`, or `NOT_READY`. This is the default automatic
+completion step; implementation agents must not wait for the user to request
+it. Only no-file-change responses and clearly trivial typo-only edits with no
+behavioral or operational impact are exempt.
+
+Put durable rules in the narrowest applicable instruction file. Put a repeatable
+task workflow in a prompt, and use a custom agent only when the task benefits
+from a distinct role or tool boundary. Avoid copying the same rule into every
+layer: custom agents inherit repository and matching path-specific instructions.
+
+When architecture or repository policy changes, update the appropriate
+instruction module in the same pull request. Validate YAML frontmatter, links,
+referenced commands, and path globs before merging.
+
+Before implementation, record the initial `git status --short`, identify
+pre-existing changes, and trace entry points, callers, registrations,
+configuration consumers, tests, scripts, and owning documentation. At
+completion, review only the intended changed paths, run `git diff --check`, and
+report any checks that could not run.
