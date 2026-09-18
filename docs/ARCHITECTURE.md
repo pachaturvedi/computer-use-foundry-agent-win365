@@ -170,10 +170,19 @@ After closing, the same task cannot allocate a second desktop.
 Graph setup IDs, MCP transport-session ID, W365 desktop-session ID, hosted user
 partition, task ID and viewer link ID are distinct identifiers.
 
-Normal cleanup runs on explicit close and in request `finally`, with an independent
-75-second cleanup timeout. A task is limited to ten minutes. A crash may prevent
-EndSession; the system does not claim exactly-once remote effects. Unknown results
-remain blocked instead of replaying actions or allocating a replacement desktop.
+Normal runtime cleanup runs on explicit close and in request `finally`, with an
+independent 75-second cleanup timeout. A task is limited to ten minutes. A crash
+may prevent EndSession; the system does not claim exactly-once remote effects.
+Unknown results remain blocked instead of replaying actions or allocating a
+replacement desktop.
+
+Environment teardown is a separate control-plane path. During setup,
+`Setup-W365.ps1` writes `.azure/<environment>/w365-ownership.json` with the
+sample-owned W365 and Entra objects plus the blueprint's pre-mutation
+`requiredResourceAccess`. During `azd down`, the `predown` hook in `azure.yaml`
+runs `Remove-W365Resources.ps1`, which consumes that manifest and deletes in
+reverse dependency order before Azure resources are removed. Missing ownership
+evidence blocks teardown instead of guessing from names.
 
 ## Identity ownership
 
@@ -185,13 +194,17 @@ inheritance, agent user and pool assignment without creating separate identities
 Use the same Foundry agent name for new versions and reject unexpected identity
 replacement after rediscovery.
 
-The process selects `AgentUserTokenProvider`, not the model; there is no separate
-W365-auth mode setting. In the current implementation, both hosted agent and
-viewer start with their own managed identity. Each requires an explicitly
-approved FIC on the blueprint and exchanges its assertion with
-`fmi_path=W365_AGENT_ID` to obtain blueprint T1. Both then exchange T1 -> T2 ->
-user-FIC T3 for ATG/ARI. The hosted FIC subject must be the discovered agent
-object ID; the viewer FIC subject must be the viewer UAMI object ID.
+The process selects `AgentUserTokenProvider`, not the model.
+`W365_BLUEPRINT_CREDENTIAL_MODE` explicitly selects blueprint T1 acquisition;
+there is no request-driven selection or automatic fallback. Client-secret mode
+is implemented for bounded validation, managed-identity federation remains
+selectable but is blocked in the tested Foundry host by Entra `AADSTS700231`,
+and Key Vault certificate mode remains reserved and fails closed until fully
+implemented. The viewer continues to start with its own managed identity and
+requires an explicitly approved FIC on the blueprint. Every implemented path
+uses `fmi_path=W365_AGENT_ID` to obtain blueprint T1, then the shared T1 -> T2 ->
+user-FIC T3 flow for ATG/ARI. The hosted FIC subject must be the discovered
+agent object ID; the viewer FIC subject must be the viewer UAMI object ID.
 
 The platform-injected `FOUNDRY_AGENT_BLUEPRINT_CLIENT_ID` is still checked
 against `W365_BLUEPRINT_ID` to prevent configuration from crossing blueprint
@@ -248,6 +261,13 @@ blueprints need explicit administrator approval; the viewer can stay disabled.
 The public token helper is an activity/autopilot reference: ordinary Responses
 hosting support requires actual live acceptance, with no fallback if unsupported.
 This sample neither publishes autopilot nor requires a hiring workflow.
+
+That same shared-boundary concern drives teardown. Cleanup removes only manifest
+entries recorded as `created`. Reused permission grants are restored to their
+previous scope, reused inheritance entries are left in place, and environments
+bound to an existing Foundry project are blocked unless an explicit override is
+provided. The goal is minimal-touch rollback on Entra and W365 while still
+allowing a dedicated sample environment to be fully torn down in reverse order.
 
 ## Integration pain points
 
@@ -313,7 +333,7 @@ layers, CQRS, or framework abstractions.
 | `Hosting` | Small composition helpers, bootstrap endpoints, agent tools, and per-request cleanup. |
 | `Desktop` | Desktop session model, lifecycle, ownership, budgets, and allowlist policy. |
 | `Mcp` | MCP handshake/catalog/call transport and bounded observation conversion. |
-| `Identity` | Blueprint and agent-user token providers; no CLI or certificate fallback. |
+| `Identity` | Explicit blueprint credential modes plus shared agent-user token exchanges; no implicit fallback. |
 | `State` | Blob-backed live state and file-backed offline test state. |
 | `Responses` | Fresh Agent Framework sessions and bounded fresh-request validation. |
 | `Viewer` | OIDC owner authorization, CSRF, CSP, and viewer endpoints. |
