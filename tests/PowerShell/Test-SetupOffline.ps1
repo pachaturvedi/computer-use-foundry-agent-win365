@@ -13,6 +13,10 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
     $script:poolId = '55555555-5555-5555-5555-555555555555'
     $script:billingPlanId = '66666666-6666-6666-6666-666666666666'
     $script:failBlueprintPatch = $false
+    $script:connectCalls = 0
+    $script:timeoutFailuresRemaining = 1
+    $script:lastContextScope = ''
+    $script:lastUseDeviceCode = $false
     $script:ledger = @{
         Blueprint = @{ id = 'blueprint-object'; appId = $script:blueprintId; keyCredentials = @('untouched-key'); requiredResourceAccess = @(
             @{ resourceAppId = 'unrelated-resource'; resourceAccess = @(@{ id = 'unrelated-scope'; type = 'Scope' }) }
@@ -39,7 +43,14 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
         User = $null; Grants = @(); Inheritance = @(); Assignments = @(); Fics = @(); Creates = 0; Writes = 0
     }
     function Connect-MgGraph {
-        param($TenantId, $Scopes, $ContextScope, [switch]$NoWelcome)
+        param($TenantId, $Scopes, $ContextScope, $ClientTimeout, [switch]$NoWelcome, [switch]$UseDeviceCode)
+        $script:connectCalls++
+        $script:lastContextScope = $ContextScope
+        $script:lastUseDeviceCode = $UseDeviceCode.IsPresent
+        if ($script:timeoutFailuresRemaining -gt 0) {
+            $script:timeoutFailuresRemaining--
+            throw 'Authentication timed out after 120 seconds due to inactivity. Please try again.'
+        }
         if ($Scopes | Where-Object { $_ -like '*.Create*' }) { throw 'Setup requested identity creation permission.' }
         $script:tenant = $TenantId.ToString(); $script:scopes = $Scopes
     }
@@ -118,7 +129,14 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
         }
         throw "Unexpected mocked Graph request: $Method $path"
     }
-    Export-ModuleMember -Function Connect-MgGraph, Get-MgContext, Invoke-MgGraphRequest
+    function Get-ConnectState {
+        [pscustomobject]@{
+            Calls = $script:connectCalls
+            ContextScope = $script:lastContextScope
+            UseDeviceCode = $script:lastUseDeviceCode
+        }
+    }
+    Export-ModuleMember -Function Connect-MgGraph, Get-MgContext, Invoke-MgGraphRequest, Get-ConnectState
 }
 $module | Import-Module -Global
 $repoRoot = Split-Path (Split-Path $PSScriptRoot)
@@ -131,14 +149,24 @@ $savedLocalConfig = if (Test-Path -LiteralPath $localConfigPath) {
 else {
     $null
 }
+if (Test-Path -LiteralPath $localConfigPath) {
+    Remove-Item -LiteralPath $localConfigPath
+}
 try {
     $setupArgs = @{
         TenantId = [guid]::Empty; BlueprintId = '11111111-1111-1111-1111-111111111111'
         AgentIdentityId = '22222222-2222-2222-2222-222222222222'; AgentUserPrincipalName = 'agent@example.com'
         PoolId = '55555555-5555-5555-5555-555555555555'; BillingConfirmed = $true; Confirm = $false; SkipAzdEnvironmentSync = $true
+        UseDeviceCode = $true
         OwnershipManifestPath = $ownershipManifestPath
     }
     $output = & "$scriptsRoot\Setup-W365.ps1" @setupArgs
+    $connectState = Get-ConnectState
+    if ($connectState.Calls -ne 2 -or
+        $connectState.ContextScope -ne 'Process' -or
+        !$connectState.UseDeviceCode) {
+        throw 'W365 setup did not retry device-code authentication with a process-scoped Graph context.'
+    }
     if ('W365_AGENT_ID=33333333-3333-3333-3333-333333333333' -notin $output -or
         'W365_AGENT_OBJECT_ID=22222222-2222-2222-2222-222222222222' -notin $output) { throw 'Client and object IDs were conflated.' }
     if (!(Test-Path -LiteralPath $ownershipManifestPath)) { throw 'Ownership manifest was not written.' }

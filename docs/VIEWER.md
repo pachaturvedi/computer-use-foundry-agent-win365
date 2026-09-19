@@ -84,6 +84,35 @@ have a different human sign-in tenant from W365, but its **Azure UAMI, Foundry
 and W365 must share the same tenant**. Its Azure identity must have access to
 the configured Key Vault and Blob resource.
 
+`VIEWER_PUBLIC_URL` is the only viewer setting consumed by the hosted agent.
+When it contains the origin of a fully configured companion ACA deployment,
+`open_desktop` automatically returns
+`https://<viewer-origin>/live/<opaque-id>` and
+`https://<viewer-origin>/view/<opaque-id>#control`. The session-specific
+computer URL and tokens do not exist during provisioning; the companion viewer
+resolves them after the desktop session starts. If viewer bootstrap discovers a
+new ACA hostname during `azd up`, the postup hook persists the URL and redeploys
+the hosted agent in the same run.
+
+Do not set `VIEWER_PUBLIC_URL` to `SCREENSHARE_APP_URL`. The former must run this
+repository's authenticated companion service and expose `/live`, `/view`, and
+`/api` routes. The latter is the W365-hosted static view-only application used
+only after the companion viewer verifies ownership and mints a short-lived
+`Computer.See` token.
+
+For an already deployed and fully configured companion ACA, the agent-side
+configuration is one setting:
+
+```powershell
+azd env set VIEWER_PUBLIC_URL https://<companion-viewer-aca-hostname>
+azd deploy win365-desktop-agent --no-prompt
+```
+
+The next `open_desktop` call creates the opaque session identifier and returns
+the completed live-view and take-control links. An arbitrary Container App or
+the W365 static viewer URL cannot be used because it does not have the shared
+session state, operator authentication, or token endpoints.
+
 `SCREENSHARE_APP_URL` selects the W365-hosted view-only application. Pass it
 through the azd environment or an untracked viewer deployment parameter file.
 Use only the approved endpoint supplied by W365 onboarding; the repository does

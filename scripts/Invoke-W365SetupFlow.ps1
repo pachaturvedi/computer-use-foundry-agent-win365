@@ -2,7 +2,7 @@
 [CmdletBinding()]
 param(
     [string]$Environment,
-    [guid]$TenantId,
+    [guid]$TenantId = [guid]::Empty,
     [ValidatePattern('^[a-zA-Z0-9._+-]+@[a-zA-Z0-9.-]+$')][string]$AgentUserPrincipalName,
     [ValidatePattern('^[a-zA-Z0-9.-]+$')][string]$AgentUserDomain,
     [string]$AgentName,

@@ -27,6 +27,7 @@ param(
     [switch]$AuthorizeViewerFederation,
     [switch]$BillingConfirmed,
     [switch]$UseDeviceCode,
+    [ValidateRange(1, 5)][int]$DeviceCodeMaxAttempts = 2,
     [ValidateRange(30, 3600)][int]$GraphClientTimeoutSeconds = 600,
     [switch]$SkipAzdEnvironmentSync,
     [string]$OwnershipManifestPath
@@ -246,25 +247,48 @@ function Test-GraphContext {
     return $missingScopes.Count -eq 0
 }
 
+function Test-IsDeviceCodeTimeoutError {
+    param([Parameter(Mandatory)]$ErrorRecord)
+
+    return [string]$ErrorRecord.Exception.Message -match 'Authentication timed out after 120 seconds due to inactivity'
+}
+
 $context = Get-MgContext
 if (!(Test-GraphContext -Context $context -RequiredTenantId $TenantId -RequiredScopes $scopes)) {
     $connectParameters = @{
         TenantId = $TenantId
         Scopes = $scopes
         ClientTimeout = $GraphClientTimeoutSeconds
-        ContextScope = 'CurrentUser'
+        ContextScope = 'Process'
         NoWelcome = $true
     }
-    try {
-        Connect-MgGraph @connectParameters
-        $context = Get-MgContext
-    }
-    catch {
-        if (!$UseDeviceCode) {
-            throw
-        }
 
+    if ($UseDeviceCode) {
         $connectParameters.UseDeviceCode = $true
+        Write-Host ''
+        Write-Host 'Microsoft Graph administrator sign-in is required for W365 setup.'
+        Write-Host 'When the device code appears:'
+        Write-Host '  1. Open https://login.microsoft.com/device in a browser.'
+        Write-Host '  2. Enter the displayed code and sign in with the authorized tenant administrator.'
+        Write-Host '  3. Complete the prompt within 120 seconds; azd up waits for the result.'
+        Write-Host ''
+
+        for ($attempt = 1; $attempt -le $DeviceCodeMaxAttempts; $attempt++) {
+            try {
+                Write-Host "Starting Microsoft Graph device-code sign-in attempt $attempt of $DeviceCodeMaxAttempts..."
+                Connect-MgGraph @connectParameters
+                $context = Get-MgContext
+                break
+            }
+            catch {
+                if (!(Test-IsDeviceCodeTimeoutError -ErrorRecord $_) -or $attempt -eq $DeviceCodeMaxAttempts) {
+                    throw
+                }
+                Write-Warning 'Microsoft Graph device-code sign-in timed out. Retrying with a fresh code...'
+            }
+        }
+    }
+    else {
         Connect-MgGraph @connectParameters
         $context = Get-MgContext
     }

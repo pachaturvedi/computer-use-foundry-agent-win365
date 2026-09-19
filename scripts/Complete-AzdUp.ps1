@@ -3,7 +3,8 @@
 param(
     [string]$RepositoryRoot = (Split-Path $PSScriptRoot),
     [string]$W365SetupScriptPath = (Join-Path $PSScriptRoot 'Invoke-W365SetupFlow.ps1'),
-    [string]$ViewerBootstrapScriptPath = (Join-Path $PSScriptRoot 'Deploy-ViewerBootstrap.ps1')
+    [string]$ViewerBootstrapScriptPath = (Join-Path $PSScriptRoot 'Deploy-ViewerBootstrap.ps1'),
+    [string]$AgentDeploymentScriptPath = (Join-Path $PSScriptRoot 'Invoke-AzdDeployment.ps1')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -91,6 +92,12 @@ if ($enableW365) {
                 ConfirmResourceChanges = $true
                 UseDeviceCode = $true
             }
+            $configuredTenantId = [guid]::Empty
+            if (![guid]::TryParse([string]$currentValues['AZURE_TENANT_ID'], [ref]$configuredTenantId) -or
+                $configuredTenantId -eq [guid]::Empty) {
+                throw "Azd environment '$environmentName' does not contain a valid AZURE_TENANT_ID."
+            }
+            $setupArguments.TenantId = $configuredTenantId
             $configuredPrincipalName = [string]$currentValues['W365_AGENT_USER_PRINCIPAL_NAME']
             if (![string]::IsNullOrWhiteSpace($configuredPrincipalName)) {
                 $setupArguments.AgentUserPrincipalName = $configuredPrincipalName
@@ -131,4 +138,31 @@ else {
     Write-Host 'W365 setup skipped because ENABLE_W365 is not true.'
 }
 
+$viewerUrlBefore = [string]$env:VIEWER_PUBLIC_URL
 & $ViewerBootstrapScriptPath
+
+if (![string]::IsNullOrWhiteSpace($env:AZURE_ENV_NAME)) {
+    $environmentName = $env:AZURE_ENV_NAME
+    $updatedValues = Import-AzdEnvironmentValues -Root $RepositoryRoot -EnvironmentName $environmentName
+    $viewerUrlAfter = [string]$updatedValues['VIEWER_PUBLIC_URL']
+    $w365EnabledAfter = Test-EnabledValue -Value ([string]$updatedValues['W365_ENABLED'])
+    if ($w365EnabledAfter -and
+        ![string]::IsNullOrWhiteSpace($viewerUrlAfter) -and
+        $viewerUrlAfter -ne $viewerUrlBefore) {
+        Write-Host "Viewer URL '$viewerUrlAfter' was added; redeploying the hosted agent so live-view links are available."
+        $previousPostUpGuard = $env:W365_POSTUP_IN_PROGRESS
+        $env:W365_POSTUP_IN_PROGRESS = 'true'
+        try {
+            & $AgentDeploymentScriptPath `
+                -Mode DeployAgent `
+                -Environment $environmentName `
+                -ConfirmResourceChanges
+        }
+        finally {
+            [Environment]::SetEnvironmentVariable(
+                'W365_POSTUP_IN_PROGRESS',
+                $previousPostUpGuard,
+                'Process')
+        }
+    }
+}

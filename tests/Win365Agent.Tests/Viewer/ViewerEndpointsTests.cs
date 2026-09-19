@@ -30,7 +30,7 @@ public sealed class ViewerEndpointsTests
     {
         var link = ViewerEndpoints.BuildLiveViewUrl(
             new Uri("https://screenshare.example.com/"),
-            "https://computer.example.com/session?id=one two",
+            "https://computer.example.com/session/screenshare?id=one two",
             "header.payload/signature");
 
         Assert.Equal(
@@ -38,6 +38,20 @@ public sealed class ViewerEndpointsTests
             "#mode=viewOnly&computerUrl=https%3A%2F%2Fcomputer.example.com%2Fsession%3Fid%3Done%20two" +
             "&token=header.payload%2Fsignature",
             link);
+    }
+
+    [Fact]
+    public void LiveViewLinkPreservesComputerUrlsWithoutScreenShareSuffix()
+    {
+        var link = ViewerEndpoints.BuildLiveViewUrl(
+            new Uri("https://screenshare.example.com/"),
+            "https://computer.example.com/session?id=one",
+            "token");
+
+        Assert.Contains(
+            "computerUrl=https%3A%2F%2Fcomputer.example.com%2Fsession%3Fid%3Done",
+            link,
+            StringComparison.Ordinal);
     }
 
     [Theory]

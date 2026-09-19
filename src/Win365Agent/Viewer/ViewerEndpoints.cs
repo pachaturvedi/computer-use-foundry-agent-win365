@@ -234,11 +234,26 @@ public static class ViewerEndpoints
             throw new InvalidOperationException("The Windows 365 view token is empty.");
         }
 
-        var computer = new Uri(computerUrl);
+        var computer = NormalizeComputerUrl(new Uri(computerUrl));
         var fragment =
             $"mode=viewOnly&computerUrl={Uri.EscapeDataString(computer.ToString())}" +
             $"&token={Uri.EscapeDataString(token)}";
         return $"{appUrl.ToString().TrimEnd('/')}/#{fragment}";
+    }
+
+    private static Uri NormalizeComputerUrl(Uri computer)
+    {
+        const string screenSharePath = "/screenshare";
+        if (!computer.AbsolutePath.EndsWith(screenSharePath, StringComparison.OrdinalIgnoreCase))
+        {
+            return computer;
+        }
+
+        var builder = new UriBuilder(computer)
+        {
+            Path = computer.AbsolutePath[..^screenSharePath.Length]
+        };
+        return builder.Uri;
     }
 
     private static bool ValidComputerUrl(string value) =>
