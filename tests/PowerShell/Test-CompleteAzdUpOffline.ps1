@@ -96,7 +96,10 @@ function Write-TestEnvironment {
             'W365_AGENT_USER_ID="22222222-2222-2222-2222-222222222222"',
             'W365_AGENT_ID="33333333-3333-3333-3333-333333333333"',
             'W365_AGENT_OBJECT_ID="44444444-4444-4444-4444-444444444444"',
-            'W365_BLUEPRINT_ID="55555555-5555-5555-5555-555555555555"'
+            'W365_BLUEPRINT_ID="55555555-5555-5555-5555-555555555555"',
+            'OPERATOR_TENANT_ID="66666666-6666-6666-6666-666666666666"',
+            'OPERATOR_OBJECT_ID="77777777-7777-7777-7777-777777777777"',
+            'HOSTED_ALLOWED_USER_ID="pending"'
         )
     }
     Set-Content -LiteralPath $environmentPath -Value $lines
@@ -395,6 +398,32 @@ throw 'Simulated W365 setup failure.'
         $agentDeployCall.viewerPublicUrl -ne 'https://viewer.example.com' -or
         $agentDeployCall.recursionGuard -ne 'true') {
         throw 'Postup did not redeploy the hosted agent after discovering the viewer URL.'
+    }
+    $env:TEST_VIEWER_PUBLIC_URL = ''
+
+    Reset-Calls
+    Write-TestEnvironment -Complete:$true
+    Write-CompleteManifest
+    $envLines = Get-Content -LiteralPath $environmentPath | Where-Object {
+        $_ -notmatch '^(OPERATOR_TENANT_ID|OPERATOR_OBJECT_ID|HOSTED_ALLOWED_USER_ID)='
+    }
+    Set-Content -LiteralPath $environmentPath -Value $envLines
+    $env:VIEWER_PUBLIC_URL = ''
+    $env:TEST_VIEWER_PUBLIC_URL = 'https://viewer.example.com'
+    $missingOperatorOutput = & $scriptPath `
+        -RepositoryRoot $tempRoot `
+        -W365SetupScriptPath $mockW365Path `
+        -ViewerBootstrapScriptPath $mockViewerPath `
+        -ViewerSecretsScriptPath $mockViewerSecretsPath `
+        -AgentDeploymentScriptPath $mockAgentDeployPath *>&1 | Out-String
+    if (Test-Path -LiteralPath $agentDeployCallsPath) {
+        throw 'Postup redeployed the hosted agent even though OPERATOR_TENANT_ID/OPERATOR_OBJECT_ID/HOSTED_ALLOWED_USER_ID were missing.'
+    }
+    if ($missingOperatorOutput -notmatch 'Skipping hosted-agent redeploy' -or
+        $missingOperatorOutput -notmatch 'OPERATOR_TENANT_ID' -or
+        $missingOperatorOutput -notmatch 'OPERATOR_OBJECT_ID' -or
+        $missingOperatorOutput -notmatch 'HOSTED_ALLOWED_USER_ID') {
+        throw 'Postup did not warn about missing hosted-agent operator prerequisites.'
     }
     $env:TEST_VIEWER_PUBLIC_URL = ''
 

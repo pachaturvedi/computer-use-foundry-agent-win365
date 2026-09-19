@@ -275,20 +275,29 @@ if (![string]::IsNullOrWhiteSpace($env:AZURE_ENV_NAME)) {
         !$w365SetupRan -and
         ![string]::IsNullOrWhiteSpace($viewerUrlAfter) -and
         $viewerUrlAfter -ne $viewerUrlBefore) {
-        Write-Host "Viewer URL '$viewerUrlAfter' was added; redeploying the hosted agent so live-view links are available."
-        $previousPostUpGuard = $env:W365_POSTUP_IN_PROGRESS
-        $env:W365_POSTUP_IN_PROGRESS = 'true'
-        try {
-            & $AgentDeploymentScriptPath `
-                -Mode DeployAgent `
-                -Environment $environmentName `
-                -ConfirmResourceChanges
+        $agentRequired = @('OPERATOR_TENANT_ID', 'OPERATOR_OBJECT_ID', 'HOSTED_ALLOWED_USER_ID')
+        $agentMissing = @($agentRequired | Where-Object {
+            [string]::IsNullOrWhiteSpace([string]$updatedValues[$_])
+        })
+        if ($agentMissing.Count -gt 0) {
+            Write-Warning "Skipping hosted-agent redeploy: the running container would crash on startup without $($agentMissing -join ', '). Set these values (see 'Bind the hosted operator' in docs/DEPLOYMENT.md) and rerun azd up."
         }
-        finally {
-            [Environment]::SetEnvironmentVariable(
-                'W365_POSTUP_IN_PROGRESS',
-                $previousPostUpGuard,
-                'Process')
+        else {
+            Write-Host "Viewer URL '$viewerUrlAfter' was added; redeploying the hosted agent so live-view links are available."
+            $previousPostUpGuard = $env:W365_POSTUP_IN_PROGRESS
+            $env:W365_POSTUP_IN_PROGRESS = 'true'
+            try {
+                & $AgentDeploymentScriptPath `
+                    -Mode DeployAgent `
+                    -Environment $environmentName `
+                    -ConfirmResourceChanges
+            }
+            finally {
+                [Environment]::SetEnvironmentVariable(
+                    'W365_POSTUP_IN_PROGRESS',
+                    $previousPostUpGuard,
+                    'Process')
+            }
         }
     }
 
