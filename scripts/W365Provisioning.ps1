@@ -4,6 +4,8 @@ Set-StrictMode -Version Latest
 
 . (Join-Path $PSScriptRoot 'DeploymentConfig.ps1')
 . (Join-Path $PSScriptRoot 'W365OwnershipManifest.ps1')
+Write-SampleVerbose -Component 'W365Provisioning' -Message 'Loaded W365 provisioning helpers.'
+Write-SampleDebug -Component 'W365Provisioning' -Message 'External commands are logged without access-token or secret values.'
 
 function Write-W365ProvisioningStep {
     param([Parameter(Mandatory)][string]$Message)
@@ -50,6 +52,8 @@ function Invoke-W365Azd {
         [switch]$CaptureOutput
     )
 
+    Write-SampleVerbose -Component 'azd' -Message ($Arguments -join ' ')
+    Write-SampleDebug -Component 'azd' -Message "CaptureOutput=$($CaptureOutput.IsPresent); argumentCount=$($Arguments.Count)."
     Write-Host ('[{0:HH:mm:ss}] [COMMAND] azd {1}' -f [DateTimeOffset]::Now, ($Arguments -join ' '))
     $output = & $Azd.Path @Arguments
     if ($LASTEXITCODE -ne 0) {

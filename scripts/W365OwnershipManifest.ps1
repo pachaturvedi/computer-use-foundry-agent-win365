@@ -2,6 +2,10 @@
 
 Set-StrictMode -Version Latest
 
+. (Join-Path $PSScriptRoot 'Logging.ps1')
+Write-SampleVerbose -Component 'W365OwnershipManifest' -Message 'Loaded ownership manifest helpers.'
+Write-SampleDebug -Component 'W365OwnershipManifest' -Message 'Ownership records contain identifiers and prior state, never credential values.'
+
 function Copy-W365ManifestValue {
     param($Value)
 

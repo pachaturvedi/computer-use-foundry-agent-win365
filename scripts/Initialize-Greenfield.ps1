@@ -48,6 +48,7 @@ if (!$azd) {
 
 $configScriptPath = Join-Path $PSScriptRoot 'DeploymentConfig.ps1'
 . $configScriptPath
+Initialize-SampleScriptLogging -ScriptName $MyInvocation.MyCommand.Name -Parameters $PSBoundParameters
 
 $deploymentConfig = Get-DeploymentConfig -RepositoryRoot $root -ConfigPath $ConfigPath
 $ConfigPath = $deploymentConfig.Path

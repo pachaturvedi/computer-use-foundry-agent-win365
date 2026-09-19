@@ -13,6 +13,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 . (Join-Path $PSScriptRoot 'ViewerConfiguration.ps1')
+Initialize-SampleScriptLogging -ScriptName $MyInvocation.MyCommand.Name -Parameters $PSBoundParameters
 
 if (!$IsWindows) {
     throw 'This deployment workflow is Windows-only. Use PowerShell 7.4 or later on Windows.'

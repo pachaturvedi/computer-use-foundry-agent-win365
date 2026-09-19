@@ -53,6 +53,7 @@ if (!$IsWindows) {
 $root = Split-Path $PSScriptRoot
 $configScriptPath = Join-Path $PSScriptRoot 'DeploymentConfig.ps1'
 . $configScriptPath
+Initialize-SampleScriptLogging -ScriptName $MyInvocation.MyCommand.Name -Parameters $PSBoundParameters
 $scriptBoundParameters = @{}
 foreach ($entry in $PSBoundParameters.GetEnumerator()) {
     $scriptBoundParameters[$entry.Key] = $entry.Value

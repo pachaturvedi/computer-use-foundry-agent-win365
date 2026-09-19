@@ -36,6 +36,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'W365Provisioning.ps1')
+Initialize-SampleScriptLogging -ScriptName $MyInvocation.MyCommand.Name -Parameters $PSBoundParameters
 
 $repositoryRoot = Split-Path $PSScriptRoot
 $deploymentConfig = Get-DeploymentConfig -RepositoryRoot $repositoryRoot

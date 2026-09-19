@@ -5,11 +5,15 @@ param(
     [securestring]$BlueprintClientSecret,
     [securestring]$ViewerOidcClientSecret,
     [switch]$BlueprintOnly,
-    [switch]$OidcOnly
+    [switch]$OidcOnly,
+    [switch]$Overwrite,
+    [string]$RoleSetupScriptPath = (Join-Path $PSScriptRoot 'Set-ViewerKeyVaultRoles.ps1')
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot 'Logging.ps1')
+Initialize-SampleScriptLogging -ScriptName $MyInvocation.MyCommand.Name -Parameters $PSBoundParameters
 
 if (!(Get-Command az -ErrorAction SilentlyContinue) -or
     !(Get-Command azd -ErrorAction SilentlyContinue)) {
@@ -34,11 +38,42 @@ if ($BlueprintOnly -and $OidcOnly) {
 $setBlueprint = !$OidcOnly
 $setOidc = !$BlueprintOnly
 
+& $RoleSetupScriptPath -Environment $Environment
+if (!$?) {
+    throw 'Viewer Key Vault RBAC setup failed.'
+}
+
+function Test-KeyVaultSecret {
+    param([Parameter(Mandatory)][string]$Name)
+
+    & az keyvault secret show `
+        --vault-name $vaultName `
+        --name $Name `
+        --query id `
+        --output none 2>$null
+    return $LASTEXITCODE -eq 0
+}
+
+if ($setBlueprint -and !$Overwrite -and (Test-KeyVaultSecret 'w365-blueprint-client-secret')) {
+    $setBlueprint = $false
+    Write-Host "Blueprint secret already exists in Key Vault '$vaultName'; secure prompt skipped."
+}
+if ($setOidc -and !$Overwrite -and (Test-KeyVaultSecret 'w365-viewer-client-secret')) {
+    $setOidc = $false
+    Write-Host "Viewer OIDC secret already exists in Key Vault '$vaultName'; secure prompt skipped."
+}
+
 if ($setBlueprint -and $null -eq $BlueprintClientSecret) {
+    Write-SampleVerbose -Component 'viewer-secrets' -Message 'Prompting securely for the existing blueprint client secret.'
     $BlueprintClientSecret = Read-Host 'Blueprint client secret' -AsSecureString
 }
 if ($setOidc -and $null -eq $ViewerOidcClientSecret) {
+    Write-SampleVerbose -Component 'viewer-secrets' -Message 'Prompting securely for the viewer OIDC client secret.'
     $ViewerOidcClientSecret = Read-Host 'Viewer OIDC client secret' -AsSecureString
+}
+if (!$setBlueprint -and !$setOidc) {
+    Write-Host "Requested secrets already exist in Key Vault '$vaultName'."
+    return
 }
 
 $vaultUri = (& az keyvault show `
@@ -67,12 +102,23 @@ function Set-KeyVaultSecureString {
     try {
         $body = @{ value = $plainText; attributes = @{ enabled = $true } } | ConvertTo-Json -Compress
         $headers = @{ Authorization = "Bearer $accessToken" }
-        Invoke-RestMethod `
-            -Method Put `
-            -Uri "$($vaultUri.TrimEnd('/'))/secrets/$Name`?api-version=7.4" `
-            -Headers $headers `
-            -ContentType 'application/json' `
-            -Body $body | Out-Null
+        for ($attempt = 1; $attempt -le 6; $attempt++) {
+            try {
+                Invoke-RestMethod `
+                    -Method Put `
+                    -Uri "$($vaultUri.TrimEnd('/'))/secrets/$Name`?api-version=7.4" `
+                    -Headers $headers `
+                    -ContentType 'application/json' `
+                    -Body $body | Out-Null
+                return
+            }
+            catch {
+                if ($attempt -eq 6) {
+                    throw
+                }
+                Start-Sleep -Seconds 10
+            }
+        }
     }
     finally {
         $plainText = $null
@@ -81,9 +127,11 @@ function Set-KeyVaultSecureString {
 }
 
 if ($setBlueprint) {
+    Write-SampleDebug -Component 'viewer-secrets' -Message "Writing secret name w365-blueprint-client-secret to vault $vaultName."
     Set-KeyVaultSecureString -Name 'w365-blueprint-client-secret' -Value $BlueprintClientSecret
 }
 if ($setOidc) {
+    Write-SampleDebug -Component 'viewer-secrets' -Message "Writing secret name w365-viewer-client-secret to vault $vaultName."
     Set-KeyVaultSecureString -Name 'w365-viewer-client-secret' -Value $ViewerOidcClientSecret
 }
 

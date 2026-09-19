@@ -1,5 +1,9 @@
 Set-StrictMode -Version Latest
 
+. (Join-Path $PSScriptRoot 'Logging.ps1')
+Write-SampleVerbose -Component 'ViewerConfiguration' -Message 'Loaded viewer validation helpers.'
+Write-SampleDebug -Component 'ViewerConfiguration' -Message 'Validation is fail-closed for state, URLs, credential mode, and identity binding.'
+
 function Assert-ViewerSharedStateConfiguration {
     param(
         [Parameter(Mandatory)][string]$DeployState,

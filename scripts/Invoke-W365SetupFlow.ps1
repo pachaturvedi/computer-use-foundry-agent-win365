@@ -37,6 +37,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 . (Join-Path $PSScriptRoot 'W365Provisioning.ps1')
+Initialize-SampleScriptLogging -ScriptName $MyInvocation.MyCommand.Name -Parameters $PSBoundParameters
 
 if (!$IsWindows) {
     throw 'This W365 setup flow is Windows-only. Use PowerShell 7.4 or later on Windows.'

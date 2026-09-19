@@ -31,6 +31,7 @@ if (!$IsWindows) {
 
 . (Join-Path $PSScriptRoot 'DeploymentConfig.ps1')
 . (Join-Path $PSScriptRoot 'W365Provisioning.ps1')
+Initialize-SampleScriptLogging -ScriptName $MyInvocation.MyCommand.Name -Parameters $PSBoundParameters
 
 function Invoke-AcceptanceAzd {
     param([Parameter(Mandatory)][string[]]$Arguments)

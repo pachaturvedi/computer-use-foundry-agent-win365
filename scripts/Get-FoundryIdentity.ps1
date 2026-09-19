@@ -8,6 +8,8 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot 'Logging.ps1')
+Initialize-SampleScriptLogging -ScriptName $MyInvocation.MyCommand.Name -Parameters $PSBoundParameters
 if ($ProjectEndpoint.Scheme -ne 'https' -or !$ProjectEndpoint.Host.EndsWith('.services.ai.azure.com') -or
     $ProjectEndpoint.UserInfo -or $ProjectEndpoint.Query -or $ProjectEndpoint.Fragment -or
     $ProjectEndpoint.AbsolutePath.TrimEnd('/') -notmatch '^/api/projects/[^/]+$') {

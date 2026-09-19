@@ -42,15 +42,6 @@ resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' 
   location: location
   tags: tags
 }
-resource vaultRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (w365Enabled) {
-  name: guid(vault.id, identity.id, 'secrets')
-  scope: vault
-  properties: {
-    principalId: identity.properties.principalId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')
-  }
-}
 resource registryRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(registry.id, identity.id, 'pull')
   scope: registry
@@ -127,7 +118,7 @@ resource viewer 'Microsoft.App/containerApps@2024-03-01' = {
       }]
     }
   }
-  dependsOn: [vaultRole, registryRole]
+  dependsOn: [registryRole]
 }
 output viewerHostname string = viewer.properties.configuration.ingress.fqdn
 output viewerName string = viewer.name

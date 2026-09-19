@@ -524,10 +524,26 @@ JSON, Bicep parameters, `azure.yaml`, or the image. The deployment script loads
 the blueprint secret into its process environment only while publishing the
 hosted agent.
 
-Only live activation references the two secrets and grants the viewer UAMI
-Key Vault access. `managed_identity_federation` does not require the blueprint
-secret, but fails unless the exact viewer UAMI federation is present in the
-W365 ownership manifest.
+Only live activation references the two secrets. The Windows postup hook
+configures the two least-privilege, vault-scoped built-in RBAC assignments from
+one script: `Key Vault Secrets User` for the viewer UAMI and
+`Key Vault Secrets Officer` for the signed-in setup operator. It then creates
+or reuses the OIDC credential, prompts only when the blueprint secret is
+absent, stores both in the same vault, and reprovisions the viewer.
+`managed_identity_federation` does not require the blueprint secret, but fails
+unless the exact viewer UAMI federation is present in the W365 ownership
+manifest.
+
+All Windows scripts support PowerShell's common `-Verbose` and `-Debug`
+parameters. Use `-Verbose` for phase and command progress. Add `-Debug` for
+sanitized decisions, resource IDs, and parameter context; secret, token,
+password, credential, and certificate values are always redacted.
+
+```powershell
+azd up
+# For a focused rerun with detailed diagnostics:
+pwsh -NoProfile -File .\scripts\Complete-AzdUp.ps1 -Verbose -Debug
+```
 
 Agent and enabled viewer must use **exactly the same W365 identities and state
 Blob**. Their compute identities remain different. Viewer `AZURE_CLIENT_ID`

@@ -4,6 +4,8 @@ param(
     [string]$RepositoryRoot = (Split-Path $PSScriptRoot),
     [string]$W365SetupScriptPath = (Join-Path $PSScriptRoot 'Invoke-W365SetupFlow.ps1'),
     [string]$ViewerBootstrapScriptPath = (Join-Path $PSScriptRoot 'Deploy-ViewerBootstrap.ps1'),
+    [string]$ViewerSecretsScriptPath = (Join-Path $PSScriptRoot 'Set-ViewerSecrets.ps1'),
+    [string]$ViewerActivationScriptPath = (Join-Path $PSScriptRoot 'Enable-ViewerLive.ps1'),
     [string]$AgentDeploymentScriptPath = (Join-Path $PSScriptRoot 'Invoke-AzdDeployment.ps1')
 )
 
@@ -11,6 +13,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 . (Join-Path $PSScriptRoot 'W365Provisioning.ps1')
+Initialize-SampleScriptLogging -ScriptName $MyInvocation.MyCommand.Name -Parameters $PSBoundParameters
 
 function Test-EnabledValue {
     param([string]$Value)
@@ -57,12 +60,62 @@ function Confirm-W365PostUpChanges {
     }
 }
 
+function Confirm-ViewerLiveActivation {
+    if (Test-EnabledValue -Value $env:VIEWER_LIVE_CHANGES_CONFIRMED) {
+        return
+    }
+    if (Test-EnabledValue -Value $env:AZD_NON_INTERACTIVE) {
+        throw 'Live viewer activation requires interaction. For protected automation, set VIEWER_LIVE_CHANGES_CONFIRMED=true only for this process.'
+    }
+
+    Write-Host ''
+    Write-Host 'The viewer hook will create or update one Entra OIDC application,'
+    Write-Host 'store its OIDC secret and the existing blueprint secret in the same Key Vault,'
+    Write-Host 'and enable the authenticated ACA live-view and take-control routes.'
+    $answer = Read-Host 'Type YES to configure the live viewer'
+    if ($answer -cne 'YES') {
+        throw 'Live viewer activation was not approved.'
+    }
+}
+
 if (Test-EnabledValue -Value $env:W365_POSTUP_IN_PROGRESS) {
     Write-Host 'Nested W365 postup execution skipped.'
     return
 }
 
+$viewerUrlBefore = [string]$env:VIEWER_PUBLIC_URL
+Write-SampleVerbose -Component 'postup' -Message 'Running viewer bootstrap before enabled W365 deployment.'
+Write-SampleDebug -Component 'postup' -Message "Viewer URL existed before bootstrap: $(![string]::IsNullOrWhiteSpace($viewerUrlBefore))."
+& $ViewerBootstrapScriptPath
+
+$environmentName = [string]$env:AZURE_ENV_NAME
+$currentValues = if (![string]::IsNullOrWhiteSpace($environmentName)) {
+    Import-AzdEnvironmentValues -Root $RepositoryRoot -EnvironmentName $environmentName
+}
+else {
+    @{}
+}
+$deployViewer = Test-EnabledValue -Value ([string]$currentValues['DEPLOY_VIEWER'])
+$credentialMode = [string]$currentValues['W365_BLUEPRINT_CREDENTIAL_MODE']
+$viewerVaultName = [string]$currentValues['VIEWER_KEY_VAULT_NAME']
+$requiresBlueprintSecret = $credentialMode -eq 'client_secret' -and (
+    (Test-EnabledValue -Value $env:ENABLE_W365) -or
+    (Test-EnabledValue -Value ([string]$currentValues['W365_ENABLED']))
+)
+if ($deployViewer -and $requiresBlueprintSecret) {
+    if ([string]::IsNullOrWhiteSpace($viewerVaultName)) {
+        throw 'Viewer bootstrap did not produce VIEWER_KEY_VAULT_NAME before blueprint secret configuration.'
+    }
+    Write-SampleVerbose -Component 'postup' -Message 'Ensuring the blueprint client secret exists in the single viewer Key Vault.'
+    Write-SampleDebug -Component 'postup' -Message "Credential mode=$credentialMode; vault=$viewerVaultName."
+    & $ViewerSecretsScriptPath -Environment $environmentName -BlueprintOnly
+    if (!$?) {
+        throw 'Blueprint secret storage failed.'
+    }
+}
+
 $enableW365 = Test-EnabledValue -Value $env:ENABLE_W365
+$w365SetupRan = $false
 if ($enableW365) {
     if ([string]::IsNullOrWhiteSpace($env:AZURE_ENV_NAME)) {
         throw 'ENABLE_W365=true requires AZURE_ENV_NAME.'
@@ -107,6 +160,7 @@ if ($enableW365) {
                 $setupArguments.AgentUserDomain = $configuredDomain
             }
             & $W365SetupScriptPath @setupArguments
+            $w365SetupRan = $true
         }
         catch {
             $manifestPath = Get-W365OwnershipManifestPath `
@@ -138,15 +192,42 @@ else {
     Write-Host 'W365 setup skipped because ENABLE_W365 is not true.'
 }
 
-$viewerUrlBefore = [string]$env:VIEWER_PUBLIC_URL
-& $ViewerBootstrapScriptPath
-
 if (![string]::IsNullOrWhiteSpace($env:AZURE_ENV_NAME)) {
     $environmentName = $env:AZURE_ENV_NAME
     $updatedValues = Import-AzdEnvironmentValues -Root $RepositoryRoot -EnvironmentName $environmentName
     $viewerUrlAfter = [string]$updatedValues['VIEWER_PUBLIC_URL']
     $w365EnabledAfter = Test-EnabledValue -Value ([string]$updatedValues['W365_ENABLED'])
+    $viewerLiveEnabled = Test-EnabledValue -Value ([string]$updatedValues['VIEWER_LIVE_ENABLED'])
+    $deployViewer = Test-EnabledValue -Value ([string]$updatedValues['DEPLOY_VIEWER'])
+
+    if ($deployViewer -and $w365EnabledAfter -and !$viewerLiveEnabled) {
+        $liveRequired = @(
+            'VIEWER_PUBLIC_URL',
+            'VIEWER_KEY_VAULT_NAME',
+            'SCREENSHARE_SDK_URL',
+            'SCREENSHARE_FRAME_ORIGINS',
+            'SCREENSHARE_APP_URL'
+        )
+        $missing = @($liveRequired | Where-Object {
+            [string]::IsNullOrWhiteSpace([string]$updatedValues[$_])
+        })
+        if ($missing.Count -gt 0) {
+            Write-Warning "Viewer remains in bootstrap mode. Set these values and rerun azd up: $($missing -join ', ')."
+        }
+        else {
+            Write-SampleVerbose -Component 'postup' -Message 'All live viewer prerequisites are present; requesting activation approval.'
+            Write-SampleDebug -Component 'postup' -Message "Environment=$environmentName; viewerUrl=$viewerUrlAfter."
+            Confirm-ViewerLiveActivation
+            & $ViewerActivationScriptPath -Environment $environmentName
+            if (!$?) {
+                throw 'Live viewer activation failed.'
+            }
+            $updatedValues = Import-AzdEnvironmentValues -Root $RepositoryRoot -EnvironmentName $environmentName
+        }
+    }
+
     if ($w365EnabledAfter -and
+        !$w365SetupRan -and
         ![string]::IsNullOrWhiteSpace($viewerUrlAfter) -and
         $viewerUrlAfter -ne $viewerUrlBefore) {
         Write-Host "Viewer URL '$viewerUrlAfter' was added; redeploying the hosted agent so live-view links are available."
