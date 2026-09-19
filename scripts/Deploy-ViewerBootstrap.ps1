@@ -146,26 +146,28 @@ if ($env:VIEWER_LIVE_ENABLED -eq 'true') {
     }
 }
 
-$repositoryExists = (& az acr repository list `
+$repositoryListOutput = & az acr repository list `
     --subscription $subscription `
     --name $registryName `
     --query "[?@=='$imageRepository'] | [0]" `
-    --output tsv).Trim()
+    --output tsv
 if ($LASTEXITCODE -ne 0) {
     throw "Unable to inspect repositories in Azure Container Registry '$registryName'."
 }
+$repositoryExists = if ($null -eq $repositoryListOutput) { '' } else { ([string]$repositoryListOutput).Trim() }
 
 $imageExists = $false
 if ($repositoryExists -eq $imageRepository) {
-    $existingTag = (& az acr repository show-tags `
+    $existingTagOutput = & az acr repository show-tags `
         --subscription $subscription `
         --name $registryName `
         --repository $imageRepository `
         --query "[?@=='$buildTag'] | [0]" `
-        --output tsv).Trim()
+        --output tsv
     if ($LASTEXITCODE -ne 0) {
         throw "Unable to inspect tags for '$imageRepository' in Azure Container Registry '$registryName'."
     }
+    $existingTag = if ($null -eq $existingTagOutput) { '' } else { ([string]$existingTagOutput).Trim() }
     $imageExists = $existingTag -eq $buildTag
 }
 
@@ -185,11 +187,12 @@ else {
     )
 }
 
-$registryId = (& az acr show `
+$registryIdOutput = & az acr show `
     --subscription $subscription `
     --name $registryName `
     --query 'id' `
-    --output tsv).Trim()
+    --output tsv
+$registryId = if ($null -eq $registryIdOutput) { '' } else { ([string]$registryIdOutput).Trim() }
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($registryId)) {
     throw 'Unable to resolve the viewer registry resource ID.'
 }
@@ -229,12 +232,13 @@ Invoke-Az @(
     '--output', 'none'
 )
 
-$hostname = (& az containerapp show `
+$hostnameOutput = & az containerapp show `
     --subscription $subscription `
     --resource-group $resourceGroup `
     --name $appName `
     --query 'properties.configuration.ingress.fqdn' `
-    --output tsv).Trim()
+    --output tsv
+$hostname = if ($null -eq $hostnameOutput) { '' } else { ([string]$hostnameOutput).Trim() }
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($hostname)) {
     throw 'Unable to resolve the viewer hostname.'
 }

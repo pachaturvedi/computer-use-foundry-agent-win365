@@ -213,12 +213,12 @@ if ($rotationRequired) {
             throw 'Microsoft Graph did not return the new viewer credential.'
         }
 
-        $vaultUri = (& az keyvault show --name $vaultName --query properties.vaultUri --output tsv).Trim()
+        $vaultUri = (& az keyvault show --name $vaultName --query properties.vaultUri --output tsv | Out-String).Trim()
         $vaultToken = (& az account get-access-token `
             --tenant $tenantId `
             --resource https://vault.azure.net `
             --query accessToken `
-            --output tsv).Trim()
+            --output tsv | Out-String).Trim()
         if ([string]::IsNullOrWhiteSpace($vaultUri) -or [string]::IsNullOrWhiteSpace($vaultToken)) {
             throw 'Unable to resolve Key Vault or acquire its data-plane token.'
         }
