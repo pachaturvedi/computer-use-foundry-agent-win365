@@ -5,6 +5,8 @@ param()
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+. (Join-Path $PSScriptRoot 'ViewerConfiguration.ps1')
+
 if ($env:DEPLOY_VIEWER -ne 'true') {
     Write-Host 'Viewer deployment skipped because DEPLOY_VIEWER is not true.'
     return
@@ -18,13 +20,26 @@ $required = @(
     'VIEWER_IDENTITY_RESOURCE_ID',
     'VIEWER_REGISTRY_NAME',
     'VIEWER_REGISTRY_ENDPOINT',
-    'VIEWER_IMAGE_NAME'
+    'VIEWER_IMAGE_NAME',
+    'STATE_RESOURCE_GROUP_NAME',
+    'STATE_STORAGE_ACCOUNT_NAME',
+    'STATE_CONTAINER_NAME',
+    'SESSION_BLOB_URI'
 )
 foreach ($name in $required) {
     if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
         throw "Missing required viewer deployment value $name."
     }
 }
+
+Assert-ViewerSharedStateConfiguration `
+    -DeployState $env:DEPLOY_STATE `
+    -StateResourceGroupName $env:STATE_RESOURCE_GROUP_NAME `
+    -StateStorageAccountName $env:STATE_STORAGE_ACCOUNT_NAME `
+    -StateContainerName $env:STATE_CONTAINER_NAME `
+    -SessionBlobUri $env:SESSION_BLOB_URI
+Assert-ViewerManagedEnvironmentResourceId `
+    -ResourceId $env:VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID
 
 if (!(Get-Command az -ErrorAction SilentlyContinue)) {
     throw 'Azure CLI is required for the viewer image deployment hook.'
@@ -64,7 +79,8 @@ if ($env:VIEWER_LIVE_ENABLED -eq 'true') {
         'SCREENSHARE_SDK_URL',
         'SCREENSHARE_FRAME_ORIGINS',
         'SCREENSHARE_APP_URL',
-        'VIEWER_KEY_VAULT_NAME'
+        'VIEWER_KEY_VAULT_NAME',
+        'W365_BLUEPRINT_CREDENTIAL_MODE'
     )
     foreach ($name in $liveRequired) {
         if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
@@ -74,15 +90,26 @@ if ($env:VIEWER_LIVE_ENABLED -eq 'true') {
     if ($env:W365_ENABLED -ne 'true') {
         throw 'VIEWER_LIVE_ENABLED=true requires W365_ENABLED=true.'
     }
+    Assert-ViewerCredentialMode -CredentialMode $env:W365_BLUEPRINT_CREDENTIAL_MODE
+    Assert-ViewerIdentityModeConfiguration `
+        -CredentialMode $env:W365_BLUEPRINT_CREDENTIAL_MODE `
+        -ViewerPrincipalId $env:VIEWER_IDENTITY_PRINCIPAL_ID `
+        -OwnershipManifestPath (Join-Path (Split-Path $PSScriptRoot) ".azure\$($env:AZURE_ENV_NAME)\w365-ownership.json")
 
-    & az keyvault secret show `
-        --subscription $subscription `
-        --vault-name $env:VIEWER_KEY_VAULT_NAME `
-        --name 'w365-viewer-client-secret' `
-        --query id `
-        --output none 2>$null
-    if ($LASTEXITCODE -ne 0) {
-        throw "Key Vault '$($env:VIEWER_KEY_VAULT_NAME)' must contain secret 'w365-viewer-client-secret'."
+    $requiredSecrets = @('w365-viewer-client-secret')
+    if ($env:W365_BLUEPRINT_CREDENTIAL_MODE -eq 'client_secret') {
+        $requiredSecrets += 'w365-blueprint-client-secret'
+    }
+    foreach ($secretName in $requiredSecrets) {
+        & az keyvault secret show `
+            --subscription $subscription `
+            --vault-name $env:VIEWER_KEY_VAULT_NAME `
+            --name $secretName `
+            --query id `
+            --output none 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            throw "Key Vault '$($env:VIEWER_KEY_VAULT_NAME)' must contain secret '$secretName'."
+        }
     }
 }
 

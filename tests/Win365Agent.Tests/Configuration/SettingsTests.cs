@@ -66,6 +66,9 @@ public sealed class SettingsTests
 
         values["W365_CLIENT_SECRET"] = "temporary-secret";
         Config(values).Validate();
+        values["SCREENSHARE_APP_URL"] = "https://screenshare.example.com";
+        values["AZURE_CLIENT_ID"] = "99999999-9999-9999-9999-999999999999";
+        Config(values).Validate(viewerMode: true);
     }
 
     [Theory]

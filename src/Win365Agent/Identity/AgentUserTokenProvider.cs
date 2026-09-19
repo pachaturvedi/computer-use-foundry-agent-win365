@@ -85,7 +85,7 @@ public sealed class AgentUserTokenProvider(
                     ["scope"] = audience == AriView
                         ? AriView
                         : audience == Ari
-                            ? $"{Ari}/Computer.See {Ari}/Computer.Control"
+                            ? $"{Ari}/Computer.See {Ari}/Computer.Control {Ari}/Computer.Do {Ari}/Computer.Get"
                             : $"{Atg}/.default",
                     ["client_assertion_type"] = AssertionType,
                     ["client_assertion"] = t1.Token,

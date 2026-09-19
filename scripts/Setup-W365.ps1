@@ -803,7 +803,12 @@ if ($AuthorizeViewerFederation) {
 $resources = @(
     @{ Sp = (Resource 'da81128c-e5b5-4f9e-8d89-50d906f107c5'); Scopes = @('Tools.ListInvoke.All') },
     @{ Sp = (Resource 'ea9ffc3e-8a23-4a7d-836d-234d7c7565c1'); Scopes = @('McpServersMetadata.Read.All') },
-    @{ Sp = (Resource '90ecec28-f5a6-42b3-9bde-dae1ca98f8b5'); Scopes = @('Computer.See', 'Computer.Control') }
+    @{ Sp = (Resource '90ecec28-f5a6-42b3-9bde-dae1ca98f8b5'); Scopes = @(
+        'Computer.See',
+        'Computer.Control',
+        'Computer.Do',
+        'Computer.Get'
+    ) }
 )
 $azd = if ($SkipAzdEnvironmentSync) { $null } else { Get-AzdCommand }
 $manifestTarget = Resolve-OwnershipManifestTarget -Azd $azd -OverridePath $OwnershipManifestPath

@@ -162,6 +162,10 @@ public sealed class Settings(IConfiguration config)
                 "W365_BLUEPRINT_CREDENTIAL_MODE must be managed_identity_federation or client_secret. " +
                 "key_vault_certificate is reserved for the next implementation phase and currently fails closed.");
         }
+        if (BlueprintCredentialMode == "client_secret")
+        {
+            _ = Required("W365_CLIENT_SECRET");
+        }
         if (viewerMode)
         {
             _ = ViewerUrl;
@@ -170,10 +174,6 @@ public sealed class Settings(IConfiguration config)
         }
         else
         {
-            if (BlueprintCredentialMode == "client_secret")
-            {
-                _ = Required("W365_CLIENT_SECRET");
-            }
             _ = OptionalViewerUrl;
             _ = Required("HOSTED_ALLOWED_USER_ID");
             // Foundry must inject the same blueprint that was authorized during W365 setup.

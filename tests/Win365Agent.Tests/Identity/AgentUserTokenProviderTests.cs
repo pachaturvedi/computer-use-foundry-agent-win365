@@ -50,7 +50,12 @@ public sealed class AgentUserTokenProviderTests
         Assert.Equal(AgentUserTokenProvider.AriView, handler.Forms[^1]["scope"]);
         Assert.DoesNotContain("Computer.Control", handler.Forms[^1]["scope"]);
         await provider.GetAsync(AgentUserTokenProvider.Ari, default);
-        Assert.Contains("Computer.Control", handler.Forms[^1]["scope"]);
+        Assert.Equal(
+            $"{AgentUserTokenProvider.Ari}/Computer.See " +
+            $"{AgentUserTokenProvider.Ari}/Computer.Control " +
+            $"{AgentUserTokenProvider.Ari}/Computer.Do " +
+            $"{AgentUserTokenProvider.Ari}/Computer.Get",
+            handler.Forms[^1]["scope"]);
         Assert.All(handler.Forms, f => Assert.False(f.ContainsKey("client_secret")));
         await Assert.ThrowsAsync<ArgumentException>(() => provider.GetAsync("https://untrusted.example", default));
     }

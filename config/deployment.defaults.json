@@ -23,9 +23,16 @@
     "liveEnabled": false,
     "resourceGroupSuffix": "viewer-rg",
     "imageName": "win365-sample:v1",
+    "managedEnvironmentResourceId": "",
+    "clientId": "",
+    "operatorTenantId": "",
+    "operatorObjectId": "",
+    "screenShareSdkUrl": "",
+    "screenShareFrameOrigins": "",
     "screenShareAppUrl": ""
   },
   "w365": {
+    "blueprintCredentialMode": "client_secret",
     "poolBillingType": "payAsYouGo",
     "poolImageType": "gallery",
     "poolOsLocale": "en-US",

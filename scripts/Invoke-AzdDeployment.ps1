@@ -12,6 +12,8 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+. (Join-Path $PSScriptRoot 'ViewerConfiguration.ps1')
+
 if (!$IsWindows) {
     throw 'This deployment workflow is Windows-only. Use PowerShell 7.4 or later on Windows.'
 }
@@ -114,7 +116,8 @@ function Assert-LiveViewerConfiguration {
         'SCREENSHARE_SDK_URL',
         'SCREENSHARE_FRAME_ORIGINS',
         'SCREENSHARE_APP_URL',
-        'VIEWER_KEY_VAULT_NAME'
+        'VIEWER_KEY_VAULT_NAME',
+        'W365_BLUEPRINT_CREDENTIAL_MODE'
     )
     $missing = @($required | Where-Object {
         [string]::IsNullOrWhiteSpace((Get-AzdOptionalValue $_))
@@ -125,18 +128,54 @@ function Assert-LiveViewerConfiguration {
     if ($w365Enabled -ne 'true') {
         throw 'VIEWER_LIVE_ENABLED=true requires W365_ENABLED=true.'
     }
+    $credentialMode = Get-AzdValue 'W365_BLUEPRINT_CREDENTIAL_MODE'
+    Assert-ViewerCredentialMode -CredentialMode $credentialMode
+    Assert-ViewerIdentityModeConfiguration `
+        -CredentialMode $credentialMode `
+        -ViewerPrincipalId (Get-AzdValue 'VIEWER_IDENTITY_PRINCIPAL_ID') `
+        -OwnershipManifestPath (Join-Path $root ".azure\$environmentName\w365-ownership.json")
 
     $vaultName = Get-AzdOptionalValue 'VIEWER_KEY_VAULT_NAME'
-    & az keyvault secret show `
-        --subscription (Get-AzdValue 'AZURE_SUBSCRIPTION_ID') `
-        --vault-name $vaultName `
-        --name 'w365-viewer-client-secret' `
-        --query id `
-        --output none 2>$null
-    if ($LASTEXITCODE -ne 0) {
-        throw "Key Vault '$vaultName' must contain secret 'w365-viewer-client-secret' before live viewer activation."
+    $requiredSecrets = @('w365-viewer-client-secret')
+    if ($credentialMode -eq 'client_secret') {
+        $requiredSecrets += 'w365-blueprint-client-secret'
+    }
+    foreach ($secretName in $requiredSecrets) {
+        & az keyvault secret show `
+            --subscription (Get-AzdValue 'AZURE_SUBSCRIPTION_ID') `
+            --vault-name $vaultName `
+            --name $secretName `
+            --query id `
+            --output none 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            throw "Key Vault '$vaultName' must contain secret '$secretName' before live viewer activation."
+        }
     }
     Write-DeploymentEvent DECISION 'Live viewer prerequisites and Key Vault OIDC secret are present.'
+}
+
+function Set-W365ClientSecretForDeployment {
+    if ((Get-AzdOptionalValue 'W365_ENABLED') -ne 'true' -or
+        (Get-AzdOptionalValue 'W365_BLUEPRINT_CREDENTIAL_MODE') -ne 'client_secret' -or
+        ![string]::IsNullOrWhiteSpace($env:W365_CLIENT_SECRET)) {
+        return
+    }
+
+    $vaultName = Get-AzdOptionalValue 'VIEWER_KEY_VAULT_NAME'
+    if ([string]::IsNullOrWhiteSpace($vaultName)) {
+        throw 'Client-secret mode requires W365_CLIENT_SECRET in the current process or VIEWER_KEY_VAULT_NAME.'
+    }
+    $secret = (& az keyvault secret show `
+        --subscription (Get-AzdValue 'AZURE_SUBSCRIPTION_ID') `
+        --vault-name $vaultName `
+        --name 'w365-blueprint-client-secret' `
+        --query value `
+        --output tsv 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($secret)) {
+        throw "Unable to load w365-blueprint-client-secret from Key Vault '$vaultName'."
+    }
+    $env:W365_CLIENT_SECRET = $secret
+    Write-DeploymentEvent DECISION 'Loaded the blueprint client secret from Key Vault for this deployment process only.'
 }
 
 function Assert-ResourceConfirmation {
@@ -176,6 +215,7 @@ function Provision-FoundryLayer {
 
 Push-Location $root
 $previousUserAgent = $env:AZURE_DEV_USER_AGENT
+$previousW365ClientSecret = $env:W365_CLIENT_SECRET
 $env:AZURE_DEV_USER_AGENT = 'microsoft_foundry_skill'
 Start-Transcript -LiteralPath $logPath | Out-Null
 try {
@@ -234,12 +274,24 @@ try {
     }
 
     if ($viewerEnabled -eq 'true') {
+        Assert-ViewerManagedEnvironmentResourceId `
+            -ResourceId (Get-AzdOptionalValue 'VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID')
+        Assert-ViewerSharedStateConfiguration `
+            -DeployState $stateEnabled `
+            -StateResourceGroupName (Get-AzdValue 'STATE_RESOURCE_GROUP_NAME') `
+            -StateStorageAccountName (Get-AzdValue 'STATE_STORAGE_ACCOUNT_NAME') `
+            -StateContainerName (Get-AzdValue 'STATE_CONTAINER_NAME') `
+            -SessionBlobUri (Get-AzdValue 'SESSION_BLOB_URI')
         Assert-LiveViewerConfiguration
         Write-DeploymentEvent STEP 'Previewing the explicitly enabled viewer layer.'
         Invoke-Azd @('provision', 'viewer', '--preview', '--no-prompt')
     }
     else {
         Write-DeploymentEvent DECISION 'Viewer preview skipped because DEPLOY_VIEWER=false.'
+    }
+
+    if ($Mode -in @('DeployAgent', 'DeployAll')) {
+        Set-W365ClientSecretForDeployment
     }
 
     if (!$SkipPackage) {
@@ -317,6 +369,7 @@ catch {
 }
 finally {
     Stop-Transcript | Out-Null
+    $env:W365_CLIENT_SECRET = $previousW365ClientSecret
     $env:AZURE_DEV_USER_AGENT = $previousUserAgent
     Pop-Location
 }

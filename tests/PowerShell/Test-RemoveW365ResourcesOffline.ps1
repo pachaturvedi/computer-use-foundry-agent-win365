@@ -44,7 +44,7 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
             Grants = @(
                 @{ id = 'grant-created-tools'; resourceId = 'sp-tools'; consentType = 'AllPrincipals'; scope = 'Tools.ListInvoke.All' },
                 @{ id = 'grant-created-meta'; resourceId = 'sp-meta'; consentType = 'AllPrincipals'; scope = 'McpServersMetadata.Read.All' },
-                @{ id = 'grant-reused-computer'; resourceId = 'sp-computer'; consentType = 'AllPrincipals'; scope = 'Computer.Control Computer.See' },
+                @{ id = 'grant-reused-computer'; resourceId = 'sp-computer'; consentType = 'AllPrincipals'; scope = 'Computer.Control Computer.Do Computer.Get Computer.See' },
                 @{ id = 'grant-unrelated'; resourceId = 'sp-unrelated'; consentType = 'AllPrincipals'; scope = 'Keep.Scope' }
             )
             Inheritances = @(
@@ -235,7 +235,10 @@ function Write-TestManifest {
                     @{ resourceAppId = '90ecec28-f5a6-42b3-9bde-dae1ca98f8b5'; resourceAccess = @(@{ id = 'scope-Computer.See'; type = 'Scope' }) }
                 )
                 requiredResourceAccessAdded = @(
-                    @{ resourceAppId = '90ecec28-f5a6-42b3-9bde-dae1ca98f8b5'; resourceAccess = @(@{ id = 'scope-Computer.Control'; type = 'Scope' }) },
+                    @{ resourceAppId = '90ecec28-f5a6-42b3-9bde-dae1ca98f8b5'; resourceAccess = @(
+                        @{ id = 'scope-Computer.Do'; type = 'Scope' },
+                        @{ id = 'scope-Computer.Get'; type = 'Scope' }
+                    ) },
                     @{ resourceAppId = 'da81128c-e5b5-4f9e-8d89-50d906f107c5'; resourceAccess = @(@{ id = 'scope-Tools.ListInvoke.All'; type = 'Scope' }) },
                     @{ resourceAppId = 'ea9ffc3e-8a23-4a7d-836d-234d7c7565c1'; resourceAccess = @(@{ id = 'scope-McpServersMetadata.Read.All'; type = 'Scope' }) }
                 )
@@ -244,7 +247,7 @@ function Write-TestManifest {
             permissionGrants = [ordered]@{
                 createdTools = [ordered]@{ resourceAppId = 'da81128c-e5b5-4f9e-8d89-50d906f107c5'; resourceId = 'sp-tools'; grantId = 'grant-created-tools'; disposition = 'created'; previousScope = ''; scope = 'Tools.ListInvoke.All' }
                 createdMeta = [ordered]@{ resourceAppId = 'ea9ffc3e-8a23-4a7d-836d-234d7c7565c1'; resourceId = 'sp-meta'; grantId = 'grant-created-meta'; disposition = 'created'; previousScope = ''; scope = 'McpServersMetadata.Read.All' }
-                reusedComputer = [ordered]@{ resourceAppId = '90ecec28-f5a6-42b3-9bde-dae1ca98f8b5'; resourceId = 'sp-computer'; grantId = 'grant-reused-computer'; disposition = 'reused'; previousScope = 'Computer.See'; scope = 'Computer.Control Computer.See' }
+                reusedComputer = [ordered]@{ resourceAppId = '90ecec28-f5a6-42b3-9bde-dae1ca98f8b5'; resourceId = 'sp-computer'; grantId = 'grant-reused-computer'; disposition = 'reused'; previousScope = 'Computer.Control Computer.See'; scope = 'Computer.Control Computer.Do Computer.Get Computer.See' }
             }
             inheritablePermissions = [ordered]@{
                 createdTools = [ordered]@{ resourceAppId = 'da81128c-e5b5-4f9e-8d89-50d906f107c5'; entryId = 'inherit-created-tools'; disposition = 'created' }
@@ -280,7 +283,7 @@ try {
     if (@($state.Grants | Where-Object { $_.id -eq 'grant-created-tools' -or $_.id -eq 'grant-created-meta' }).Count -ne 0) {
         throw 'Created permission grants were not deleted.'
     }
-    if ((@($state.Grants | Where-Object { $_.id -eq 'grant-reused-computer' })[0]).scope -ne 'Computer.See') {
+    if ((@($state.Grants | Where-Object { $_.id -eq 'grant-reused-computer' })[0]).scope -ne 'Computer.Control Computer.See') {
         throw 'Reused permission grant was not restored.'
     }
     if (@($state.Grants | Where-Object { $_.id -eq 'grant-unrelated' }).Count -ne 1) {
@@ -300,8 +303,9 @@ try {
         @($unrelatedEntry[0].resourceAccess).Count -ne 1 -or
         [string]@($unrelatedEntry[0].resourceAccess)[0].id -ne 'unrelated-scope' -or
         $computerEntry.Count -ne 1 -or
-        @($computerEntry[0].resourceAccess).Count -ne 1 -or
-        [string]@($computerEntry[0].resourceAccess)[0].id -ne 'scope-Computer.See') {
+        @($computerEntry[0].resourceAccess).Count -ne 2 -or
+        'scope-Computer.See' -notin @($computerEntry[0].resourceAccess | ForEach-Object { [string]$_.id }) -or
+        'scope-Computer.Control' -notin @($computerEntry[0].resourceAccess | ForEach-Object { [string]$_.id })) {
         throw 'Blueprint requiredResourceAccess was not restored.'
     }
     $assignmentDeleteIndex = $state.Operations.IndexOf('DELETE beta/deviceManagement/virtualEndpoint/cloudPcPools/55555555-5555-5555-5555-555555555555/assignments/assignment-created')
