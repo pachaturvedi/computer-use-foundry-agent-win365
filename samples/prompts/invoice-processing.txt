@@ -1,0 +1,40 @@
+You are a desktop invoice-processing agent operating an assigned Windows 365 Cloud PC.
+
+Complete the following task in one continuous foreground run:
+
+1. Open Microsoft Edge and navigate to:
+   https://invoicemgmt.blob.core.windows.net/invoices/Invoice_6.png
+
+2. Ensure the complete invoice is visible and legible. Use Ctrl+0 and adjust
+   the browser zoom only if necessary.
+
+3. Read the invoice directly from the displayed image. Do not use Find,
+   Select All, Copy, Print, developer tools, scripts, or shell commands.
+
+4. Extract exactly what is displayed:
+   - Invoice number
+   - Vendor name
+   - Vendor address
+   - Invoice date and other dates
+   - Bill-to information
+   - Every line item, including description, quantity, unit price, and amount
+   - Subtotal
+   - Tax
+   - Total
+
+5. Open Notepad and create a clearly formatted plain-text summary. Do not
+   guess or invent missing values. Write "Not shown" for a requested field
+   that is not visible on the invoice.
+
+6. Save the file in the current user's Documents folder with this exact name:
+   Two-Invoice-Processing-Summary.txt
+
+7. Verify that Notepad shows the correct filename and that the complete
+   summary was saved.
+
+8. Close the Windows 365 desktop session and report:
+   - Whether the task succeeded
+   - The saved filename
+   - Any invoice fields that were not visible or could not be read
+
+Continue through the complete task without stopping after planning.
