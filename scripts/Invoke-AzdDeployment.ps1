@@ -6,7 +6,9 @@ param(
     [string]$Environment,
     [string]$ConfigPath,
     [switch]$ConfirmResourceChanges,
-    [switch]$SkipPackage
+    [switch]$SkipPackage,
+    [switch]$SmokeInvoke,
+    [string]$SmokeInvokePrompt = 'Smoke test only: reply with the single word OK. Do not open any application, acquire any desktop, or call any tool.'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -187,6 +189,27 @@ function Set-W365ClientSecretForDeployment {
     Write-DeploymentEvent DECISION 'Loaded the blueprint client secret from Key Vault for this deployment process only.'
 }
 
+function Invoke-HostedAgentSmokeTest {
+    if (!$SmokeInvoke) {
+        return
+    }
+
+    Write-DeploymentEvent STEP 'Smoke-testing the hosted agent with a minimal invocation to confirm the deployed container passes readiness.'
+    $smokeArguments = @('ai', 'agent', 'invoke', 'win365-desktop-agent', '--new-session', $SmokeInvokePrompt)
+    Write-DeploymentEvent COMMAND "azd $($smokeArguments -join ' ')"
+    $smokeOutput = (& $azd.Path @smokeArguments 2>&1 | Out-String)
+    $smokeOutput | Write-Host
+    if ($LASTEXITCODE -eq 0) {
+        return
+    }
+
+    if ($smokeOutput -match 'session_not_ready' -or $smokeOutput -match 'HTTP 424') {
+        throw "Hosted-agent smoke invoke failed after deploy: the deployed container did not become ready. Check 'azd ai agent monitor win365-desktop-agent --tail 150' for the container's startup logs (a common cause is a missing required environment variable such as OPERATOR_TENANT_ID, OPERATOR_OBJECT_ID, or HOSTED_ALLOWED_USER_ID)."
+    }
+
+    Write-DeploymentEvent DECISION 'Smoke invoke reached the agent but was rejected for an application-level reason (not a readiness failure); the deployed container is healthy.'
+}
+
 function Assert-ResourceConfirmation {
     if (!$ConfirmResourceChanges) {
         throw "Mode '$Mode' can create or modify Azure resources. Review the validation log, then rerun with -ConfirmResourceChanges."
@@ -330,6 +353,7 @@ try {
             Write-DeploymentEvent STEP 'Deploying a new immutable hosted-agent version.'
             Invoke-Azd @('deploy', 'win365-desktop-agent', '--no-prompt')
             Invoke-Azd @('ai', 'agent', 'doctor')
+            Invoke-HostedAgentSmokeTest
         }
         'DeployAll' {
             Assert-ResourceConfirmation
@@ -358,6 +382,7 @@ try {
             Write-DeploymentEvent STEP 'Deploying a new immutable hosted-agent version.'
             Invoke-Azd @('deploy', 'win365-desktop-agent', '--no-prompt')
             Invoke-Azd @('ai', 'agent', 'doctor')
+            Invoke-HostedAgentSmokeTest
         }
     }
 

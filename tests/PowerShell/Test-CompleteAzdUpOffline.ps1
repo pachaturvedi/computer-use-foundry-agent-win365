@@ -56,6 +56,27 @@ foreach ($name in $trackedEnvironmentVariables) {
     $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
 }
 
+$script:azBehavior = 'success'
+function az {
+    $arguments = @($args)
+    $global:LASTEXITCODE = 0
+    if ($arguments[0] -eq 'account' -and $arguments[1] -eq 'show') {
+        if ($script:azBehavior -eq 'fail') {
+            $global:LASTEXITCODE = 1
+            return ''
+        }
+        return '99999999-9999-9999-9999-999999999999'
+    }
+    if ($arguments[0] -eq 'ad' -and $arguments[1] -eq 'signed-in-user') {
+        if ($script:azBehavior -eq 'fail') {
+            $global:LASTEXITCODE = 1
+            return ''
+        }
+        return '88888888-8888-8888-8888-888888888888'
+    }
+    throw "Unexpected az call: $($arguments -join ' ')"
+}
+
 function Reset-Calls {
     Remove-Item -LiteralPath `
         $w365CallsPath, `

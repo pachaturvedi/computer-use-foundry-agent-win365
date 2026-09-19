@@ -159,6 +159,14 @@ if ($requiresBlueprintSecret) {
     }
 }
 
+$hostedAgentPossible = (Test-EnabledValue -Value $env:ENABLE_W365) -or
+    (Test-EnabledValue -Value ([string]$currentValues['W365_ENABLED']))
+if ($hostedAgentPossible -and ![string]::IsNullOrWhiteSpace($environmentName)) {
+    Write-SampleVerbose -Component 'postup' -Message 'Resolving hosted-agent operator defaults (OPERATOR_TENANT_ID, OPERATOR_OBJECT_ID, HOSTED_ALLOWED_USER_ID) before any hosted-agent deployment.'
+    $environmentFilePath = Join-Path (Join-Path $RepositoryRoot ".azure\$environmentName") '.env'
+    $currentValues = Resolve-W365HostedAgentOperatorDefaults -EnvironmentFilePath $environmentFilePath -EnvironmentValues $currentValues
+}
+
 $enableW365 = Test-EnabledValue -Value $env:ENABLE_W365
 $w365SetupRan = $false
 if ($enableW365) {
@@ -290,7 +298,8 @@ if (![string]::IsNullOrWhiteSpace($env:AZURE_ENV_NAME)) {
                 & $AgentDeploymentScriptPath `
                     -Mode DeployAgent `
                     -Environment $environmentName `
-                    -ConfirmResourceChanges
+                    -ConfirmResourceChanges `
+                    -SmokeInvoke
             }
             finally {
                 [Environment]::SetEnvironmentVariable(
