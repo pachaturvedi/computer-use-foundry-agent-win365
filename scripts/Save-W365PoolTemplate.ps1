@@ -67,33 +67,6 @@ function Test-GraphContext {
     return @($missingScopes).Count -eq 0
 }
 
-function Get-AzureCliGraphAccessToken {
-    param([guid]$RequiredTenantId)
-
-    $tenantQuery = '{tenant:tenant,accessToken:accessToken}'
-    $tokenResponse = az account get-access-token --resource-type ms-graph --query $tenantQuery -o json 2>$null
-    if ([string]::IsNullOrWhiteSpace($tokenResponse)) {
-        return $null
-    }
-
-    $tokenData = $tokenResponse | ConvertFrom-Json -AsHashtable
-    if ($null -eq $tokenData) {
-        return $null
-    }
-
-    $tokenTenantId = TryParse-GuidValue $tokenData.tenant
-    if ($RequiredTenantId -ne [guid]::Empty -and $tokenTenantId -ne $RequiredTenantId) {
-        return $null
-    }
-
-    $accessToken = [string]$tokenData.accessToken
-    if ([string]::IsNullOrWhiteSpace($accessToken)) {
-        return $null
-    }
-
-    return $accessToken
-}
-
 function Test-IsDeviceCodeTimeoutError {
     param([Parameter(Mandatory)]$ErrorRecord)
 
@@ -109,6 +82,13 @@ function Connect-GraphWithRetries {
     )
 
     if ($UseDeviceCode) {
+        Write-Host ''
+        Write-Host 'Microsoft Graph sign-in is required to read the source W365 pool.'
+        Write-Host 'When the device code appears, open https://login.microsoft.com/device,'
+        Write-Host 'enter the displayed code, and complete sign-in within 120 seconds.'
+        Write-Host 'This command waits for the authentication result.'
+        Write-Host ''
+
         for ($attempt = 1; $attempt -le $DeviceCodeMaxAttempts; $attempt++) {
             try {
                 if ($DeviceCodeMaxAttempts -gt 1) {
@@ -150,40 +130,18 @@ function Graph([string]$Method, [string]$Path) {
         throw 'Graph request resolved to an unexpected origin.'
     }
 
-    if (![string]::IsNullOrWhiteSpace($script:GraphAccessToken)) {
-        $headers = @{ Authorization = "Bearer $($script:GraphAccessToken)"; 'OData-Version' = '4.0' }
-        try {
-            $response = Invoke-RestMethod -Method $Method -Uri $uri -Headers $headers
-            return $response | ConvertTo-Json -Depth 20 | ConvertFrom-Json -AsHashtable -Depth 20
-        }
-        catch {
-            if ($_.Exception.Message -match 'accessDenied') {
-                throw @"
-Azure CLI is signed in, but its Microsoft Graph token does not have CloudPC consent.
-Run:
-  az logout
-  az login --tenant "$TenantId" --scope "https://graph.microsoft.com/CloudPC.Read.All"
-Then rerun this helper.
-"@
-            }
-
-            throw
-        }
-    }
-
     Invoke-MgGraphRequest -Method $Method -Uri $uri -OutputType Hashtable -Headers @{ 'OData-Version' = '4.0' }
 }
 
 $scopes = @('CloudPC.Read.All')
 Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
-$script:GraphAccessToken = $null
 
 $context = Get-MgContext
 if (!(Test-GraphContext -Context $context -RequiredTenantId $TenantId -RequiredScopes $scopes)) {
     $connectParameters = @{
         Scopes = $scopes
         ClientTimeout = $GraphClientTimeoutSeconds
-        ContextScope = 'CurrentUser'
+        ContextScope = 'Process'
         NoWelcome = $true
     }
     if ($TenantId -ne [guid]::Empty) {
@@ -194,33 +152,26 @@ if (!(Test-GraphContext -Context $context -RequiredTenantId $TenantId -RequiredS
         $connectParameters.UseDeviceCode = $true
     }
 
-    $connectError = $null
     try {
         $context = Connect-GraphWithRetries -ConnectParameters $connectParameters -UseDeviceCode:$UseDeviceCode -DeviceCodeMaxAttempts $DeviceCodeMaxAttempts
     }
     catch {
-        $connectError = $_
-    }
+        throw @"
+Direct delegated Microsoft Graph sign-in failed.
+The signed-in tenant administrator must consent to CloudPC.Read.All.
+Rerun this helper with -UseDeviceCode and complete the displayed code promptly.
+Azure CLI tokens are intentionally not used for Microsoft Graph discovery.
 
-    if ($null -ne $connectError) {
-        $script:GraphAccessToken = Get-AzureCliGraphAccessToken -RequiredTenantId $TenantId
-        if ([string]::IsNullOrWhiteSpace($script:GraphAccessToken)) {
-            throw $connectError
-        }
+$($_.Exception.Message)
+"@
     }
 }
 
-if ([string]::IsNullOrWhiteSpace($script:GraphAccessToken) -and $context.AuthType -ne 'Delegated') {
+if ($context.AuthType -ne 'Delegated') {
     throw 'A delegated Graph connection is required.'
 }
 
-$missingScopes = if ([string]::IsNullOrWhiteSpace($script:GraphAccessToken)) {
-    @($scopes | Where-Object { $_ -notin $context.Scopes })
-}
-else {
-    @()
-}
-$missingScopes = @($missingScopes)
+$missingScopes = @($scopes | Where-Object { $_ -notin $context.Scopes })
 if ($missingScopes.Count -gt 0) {
     throw "Missing Graph scopes: $($missingScopes -join ', ')."
 }
