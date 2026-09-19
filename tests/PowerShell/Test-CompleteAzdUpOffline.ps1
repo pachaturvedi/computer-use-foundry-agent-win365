@@ -15,10 +15,14 @@ $environmentPath = Join-Path $environmentDirectory '.env'
 $w365CallsPath = Join-Path $tempRoot 'w365-calls.json'
 $viewerCallsPath = Join-Path $tempRoot 'viewer-calls.json'
 $agentDeployCallsPath = Join-Path $tempRoot 'agent-deploy-calls.json'
+$viewerSecretsCallsPath = Join-Path $tempRoot 'viewer-secrets-calls.json'
+$viewerActivationCallsPath = Join-Path $tempRoot 'viewer-activation-calls.json'
 $mockW365Path = Join-Path $tempRoot 'Mock-W365Setup.ps1'
 $failingW365Path = Join-Path $tempRoot 'Mock-W365SetupFailure.ps1'
 $mockViewerPath = Join-Path $tempRoot 'Mock-Viewer.ps1'
 $mockAgentDeployPath = Join-Path $tempRoot 'Mock-AgentDeploy.ps1'
+$mockViewerSecretsPath = Join-Path $tempRoot 'Mock-ViewerSecrets.ps1'
+$mockViewerActivationPath = Join-Path $tempRoot 'Mock-ViewerActivation.ps1'
 
 $trackedEnvironmentVariables = @(
     'ENABLE_W365',
@@ -35,7 +39,15 @@ $trackedEnvironmentVariables = @(
     'W365_AGENT_ID',
     'W365_AGENT_OBJECT_ID',
     'W365_BLUEPRINT_ID'
-    'VIEWER_PUBLIC_URL'
+    'VIEWER_PUBLIC_URL',
+    'DEPLOY_VIEWER',
+    'VIEWER_LIVE_ENABLED',
+    'VIEWER_LIVE_CHANGES_CONFIRMED',
+    'VIEWER_KEY_VAULT_NAME',
+    'W365_BLUEPRINT_CREDENTIAL_MODE',
+    'SCREENSHARE_SDK_URL',
+    'SCREENSHARE_FRAME_ORIGINS',
+    'SCREENSHARE_APP_URL'
 )
 $savedEnvironment = @{}
 foreach ($name in $trackedEnvironmentVariables) {
@@ -43,7 +55,13 @@ foreach ($name in $trackedEnvironmentVariables) {
 }
 
 function Reset-Calls {
-    Remove-Item -LiteralPath $w365CallsPath, $viewerCallsPath, $agentDeployCallsPath -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath `
+        $w365CallsPath, `
+        $viewerCallsPath, `
+        $agentDeployCallsPath, `
+        $viewerSecretsCallsPath, `
+        $viewerActivationCallsPath `
+        -ErrorAction SilentlyContinue
 }
 
 function Write-TestEnvironment {
@@ -58,6 +76,9 @@ function Write-TestEnvironment {
         "AZURE_ENV_NAME=`"$environmentName`"",
         'AZURE_TENANT_ID="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"',
         'RESOURCE_PREFIX="sample-dev"',
+        'DEPLOY_VIEWER="false"',
+        'VIEWER_LIVE_ENABLED="false"',
+        'W365_BLUEPRINT_CREDENTIAL_MODE="client_secret"',
         "W365_ENABLED=`"$($Complete.ToString().ToLowerInvariant())`""
     )
     if (![string]::IsNullOrWhiteSpace($AgentUserPrincipalName)) {
@@ -130,6 +151,24 @@ param(
     viewerPublicUrl = $env:VIEWER_PUBLIC_URL
     recursionGuard = $env:W365_POSTUP_IN_PROGRESS
 } | ConvertTo-Json | Set-Content -LiteralPath $env:TEST_AGENT_DEPLOY_CALLS_PATH
+'@
+    Set-Content -LiteralPath $mockViewerSecretsPath -Value @'
+param(
+    [string]$Environment,
+    [switch]$BlueprintOnly
+)
+@{
+    environment = $Environment
+    blueprintOnly = $BlueprintOnly.IsPresent
+} | ConvertTo-Json | Set-Content -LiteralPath $env:TEST_VIEWER_SECRETS_CALLS_PATH
+'@
+    Set-Content -LiteralPath $mockViewerActivationPath -Value @'
+param([string]$Environment)
+@{
+    environment = $Environment
+} | ConvertTo-Json | Set-Content -LiteralPath $env:TEST_VIEWER_ACTIVATION_CALLS_PATH
+$environmentPath = Join-Path $env:TEST_REPOSITORY_ROOT ".azure\$Environment\.env"
+Add-Content -LiteralPath $environmentPath -Value 'VIEWER_LIVE_ENABLED="true"'
 '@
     Set-Content -LiteralPath $mockW365Path -Value @'
 param(
@@ -215,6 +254,8 @@ throw 'Simulated W365 setup failure.'
     $env:TEST_W365_CALLS_PATH = $w365CallsPath
     $env:TEST_VIEWER_CALLS_PATH = $viewerCallsPath
     $env:TEST_AGENT_DEPLOY_CALLS_PATH = $agentDeployCallsPath
+    $env:TEST_VIEWER_SECRETS_CALLS_PATH = $viewerSecretsCallsPath
+    $env:TEST_VIEWER_ACTIVATION_CALLS_PATH = $viewerActivationCallsPath
     $env:TEST_VIEWER_PUBLIC_URL = ''
     $env:AZURE_ENV_NAME = $environmentName
     $env:AZURE_TENANT_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
@@ -222,6 +263,7 @@ throw 'Simulated W365 setup failure.'
     $env:W365_AGENT_USER_DOMAIN = ''
     $env:W365_RESOURCE_CHANGES_CONFIRMED = 'true'
     $env:AZD_NON_INTERACTIVE = 'true'
+    $env:VIEWER_LIVE_CHANGES_CONFIRMED = 'true'
 
     Reset-Calls
     Write-TestEnvironment -Complete:$false
@@ -268,8 +310,8 @@ throw 'Simulated W365 setup failure.'
         throw 'Enabled postup did not invoke the guarded W365 setup contract.'
     }
     $viewerCall = Get-Content -LiteralPath $viewerCallsPath -Raw | ConvertFrom-Json
-    if ($viewerCall.w365Enabled -ne 'true') {
-        throw 'Postup did not refresh persisted W365 values before viewer bootstrap.'
+    if ($viewerCall.w365Enabled -ne 'false') {
+        throw 'Postup did not run viewer bootstrap before W365 enablement.'
     }
     if ($env:W365_AGENT_USER_PRINCIPAL_NAME -ne 'foundry-w365-sample-dev@customer.example') {
         throw 'Postup did not refresh the automatically resolved W365 agent-user UPN.'
@@ -321,6 +363,37 @@ throw 'Simulated W365 setup failure.'
     $env:TEST_VIEWER_PUBLIC_URL = ''
 
     Reset-Calls
+    Write-TestEnvironment -Complete:$true
+    Write-CompleteManifest
+    Add-Content -LiteralPath $environmentPath -Value @(
+        'DEPLOY_VIEWER="true"',
+        'VIEWER_KEY_VAULT_NAME="sample-viewer-vault"',
+        'SCREENSHARE_SDK_URL="https://screenshare.example.com/sdk.js"',
+        'SCREENSHARE_FRAME_ORIGINS="https://screenshare.example.com"',
+        'SCREENSHARE_APP_URL="https://viewer-static.example.com"'
+    )
+    $env:ENABLE_W365 = 'true'
+    $env:W365_ENABLED = 'true'
+    $env:VIEWER_PUBLIC_URL = ''
+    $env:TEST_VIEWER_PUBLIC_URL = 'https://viewer.example.com'
+    & $scriptPath `
+        -RepositoryRoot $tempRoot `
+        -W365SetupScriptPath $mockW365Path `
+        -ViewerBootstrapScriptPath $mockViewerPath `
+        -ViewerSecretsScriptPath $mockViewerSecretsPath `
+        -ViewerActivationScriptPath $mockViewerActivationPath `
+        -AgentDeploymentScriptPath $mockAgentDeployPath
+    $secretCall = Get-Content -LiteralPath $viewerSecretsCallsPath -Raw | ConvertFrom-Json
+    if ($secretCall.environment -ne $environmentName -or !$secretCall.blueprintOnly) {
+        throw 'Postup did not configure the blueprint secret after viewer bootstrap.'
+    }
+    $activationCall = Get-Content -LiteralPath $viewerActivationCallsPath -Raw | ConvertFrom-Json
+    if ($activationCall.environment -ne $environmentName) {
+        throw 'Postup did not activate the live viewer after credentials and prerequisites were ready.'
+    }
+    $env:TEST_VIEWER_PUBLIC_URL = ''
+
+    Reset-Calls
     Write-TestEnvironment -Complete:$false
     $env:ENABLE_W365 = 'true'
     $env:W365_ENABLED = 'false'
@@ -334,8 +407,8 @@ throw 'Simulated W365 setup failure.'
     if (!$failed) {
         throw 'Postup hid a W365 setup failure.'
     }
-    if (Test-Path -LiteralPath $viewerCallsPath) {
-        throw 'Postup continued to viewer bootstrap after W365 setup failure.'
+    if (!(Test-Path -LiteralPath $viewerCallsPath)) {
+        throw 'Postup did not create the viewer bootstrap resources before W365 setup.'
     }
     $failureManifest = Get-Content -LiteralPath (Join-Path $environmentDirectory 'w365-ownership.json') -Raw | ConvertFrom-Json
     if ($failureManifest.w365.pool.disposition -ne 'created') {
@@ -361,6 +434,8 @@ finally {
         'TEST_W365_CALLS_PATH',
         'TEST_VIEWER_CALLS_PATH',
         'TEST_AGENT_DEPLOY_CALLS_PATH',
+        'TEST_VIEWER_SECRETS_CALLS_PATH',
+        'TEST_VIEWER_ACTIVATION_CALLS_PATH',
         'TEST_VIEWER_PUBLIC_URL'
     )) {
         Remove-Item "Env:\$name" -ErrorAction SilentlyContinue

@@ -42,8 +42,10 @@ Deploy [phase-1 viewer bootstrap](DEPLOYMENT.md#optional-phase-1-viewer-bootstra
 to create the UAMI with ACR pull and Blob roles. Record the outputs:
 `viewerIdentityClientId` selects the UAMI with `AZURE_CLIENT_ID`;
 `viewerIdentityPrincipalId` is its object ID for optional federation.
-`infra/viewer.bicep` defaults `w365Enabled` to `false`; it references the OIDC
-Key Vault secret and grants secret access only when enabled.
+`infra/viewer.bicep` defaults `w365Enabled` to `false`; it references secrets
+only when enabled. The postup workflow configures vault-scoped Azure RBAC in
+one place: `Key Vault Secrets User` for the viewer identity and
+`Key Vault Secrets Officer` for the setup operator.
 
 ## Enable the hosted viewer
 

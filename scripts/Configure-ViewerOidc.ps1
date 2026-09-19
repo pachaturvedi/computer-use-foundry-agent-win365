@@ -13,6 +13,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 . (Join-Path $PSScriptRoot 'ViewerConfiguration.ps1')
+Initialize-SampleScriptLogging -ScriptName $MyInvocation.MyCommand.Name -Parameters $PSBoundParameters
 
 foreach ($command in @('az', 'azd')) {
     if (!(Get-Command $command -ErrorAction SilentlyContinue)) {
@@ -101,6 +102,8 @@ function Invoke-ViewerGraph {
 
 $configuredClientId = Get-AzdValue 'VIEWER_CLIENT_ID' -AllowMissing
 $application = $null
+Write-SampleVerbose -Component 'viewer-oidc' -Message 'Resolving the viewer OIDC application.'
+Write-SampleDebug -Component 'viewer-oidc' -Message "Configured client ID exists: $(![string]::IsNullOrWhiteSpace($configuredClientId))."
 if (![string]::IsNullOrWhiteSpace($configuredClientId)) {
     $filter = [uri]::EscapeDataString("appId eq '$configuredClientId'")
     $result = Invoke-ViewerGraph GET "v1.0/applications?`$filter=$filter&`$select=id,appId,displayName,passwordCredentials"
@@ -124,6 +127,7 @@ else {
 }
 
 if ($null -eq $application) {
+    Write-SampleVerbose -Component 'viewer-oidc' -Message "Creating single-tenant application '$ApplicationName'."
     $application = Invoke-ViewerGraph POST 'v1.0/applications' @{
         displayName = $ApplicationName
         signInAudience = 'AzureADMyOrg'
@@ -138,6 +142,7 @@ if ($null -eq $application) {
     }
 }
 else {
+    Write-SampleVerbose -Component 'viewer-oidc' -Message "Reconciling application '$($application.appId)' and its exact redirect URI."
     Invoke-ViewerGraph PATCH "v1.0/applications/$($application.id)" @{
         signInAudience = 'AzureADMyOrg'
         isFallbackPublicClient = $false
@@ -157,6 +162,7 @@ if ($servicePrincipals.Count -gt 1) {
     throw "Multiple service principals exist for viewer app '$($application.appId)'."
 }
 if ($servicePrincipals.Count -eq 0) {
+    Write-SampleVerbose -Component 'viewer-oidc' -Message 'Creating the application service principal.'
     Invoke-ViewerGraph POST 'v1.0/servicePrincipals' @{ appId = $application.appId } | Out-Null
 }
 
@@ -186,6 +192,8 @@ $rotationRequired = $null -eq $credential -or
 
 $credentialKeyId = $storedKeyId
 if ($rotationRequired) {
+    Write-SampleVerbose -Component 'viewer-oidc' -Message 'Creating a short-lived OIDC credential and storing it directly in Key Vault.'
+    Write-SampleDebug -Component 'viewer-oidc' -Message "CredentialLifetimeDays=$CredentialLifetimeDays; RotateBeforeDays=$RotateBeforeDays."
     $start = [DateTimeOffset]::UtcNow
     $end = $start.AddDays($CredentialLifetimeDays)
     $newCredential = $null
@@ -227,12 +235,25 @@ if ($rotationRequired) {
                 entraCredentialExpiresUtc = $end.ToString('o')
             }
         } | ConvertTo-Json -Depth 10 -Compress
-        Invoke-RestMethod `
-            -Method Put `
-            -Uri "$($vaultUri.TrimEnd('/'))/secrets/$secretName`?api-version=7.4" `
-            -Headers @{ Authorization = "Bearer $vaultToken" } `
-            -ContentType 'application/json' `
-            -Body $secretBody | Out-Null
+        for ($attempt = 1; $attempt -le 6; $attempt++) {
+            try {
+                Invoke-RestMethod `
+                    -Method Put `
+                    -Uri "$($vaultUri.TrimEnd('/'))/secrets/$secretName`?api-version=7.4" `
+                    -Headers @{ Authorization = "Bearer $vaultToken" } `
+                    -ContentType 'application/json' `
+                    -Body $secretBody | Out-Null
+                break
+            }
+            catch {
+                if ($attempt -eq 6) {
+                    throw
+                }
+                Write-SampleVerbose -Component 'viewer-oidc' -Message "Waiting for Key Vault RBAC propagation ($attempt/6)."
+                Write-SampleDebug -Component 'viewer-oidc' -Message $_.Exception.Message
+                Start-Sleep -Seconds 10
+            }
+        }
         $credentialKeyId = [string]$newCredential.keyId
     }
     catch {
@@ -256,6 +277,9 @@ if ($rotationRequired) {
         $secretBody = $null
         $vaultToken = $null
     }
+}
+else {
+    Write-SampleVerbose -Component 'viewer-oidc' -Message 'Existing Key Vault-bound OIDC credential remains healthy; rotation skipped.'
 }
 
 $environmentValues = [ordered]@{

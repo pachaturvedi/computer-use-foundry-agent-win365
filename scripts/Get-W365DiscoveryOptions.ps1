@@ -19,6 +19,7 @@ if (!$IsWindows) {
 }
 
 . (Join-Path $PSScriptRoot 'DeploymentConfig.ps1')
+Initialize-SampleScriptLogging -ScriptName $MyInvocation.MyCommand.Name -Parameters $PSBoundParameters
 
 function Select-DiscoveryOption {
     param(

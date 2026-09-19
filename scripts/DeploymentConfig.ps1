@@ -2,6 +2,10 @@
 
 Set-StrictMode -Version Latest
 
+. (Join-Path $PSScriptRoot 'Logging.ps1')
+Write-SampleVerbose -Component 'DeploymentConfig' -Message 'Loaded deployment configuration helpers.'
+Write-SampleDebug -Component 'DeploymentConfig' -Message 'Configuration precedence is environment, local override, then defaults.'
+
 function Read-DeploymentConfigFile {
     param([Parameter(Mandatory)][string]$Path)
 

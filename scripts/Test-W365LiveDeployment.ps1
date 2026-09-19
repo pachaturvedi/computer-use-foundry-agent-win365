@@ -12,6 +12,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 . (Join-Path $PSScriptRoot 'W365Provisioning.ps1')
+Initialize-SampleScriptLogging -ScriptName $MyInvocation.MyCommand.Name -Parameters $PSBoundParameters
 
 $environmentFile = Join-Path (Join-Path $RepositoryRoot ".azure\$EnvironmentName") '.env'
 if (!(Test-Path -LiteralPath $environmentFile -PathType Leaf)) {

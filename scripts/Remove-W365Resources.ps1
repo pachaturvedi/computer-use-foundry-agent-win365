@@ -13,6 +13,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'W365OwnershipManifest.ps1')
+Initialize-SampleScriptLogging -ScriptName $MyInvocation.MyCommand.Name -Parameters $PSBoundParameters
 
 function Get-AzdCommand {
     $azdPaths = [System.Collections.Generic.List[string]]::new()

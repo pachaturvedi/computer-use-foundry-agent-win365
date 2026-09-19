@@ -6,6 +6,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 . (Join-Path $PSScriptRoot 'ViewerConfiguration.ps1')
+Initialize-SampleScriptLogging -ScriptName $MyInvocation.MyCommand.Name -Parameters $PSBoundParameters
 
 if ($env:DEPLOY_VIEWER -ne 'true') {
     Write-Host 'Viewer deployment skipped because DEPLOY_VIEWER is not true.'

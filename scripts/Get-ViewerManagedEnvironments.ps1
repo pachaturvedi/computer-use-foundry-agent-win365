@@ -6,6 +6,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot 'Logging.ps1')
+Initialize-SampleScriptLogging -ScriptName $MyInvocation.MyCommand.Name -Parameters $PSBoundParameters
 
 if (!(Get-Command az -ErrorAction SilentlyContinue)) {
     throw 'Azure CLI is required.'

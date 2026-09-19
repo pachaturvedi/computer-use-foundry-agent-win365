@@ -11,6 +11,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot 'Logging.ps1')
+Initialize-SampleScriptLogging -ScriptName $MyInvocation.MyCommand.Name -Parameters $PSBoundParameters
 
 if (!$IsWindows) {
     throw 'This launcher is Windows-only. Use Windows with PowerShell 7.4 or later.'

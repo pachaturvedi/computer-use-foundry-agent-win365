@@ -8,6 +8,8 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
+. (Join-Path $PSScriptRoot 'Logging.ps1')
+Initialize-SampleScriptLogging -ScriptName $MyInvocation.MyCommand.Name -Parameters $PSBoundParameters
 $path = (Resolve-Path -LiteralPath $EnvFile).Path
 $previous = @{}
 try {
