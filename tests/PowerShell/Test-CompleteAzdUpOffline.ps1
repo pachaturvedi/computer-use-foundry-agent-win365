@@ -132,6 +132,7 @@ try {
     New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
     Set-Content -LiteralPath $mockViewerPath -Value @'
 param()
+Write-Host 'MOCK-VIEWER-BOOTSTRAP-RAN'
 @{
     w365Enabled = $env:W365_ENABLED
 } | ConvertTo-Json | Set-Content -LiteralPath $env:TEST_VIEWER_CALLS_PATH
@@ -266,6 +267,25 @@ throw 'Simulated W365 setup failure.'
     $env:W365_RESOURCE_CHANGES_CONFIRMED = 'true'
     $env:AZD_NON_INTERACTIVE = 'true'
     $env:VIEWER_LIVE_CHANGES_CONFIRMED = 'true'
+
+    Reset-Calls
+    Write-TestEnvironment -Complete:$false
+    $env:ENABLE_W365 = 'false'
+    $env:W365_ENABLED = 'false'
+    $planOutput = & $scriptPath -RepositoryRoot $tempRoot -W365SetupScriptPath $mockW365Path -ViewerBootstrapScriptPath $mockViewerPath -ViewerSecretsScriptPath $mockViewerSecretsPath *>&1 | Out-String
+    $planOutput = $planOutput -replace "`r", ''
+    $planIndex = $planOutput.IndexOf('postup plan (runs after azd provision, before this hook exits):')
+    $bootstrapIndex = $planOutput.IndexOf('MOCK-VIEWER-BOOTSTRAP-RAN')
+    if ($planIndex -lt 0 -or $bootstrapIndex -lt 0 -or $planIndex -gt $bootstrapIndex) {
+        throw 'The postup plan summary did not print before viewer bootstrap execution.'
+    }
+    if ($planOutput -notmatch '(?m)^\s*1\. Skip viewer image build and health check because DEPLOY_VIEWER is not true\.$' -or
+        $planOutput -notmatch '(?m)^\s*2\. Skip Windows 365 setup because ENABLE_W365 is not true\.$' -or
+        $planOutput -notmatch '(?m)^\s*3\. Skip live-viewer activation\.$' -or
+        $planOutput -notmatch '(?m)^\s*4\. Redeploy the hosted agent only if a new viewer URL became available during this run\.$' -or
+        $planOutput -notmatch '(?m)^\s*5\. Print the final deployment summary table\.$') {
+        throw 'The postup plan summary did not describe every disabled step accurately.'
+    }
 
     Reset-Calls
     Write-TestEnvironment -Complete:$false

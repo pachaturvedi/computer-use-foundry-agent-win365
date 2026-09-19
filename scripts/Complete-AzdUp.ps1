@@ -79,10 +79,53 @@ function Confirm-ViewerLiveActivation {
     }
 }
 
+function Show-PostUpPlan {
+    param(
+        [bool]$ViewerEnabled,
+        [bool]$W365Enabled,
+        [bool]$EnableW365,
+        [bool]$ViewerLiveEnabled
+    )
+
+    $steps = [System.Collections.Generic.List[string]]::new()
+    $steps.Add($(if ($ViewerEnabled) {
+        '1. Build (only if changed) and push the viewer image, then wait for the ACA viewer health check.'
+    } else {
+        '1. Skip viewer image build and health check because DEPLOY_VIEWER is not true.'
+    }))
+    $steps.Add($(if ($EnableW365 -and !$W365Enabled) {
+        '2. Run interactive Windows 365 setup: Entra agent user, Cloud PC pool, and consent.'
+    } elseif ($W365Enabled) {
+        '2. Verify the existing Windows 365 environment is already complete.'
+    } else {
+        '2. Skip Windows 365 setup because ENABLE_W365 is not true.'
+    }))
+    $steps.Add($(if ($ViewerEnabled -and $W365Enabled -and !$ViewerLiveEnabled) {
+        '3. Activate the authenticated live viewer if OIDC/screen-share prerequisites are already set; otherwise warn what is missing.'
+    } else {
+        '3. Skip live-viewer activation.'
+    }))
+    $steps.Add('4. Redeploy the hosted agent only if a new viewer URL became available during this run.')
+    $steps.Add('5. Print the final deployment summary table.')
+
+    Write-Host ''
+    Write-Host 'postup plan (runs after azd provision, before this hook exits):'
+    foreach ($step in $steps) {
+        Write-Host "  $step"
+    }
+    Write-Host ''
+}
+
 if (Test-EnabledValue -Value $env:W365_POSTUP_IN_PROGRESS) {
     Write-Host 'Nested W365 postup execution skipped.'
     return
 }
+
+Show-PostUpPlan `
+    -ViewerEnabled (Test-EnabledValue -Value $env:DEPLOY_VIEWER) `
+    -W365Enabled (Test-EnabledValue -Value $env:W365_ENABLED) `
+    -EnableW365 (Test-EnabledValue -Value $env:ENABLE_W365) `
+    -ViewerLiveEnabled (Test-EnabledValue -Value $env:VIEWER_LIVE_ENABLED)
 
 $viewerUrlBefore = [string]$env:VIEWER_PUBLIC_URL
 Write-SampleVerbose -Component 'postup' -Message 'Running viewer bootstrap before enabled W365 deployment.'
