@@ -91,7 +91,7 @@ resource viewer 'Microsoft.App/containerApps@2024-03-01' = {
           { name: 'ASPNETCORE_URLS', value: 'http://+:8080' }
           { name: 'AZURE_CLIENT_ID', value: identity.properties.clientId }
           { name: 'SAMPLE_LOCAL_MODE', value: 'false' }
-          { name: 'W365_ENABLED', value: string(w365Enabled) }
+          { name: 'W365_ENABLED', value: w365Enabled ? 'true' : 'false' }
           { name: 'W365_TENANT_ID', value: w365TenantId }
           { name: 'W365_BLUEPRINT_ID', value: blueprintId }
           { name: 'W365_AGENT_ID', value: agentId }

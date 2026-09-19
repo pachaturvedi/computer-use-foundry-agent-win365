@@ -13,6 +13,11 @@ param resourcePrefix string
 param resourceGroupName string
 param viewerImageName string = 'win365-sample:v1'
 param viewerManagedEnvironmentResourceId string = ''
+@allowed([
+  'true'
+  'false'
+])
+param viewerLogAnalyticsEnabled string = 'false'
 param w365KeyVaultName string
 @allowed([
   'true'
@@ -63,6 +68,7 @@ module foundation '../viewer-foundation.bicep' = if (viewerEnabled) {
     location: location
     resourcePrefix: resourcePrefix
     createManagedEnvironment: createManagedEnvironment
+    enableLogAnalytics: toLower(viewerLogAnalyticsEnabled) == 'true'
     tags: tags
   }
 }

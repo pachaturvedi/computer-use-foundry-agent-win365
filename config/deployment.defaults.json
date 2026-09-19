@@ -22,6 +22,7 @@
     "liveEnabled": false,
     "imageName": "win365-sample:v1",
     "managedEnvironmentResourceId": "",
+    "logAnalyticsEnabled": false,
     "clientId": "",
     "operatorTenantId": "",
     "operatorObjectId": "",

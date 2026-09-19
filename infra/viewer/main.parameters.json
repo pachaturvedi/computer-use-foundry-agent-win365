@@ -9,6 +9,7 @@
     "resourceGroupName": { "value": "${AZURE_RESOURCE_GROUP}" },
     "viewerImageName": { "value": "${VIEWER_IMAGE_NAME}" },
     "viewerManagedEnvironmentResourceId": { "value": "${VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID}" },
+    "viewerLogAnalyticsEnabled": { "value": "${VIEWER_LOG_ANALYTICS_ENABLED=false}" },
     "w365KeyVaultName": { "value": "${W365_KEY_VAULT_NAME}" },
     "viewerLiveEnabled": { "value": "${VIEWER_LIVE_ENABLED=false}" },
     "viewerPublicUrl": { "value": "${VIEWER_PUBLIC_URL}" },

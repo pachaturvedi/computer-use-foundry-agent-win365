@@ -375,6 +375,10 @@ shared-infrastructure environments. The approved environment may be in another
 Azure region; the viewer Container App and its managed identity are created in
 that environment's region while the remaining sample-owned resources stay in
 `AZURE_RESOURCE_GROUP`. When `DEPLOY_VIEWER=false`, neither path is evaluated.
+New managed environments default to `VIEWER_LOG_ANALYTICS_ENABLED=false`, which
+uses the ACA `none` log destination and avoids creating a Log Analytics
+workspace for the demo. Set it to `true` when retained application logs are
+required. Reused environments keep their existing logging configuration.
 The initializer uses reusable config helpers in `scripts/DeploymentConfig.ps1`
 so later hosted and cleanup workflows can consume the same defaults and
 override precedence without duplicating parsing logic.
@@ -520,6 +524,7 @@ Set non-secret values using `azd env set KEY VALUE`:
 | `VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID` | Optional full ID of the approved existing ACA managed environment. Empty means create one. |
 | `W365_BLUEPRINT_CREDENTIAL_MODE` | Explicitly `client_secret` for the proven E2E demo or `managed_identity_federation` for the separately approved FIC path. There is no fallback. |
 | `VIEWER_LIVE_ENABLED` | Explicit viewer phase switch. Leave `false` for bootstrap; set `true` only after OIDC, state, W365, SDK/frame-origin values, and the Key Vault secret are ready. |
+| `VIEWER_LOG_ANALYTICS_ENABLED` | Optional for a newly created ACA environment; defaults to `false`. Ignored when an existing environment resource ID is supplied. |
 | `W365_ENABLED` | Internal phase switch. Bootstrap sets it to `false`; `Setup-W365.ps1` persists `true` only after phase-2 prerequisites are ready. |
 
 Enabled configuration requires valid identity IDs and same-tenant Foundry/W365/
