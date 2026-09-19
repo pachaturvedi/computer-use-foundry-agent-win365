@@ -94,7 +94,7 @@ What the sample needs depends on whether you are validating it offline on
 Windows or deploying it to Foundry and Windows 365.
 
 - **Offline validation:** Windows, [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0), [PowerShell 7.4+](https://learn.microsoft.com/powershell/scripting/install/installing-powershell), and Git.
-- **Live deployment:** an Azure subscription and tenant onboarded for Foundry and Windows 365, plus Azure CLI, Azure Developer CLI with the required Foundry extensions, PowerShell 7.4+, and .NET 10.
+- **Live deployment:** an Azure subscription and tenant onboarded for Foundry and Windows 365, plus Azure CLI, Azure Developer CLI with the required Foundry extensions, PowerShell 7.4+, and .NET 10. Viewer deployment additionally requires the Azure CLI `containerapp show`, `containerapp update`, and `containerapp registry set` commands. The pre-provision hook verifies them before changing Azure resources.
 - **Windows 365 readiness:** an existing W365 agent pool with licensing, billing, image, and capacity ready, or a reviewed `config\deployment.local.json` profile that the stitched `azd up` flow can use to create one.
 - **Foundry path:** either create a fresh environment that provisions a dedicated Foundry account, project, and model deployment, or reuse an existing Foundry project that already has a deployed model supporting function calling and image inputs.
 - **Roles:** if you reuse an existing Foundry project, you need `Foundry Project Manager` access to that project and the delegated setup permissions listed in [W365 setup](docs/W365-SETUP.md#setup-permissions-delegated-not-runtime).
@@ -280,6 +280,7 @@ handoff. It is not required for direct W365 MCP execution.
 | The .NET 10 SDK is required | Install the SDK, not only the runtime, then open a new terminal. |
 | `MSB4236`, `NETSDK1209`, or the IDE says `Microsoft.NET.Sdk(.Web)` is unavailable | The SDK may be installed while the IDE's bundled MSBuild is incompatible. Run `pwsh -NoProfile -File .\scripts\Setup-Local.ps1` with the standalone SDK, or upgrade the IDE to a .NET 10-compatible version. |
 | The azd check reports version `1.20.0` after upgrading | `1.20.0` cannot parse this Foundry project, and the current agent/project extensions require `azd 1.32.0+`. Windows may have an older machine-wide `azd` before the current user installation on `PATH`. The check uses the newest compatible installation and prints the exact `$env:Path` command to run before direct `azd` commands. |
+| Required Azure CLI Container Apps command is unavailable | Upgrade Azure CLI first. If the command group is still unavailable, run `az extension add --name containerapp --upgrade`. The `preprovision` hook checks the exact commands before Azure resources are changed whenever `DEPLOY_VIEWER=true`. |
 | `NU1101` and only `library-packs` is listed | Pull the latest `NuGet.Config`; it clears inherited disabled feeds. |
 | `NU1301` or TLS handshake failure for `nuget.org` | The checked-in configuration also uses Microsoft's package-feed proxy for managed Windows environments. Verify your corporate proxy permits it. |
 | Port 5050 or 8088 is already in use | Stop the owning process, or run `.\scripts\Start-Local.ps1 -AgentPort 18088 -ViewerPort 15050`. |

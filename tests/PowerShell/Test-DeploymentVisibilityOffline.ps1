@@ -89,6 +89,8 @@ try {
     $foundryBicep = Get-Content -LiteralPath (Join-Path $root 'infra\foundry\main.bicep') -Raw
     $stateBicep = Get-Content -LiteralPath (Join-Path $root 'infra\state\main.bicep') -Raw
     $viewerBicep = Get-Content -LiteralPath (Join-Path $root 'infra\viewer\main.bicep') -Raw
+    $planScript = Get-Content -LiteralPath (Join-Path $root 'scripts\Show-DeploymentPlan.ps1') -Raw
+    $viewerDeployScript = Get-Content -LiteralPath (Join-Path $root 'scripts\Deploy-ViewerBootstrap.ps1') -Raw
     $stateParameters = Get-Content -LiteralPath (Join-Path $root 'infra\state\main.parameters.json') -Raw
     $viewerParameters = Get-Content -LiteralPath (Join-Path $root 'infra\viewer\main.parameters.json') -Raw
     if ($foundryBicep -notmatch "resource environmentResourceGroup 'Microsoft.Resources/resourceGroups@" -or
@@ -101,6 +103,8 @@ try {
         $viewerBicep -notmatch 'if \(viewerEnabled && !createManagedEnvironment\)' -or
         $viewerBicep -notmatch 'createManagedEnvironment: createManagedEnvironment' -or
         $viewerBicep -notmatch 'location: createManagedEnvironment \? location : existingManagedEnvironment!\.location' -or
+        $planScript -notmatch 'Assert-ViewerAzureCliPrerequisites' -or
+        $viewerDeployScript -notmatch 'Assert-ViewerAzureCliPrerequisites' -or
         $stateParameters -notmatch '"resourceGroupName": \{ "value": "\$\{AZURE_RESOURCE_GROUP\}" \}' -or
         $viewerParameters -notmatch '"resourceGroupName": \{ "value": "\$\{AZURE_RESOURCE_GROUP\}" \}') {
         throw 'Infrastructure layers do not consistently reuse one AZURE_RESOURCE_GROUP.'

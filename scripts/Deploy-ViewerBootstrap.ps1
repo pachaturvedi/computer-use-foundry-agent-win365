@@ -41,12 +41,7 @@ Assert-ViewerSharedStateConfiguration `
 Assert-ViewerManagedEnvironmentResourceId `
     -ResourceId $env:VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID
 
-if (!(Get-Command az -ErrorAction SilentlyContinue)) {
-    throw 'Azure CLI is required for the viewer image deployment hook.'
-}
-if (!(az extension show --name containerapp --output none 2>$null)) {
-    throw 'Azure CLI extension containerapp is required. Install it before running azd up.'
-}
+Assert-ViewerAzureCliPrerequisites
 function Invoke-Az {
     param([Parameter(Mandatory)][string[]]$Arguments)
 

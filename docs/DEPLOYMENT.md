@@ -346,6 +346,9 @@ the viewer UAMI Blob Data Contributor on the exact existing state container.
 For a new Foundry project and viewer, initialize the complete environment:
 
 ```powershell
+az containerapp show --help
+az containerapp update --help
+az containerapp registry set --help
 pwsh -NoProfile -File .\scripts\Initialize-Greenfield.ps1 `
     -SubscriptionId "<subscription-id>" `
     -Prefix "fawin365" `
@@ -355,6 +358,10 @@ pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
     -Mode DeployAll `
     -ConfirmResourceChanges
 ```
+
+The three Azure CLI checks must succeed when the viewer is enabled. Upgrade
+Azure CLI if they are unavailable; install or upgrade the `containerapp`
+extension only when the upgraded CLI still does not provide them.
 
 `-TenantId` is optional and should be supplied only to override the tenant
 selected by `azd auth login`. Omit `-DeployViewer` unless the dedicated viewer
