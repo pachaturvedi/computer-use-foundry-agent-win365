@@ -57,8 +57,16 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
             return @{
                 value = @(
                     @{
-                        id = 'centralus'
-                        displayName = 'Central US'
+                        id = '5fd32755-7880-c7cc-ee31-a8eb420ca6d2'
+                        displayName = 'centralus'
+                        regionStatus = 'available'
+                        supportedSolution = 'windows365'
+                        regionGroup = 'usCentral'
+                        geographicLocationType = 'usCentral'
+                    },
+                    @{
+                        id = 'duplicate-centralus-catalog-id'
+                        displayName = 'centralus'
                         regionStatus = 'available'
                         supportedSolution = 'windows365'
                         regionGroup = 'usCentral'
@@ -220,7 +228,7 @@ try {
     if (@($options.pools).Count -ne 1 -or
         $options.pools[0].billingPlanId -ne '66666666-6666-6666-6666-666666666666' -or
         @($options.regions).Count -ne 1 -or
-        $options.regions[0].id -ne 'centralus' -or
+        $options.regions[0].regionName -ne 'centralus' -or
         @($options.galleryImages).Count -ne 1 -or
         $options.galleryImages[0].id -ne 'gallery-image') {
         throw 'Read-only W365 discovery did not return filtered pools, regions, and images.'

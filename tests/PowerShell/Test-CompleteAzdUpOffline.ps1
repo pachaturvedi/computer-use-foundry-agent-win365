@@ -27,6 +27,7 @@ $trackedEnvironmentVariables = @(
     'W365_POSTUP_IN_PROGRESS',
     'AZD_NON_INTERACTIVE',
     'AZURE_ENV_NAME',
+    'AZURE_TENANT_ID',
     'W365_POOL_ID',
     'W365_AGENT_USER_ID',
     'W365_AGENT_ID',
@@ -52,6 +53,7 @@ function Write-TestEnvironment {
     New-Item -ItemType Directory -Path $environmentDirectory -Force | Out-Null
     $lines = @(
         "AZURE_ENV_NAME=`"$environmentName`"",
+        'AZURE_TENANT_ID="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"',
         'RESOURCE_PREFIX="sample-dev"',
         "W365_ENABLED=`"$($Complete.ToString().ToLowerInvariant())`""
     )
@@ -111,6 +113,7 @@ param()
     Set-Content -LiteralPath $mockW365Path -Value @'
 param(
     [string]$Environment,
+    [guid]$TenantId,
     [string]$AgentUserPrincipalName,
     [string]$AgentUserDomain,
     [switch]$BillingConfirmed,
@@ -119,6 +122,7 @@ param(
 )
 @{
     environment = $Environment
+    tenantId = $TenantId.ToString()
     agentUserPrincipalName = $AgentUserPrincipalName
     agentUserDomain = $AgentUserDomain
     billingConfirmed = $BillingConfirmed.IsPresent
@@ -167,6 +171,7 @@ Write-W365OwnershipManifest -Path $manifestPath -Manifest ([ordered]@{
     Set-Content -LiteralPath $failingW365Path -Value @'
 param(
     [string]$Environment,
+    [guid]$TenantId,
     [string]$AgentUserPrincipalName,
     [string]$AgentUserDomain,
     [switch]$BillingConfirmed,
@@ -189,6 +194,7 @@ throw 'Simulated W365 setup failure.'
     $env:TEST_W365_CALLS_PATH = $w365CallsPath
     $env:TEST_VIEWER_CALLS_PATH = $viewerCallsPath
     $env:AZURE_ENV_NAME = $environmentName
+    $env:AZURE_TENANT_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
     $env:W365_AGENT_USER_PRINCIPAL_NAME = ''
     $env:W365_AGENT_USER_DOMAIN = ''
     $env:W365_RESOURCE_CHANGES_CONFIRMED = 'true'
@@ -229,6 +235,7 @@ throw 'Simulated W365 setup failure.'
     & $scriptPath -RepositoryRoot $tempRoot -W365SetupScriptPath $mockW365Path -ViewerBootstrapScriptPath $mockViewerPath
     $w365Call = Get-Content -LiteralPath $w365CallsPath -Raw | ConvertFrom-Json
     if ($w365Call.environment -ne $environmentName -or
+        $w365Call.tenantId -ne 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' -or
         ![string]::IsNullOrWhiteSpace([string]$w365Call.agentUserPrincipalName) -or
         ![string]::IsNullOrWhiteSpace([string]$w365Call.agentUserDomain) -or
         !$w365Call.billingConfirmed -or

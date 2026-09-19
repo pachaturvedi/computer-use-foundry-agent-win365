@@ -91,6 +91,12 @@ if ($enableW365) {
                 ConfirmResourceChanges = $true
                 UseDeviceCode = $true
             }
+            $configuredTenantId = [guid]::Empty
+            if (![guid]::TryParse([string]$currentValues['AZURE_TENANT_ID'], [ref]$configuredTenantId) -or
+                $configuredTenantId -eq [guid]::Empty) {
+                throw "Azd environment '$environmentName' does not contain a valid AZURE_TENANT_ID."
+            }
+            $setupArguments.TenantId = $configuredTenantId
             $configuredPrincipalName = [string]$currentValues['W365_AGENT_USER_PRINCIPAL_NAME']
             if (![string]::IsNullOrWhiteSpace($configuredPrincipalName)) {
                 $setupArguments.AgentUserPrincipalName = $configuredPrincipalName

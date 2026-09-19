@@ -195,13 +195,15 @@ $regions = @(Get-GraphCollection -Path 'supportedRegions' |
     ForEach-Object {
         [pscustomobject]@{
             id = [string]$_.id
-            displayName = [string]$_.displayName
+            regionName = [string]$_.displayName
             geographicLocationType = [string]$_.geographicLocationType
             regionGroup = [string]$_.regionGroup
             supportedSolution = [string]$_.supportedSolution
         }
     } |
-    Sort-Object regionGroup, displayName)
+    Group-Object geographicLocationType, regionGroup, regionName |
+    ForEach-Object { $_.Group[0] } |
+    Sort-Object regionGroup, regionName)
 
 $images = @(Get-GraphCollection -Path 'galleryImages' |
     Where-Object { [string]$_.status -eq 'supported' } |
@@ -290,10 +292,10 @@ if ($Configure) {
         -Label 'W365 region' `
         -Options $regions `
         -DefaultIdentity $defaultRegion `
-        -Identity { param($option) $option.id } `
+        -Identity { param($option) $option.regionName } `
         -Display {
             param($option)
-            "$($option.displayName) ($($option.id)); geography: $($option.geographicLocationType); group: $($option.regionGroup)"
+            "$($option.regionName); geography: $($option.geographicLocationType); group: $($option.regionGroup)"
         }
 
     $defaultImage = if ($localConfig.w365.ContainsKey('poolImageId')) {
@@ -316,7 +318,7 @@ if ($Configure) {
     $localConfig.w365.poolBillingType = $selectedBillingPlan.billingType
     $localConfig.w365.poolGeographicLocationType = $selectedRegion.geographicLocationType
     $localConfig.w365.poolRegionGroup = $selectedRegion.regionGroup
-    $localConfig.w365.poolRegions = @($selectedRegion.id)
+    $localConfig.w365.poolRegions = @($selectedRegion.regionName)
     $localConfig.w365.poolImageId = $selectedImage.id
     $localConfig.w365.poolImageType = 'gallery'
     $localConfig.w365.poolMinimumCount = 1
@@ -332,7 +334,7 @@ if ($Configure) {
     Write-Host ''
     Write-Host "Saved selected W365 profile to $resolvedOutputPath"
     Write-Host "  Billing plan: $($selectedBillingPlan.billingPlanId)"
-    Write-Host "  Region:       $($selectedRegion.id)"
+    Write-Host "  Region:       $($selectedRegion.regionName)"
     Write-Host "  Image:        $($selectedImage.id)"
 }
 elseif ($AsJson) {

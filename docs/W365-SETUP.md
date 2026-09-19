@@ -110,7 +110,8 @@ pwsh -NoProfile -File .\scripts\Get-W365DiscoveryOptions.ps1 `
 The result contains:
 
 - existing W365 agent pools with display name, pool ID, and billing-plan GUID;
-- currently available region names, geographic location types, and groups;
+- currently available region names, geographic location types, and groups
+  (catalog object GUIDs are informational and are not written as pool regions);
 - currently supported gallery image IDs and display names.
 
 Use the selected pool URL with `Save-W365PoolTemplate.ps1`, or pass the selected
@@ -143,6 +144,10 @@ and then continues discovery; do not close the terminal.
 If you miss the first prompt, the helper retries device-code sign-in once by
 default and shows a fresh code. Adjust that bounded retry count with
 `-DeviceCodeMaxAttempts` when needed.
+
+The integrated `azd up` W365 setup uses the same behavior: it prints the
+browser instructions before requesting the code, waits for completion, and
+retries once with a fresh code when the fixed 120-second window expires.
 
 This workflow uses direct delegated Microsoft Graph authentication with
 `CloudPC.Read.All`. It intentionally does not use Azure CLI tokens for Graph
