@@ -89,6 +89,8 @@ try {
     $foundryBicep = Get-Content -LiteralPath (Join-Path $root 'infra\foundry\main.bicep') -Raw
     $stateBicep = Get-Content -LiteralPath (Join-Path $root 'infra\state\main.bicep') -Raw
     $viewerBicep = Get-Content -LiteralPath (Join-Path $root 'infra\viewer\main.bicep') -Raw
+    $azureYaml = Get-Content -LiteralPath (Join-Path $root 'azure.yaml') -Raw
+    $upContextScript = Get-Content -LiteralPath (Join-Path $root 'scripts\Show-AzdUpContext.ps1') -Raw
     $planScript = Get-Content -LiteralPath (Join-Path $root 'scripts\Show-DeploymentPlan.ps1') -Raw
     $viewerDeployScript = Get-Content -LiteralPath (Join-Path $root 'scripts\Deploy-ViewerBootstrap.ps1') -Raw
     $stateParameters = Get-Content -LiteralPath (Join-Path $root 'infra\state\main.parameters.json') -Raw
@@ -103,6 +105,8 @@ try {
         $viewerBicep -notmatch 'if \(viewerEnabled && !createManagedEnvironment\)' -or
         $viewerBicep -notmatch 'createManagedEnvironment: createManagedEnvironment' -or
         $viewerBicep -notmatch 'location: createManagedEnvironment \? location : existingManagedEnvironment!\.location' -or
+        $azureYaml -notmatch '(?ms)^\s{2}preup:\s+windows:.*Show-AzdUpContext\.ps1' -or
+        $upContextScript -notmatch 'informational, not failures' -or
         $planScript -notmatch 'Assert-ViewerAzureCliPrerequisites' -or
         $viewerDeployScript -notmatch 'Assert-ViewerAzureCliPrerequisites' -or
         $stateParameters -notmatch '"resourceGroupName": \{ "value": "\$\{AZURE_RESOURCE_GROUP\}" \}' -or
