@@ -32,5 +32,14 @@
     "poolMinimumCount": 1,
     "poolMaximumCount": 1,
     "poolEnableSingleSignOn": false
+  },
+  "w365AcceptanceDefaults": {
+    "poolGeographicLocationType": "usCentral",
+    "poolRegionGroup": "usCentral",
+    "poolRegions": [
+      "centralus"
+    ],
+    "poolImageDisplayName": "Windows 11 Enterprise 25H2",
+    "poolImageId": "microsoftwindowsdesktop_windows-ent-cpc_win11-25h2-ent-cpc-m365"
   }
 }

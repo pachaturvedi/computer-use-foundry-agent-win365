@@ -26,17 +26,18 @@ function Write-MockRepository {
     New-Item -ItemType Directory -Path (Join-Path $Root 'config') -Force | Out-Null
     @{
         w365 = @{
-            poolBillingPlanId = '33333333-3333-3333-3333-333333333333'
             poolBillingType = 'payAsYouGo'
-            poolGeographicLocationType = 'usCentral'
-            poolRegionGroup = 'usCentral'
-            poolRegions = @('centralus')
-            poolImageId = 'gallery-image'
             poolImageType = 'gallery'
             poolOsLocale = 'en-US'
             poolMinimumCount = 1
             poolMaximumCount = 1
             poolEnableSingleSignOn = $false
+        }
+        w365AcceptanceDefaults = @{
+            poolGeographicLocationType = 'usCentral'
+            poolRegionGroup = 'usCentral'
+            poolRegions = @('centralus')
+            poolImageId = 'gallery-image'
         }
     } | ConvertTo-Json -Depth 10 |
         Set-Content -LiteralPath (Join-Path $Root 'config\deployment.defaults.json')
@@ -123,6 +124,7 @@ Add-Content -LiteralPath $env:MOCK_COMMAND_LOG -Value 'prerequisites'
         -TenantId $tenantId `
         -Prefix sample `
         -Location eastus `
+        -PoolBillingPlanId '33333333-3333-3333-3333-333333333333' `
         -ApprovalPhrase I_APPROVE_W365_BILLING_AND_CLEANUP `
         -RepositoryRoot $mockRoot `
         -EvidenceDirectory (Join-Path $mockRoot 'artifacts') `
@@ -144,6 +146,7 @@ Add-Content -LiteralPath $env:MOCK_COMMAND_LOG -Value 'prerequisites'
             -TenantId $tenantId `
             -Prefix sample `
             -Location eastus `
+            -PoolBillingPlanId '33333333-3333-3333-3333-333333333333' `
             -ApprovalPhrase I_APPROVE_W365_BILLING_AND_CLEANUP `
             -Resume `
             -RepositoryRoot $mockRoot `
@@ -161,6 +164,40 @@ Add-Content -LiteralPath $env:MOCK_COMMAND_LOG -Value 'prerequisites'
         throw 'A completed environment resume was not rejected safely before another teardown.'
     }
 
+    $profileRoot = Join-Path $tempRoot 'profile-repo'
+    Write-MockRepository -Root $profileRoot
+    $env:MOCK_REPOSITORY_ROOT = $profileRoot
+    $env:MOCK_COMMAND_LOG = Join-Path $tempRoot 'profile.log'
+    $profilePrompted = $false
+    try {
+        & $driverPath `
+            -SubscriptionId $subscriptionId `
+            -TenantId $tenantId `
+            -Prefix sample `
+            -Location eastus `
+            -ApprovalPhrase I_APPROVE_W365_BILLING_AND_CLEANUP `
+            -RepositoryRoot $profileRoot `
+            -EvidenceDirectory (Join-Path $profileRoot 'artifacts') `
+            -AzdPath $azdPath `
+            -InitializerScriptPath $initializerPath `
+            -PrerequisiteScriptPath $prerequisitePath
+    }
+    catch {
+        $profilePrompted = $_.Exception.Message -like '*poolBillingPlanId*' -and
+            $_.Exception.Message -like '*usCentral*' -and
+            $_.Exception.Message -like '*centralus*'
+    }
+    $generatedProfile = Get-Content -LiteralPath (Join-Path $profileRoot 'config\deployment.local.json') -Raw |
+        ConvertFrom-Json -AsHashtable
+    if (!$profilePrompted -or
+        $generatedProfile.w365.poolGeographicLocationType -ne 'usCentral' -or
+        $generatedProfile.w365.poolRegionGroup -ne 'usCentral' -or
+        @($generatedProfile.w365.poolRegions) -join ',' -ne 'centralus' -or
+        $generatedProfile.w365.ContainsKey('poolBillingPlanId') -or
+        (Test-Path -LiteralPath $env:MOCK_COMMAND_LOG)) {
+        throw 'Missing billing-plan handling did not generate defaults and stop before deployment.'
+    }
+
     $secondRoot = Join-Path $tempRoot 'failure-repo'
     Write-MockRepository -Root $secondRoot
     $env:MOCK_REPOSITORY_ROOT = $secondRoot
@@ -173,6 +210,7 @@ Add-Content -LiteralPath $env:MOCK_COMMAND_LOG -Value 'prerequisites'
             -TenantId $tenantId `
             -Prefix sample `
             -Location eastus `
+            -PoolBillingPlanId '33333333-3333-3333-3333-333333333333' `
             -ApprovalPhrase I_APPROVE_W365_BILLING_AND_CLEANUP `
             -RepositoryRoot $secondRoot `
             -EvidenceDirectory (Join-Path $secondRoot 'artifacts') `
@@ -188,7 +226,7 @@ Add-Content -LiteralPath $env:MOCK_COMMAND_LOG -Value 'prerequisites'
         throw 'Acceptance driver did not preserve the deployment error while completing failure cleanup.'
     }
 
-    Write-Output 'Windows live acceptance driver: fresh deployment, safe resume rejection, rerun stability, doctor, and failure cleanup passed.'
+    Write-Output 'Windows live acceptance driver: default profile, fresh deployment, safe resume rejection, rerun stability, doctor, and failure cleanup passed.'
 }
 finally {
     Remove-Module Microsoft.Graph.Authentication -ErrorAction SilentlyContinue
