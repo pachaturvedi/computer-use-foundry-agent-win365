@@ -84,6 +84,10 @@ $screenShareSdkUrl = [string](Get-DeploymentConfiguredValue -EnvironmentName 'SC
 $screenShareFrameOrigins = [string](Get-DeploymentConfiguredValue -EnvironmentName 'SCREENSHARE_FRAME_ORIGINS' -DefaultValue $config.viewer.screenShareFrameOrigins)
 $screenShareAppUrl = [string](Get-DeploymentConfiguredValue -EnvironmentName 'SCREENSHARE_APP_URL' -DefaultValue $config.viewer.screenShareAppUrl)
 $blueprintCredentialMode = [string](Get-DeploymentConfiguredValue -EnvironmentName 'W365_BLUEPRINT_CREDENTIAL_MODE' -DefaultValue $config.w365.blueprintCredentialMode)
+$sampleLogLevel = [string](Get-DeploymentConfiguredValue -EnvironmentName 'SAMPLE_LOG_LEVEL' -DefaultValue $config.logging.level)
+if ($sampleLogLevel -notin @('summary', 'verbose', 'debug')) {
+    throw "SAMPLE_LOG_LEVEL must be summary, verbose, or debug; received '$sampleLogLevel'."
+}
 
 $resourcePrefix = "$Prefix-$Environment".ToLowerInvariant()
 $environmentName = $resourcePrefix
@@ -110,11 +114,11 @@ $values = [ordered]@{
     FOUNDRY_MODEL_SKU_CAPACITY = [string]$modelSkuCapacity
     RESOURCE_PREFIX = $resourcePrefix
     DEPLOY_STATE = $deployState.ToString().ToLowerInvariant()
-    STATE_RESOURCE_GROUP_NAME = "$resourcePrefix-$($config.state.resourceGroupSuffix)"
+    STATE_RESOURCE_GROUP_NAME = "$resourcePrefix-$($config.foundry.resourceGroupSuffix)"
     STATE_AGENT_PRINCIPAL_ID = '00000000-0000-0000-0000-000000000000'
     DEPLOY_VIEWER = $resolvedDeployViewer.ToString().ToLowerInvariant()
     VIEWER_LIVE_ENABLED = ([bool]$viewerLiveEnabled).ToString().ToLowerInvariant()
-    VIEWER_RESOURCE_GROUP_NAME = "$resourcePrefix-$($config.viewer.resourceGroupSuffix)"
+    VIEWER_RESOURCE_GROUP_NAME = "$resourcePrefix-$($config.foundry.resourceGroupSuffix)"
     VIEWER_IMAGE_NAME = $viewerImageName
     VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID = $viewerManagedEnvironmentResourceId
     VIEWER_CLIENT_ID = $viewerClientId
@@ -124,6 +128,7 @@ $values = [ordered]@{
     SCREENSHARE_FRAME_ORIGINS = $screenShareFrameOrigins
     SCREENSHARE_APP_URL = $screenShareAppUrl
     W365_BLUEPRINT_CREDENTIAL_MODE = $blueprintCredentialMode
+    SAMPLE_LOG_LEVEL = $sampleLogLevel
     ENABLE_W365 = $EnableW365.IsPresent.ToString().ToLowerInvariant()
     W365_ENABLED = 'false'
 }
@@ -167,12 +172,11 @@ try {
     Write-Host "  Model SKU:              $($values.FOUNDRY_MODEL_SKU_NAME) x $($values.FOUNDRY_MODEL_SKU_CAPACITY)"
     Write-Host "  W365 bootstrap mode:    $($values.W365_ENABLED)"
     Write-Host "  Complete W365 in azd up: $($values.ENABLE_W365)"
+    Write-Host "  Deployment log level:   $($values.SAMPLE_LOG_LEVEL)"
     if (![string]::IsNullOrWhiteSpace($values.FOUNDRY_PROJECT_ENDPOINT)) {
         Write-Host "  Existing project:       $($values.FOUNDRY_PROJECT_ENDPOINT)"
     }
-    if ($resolvedDeployViewer) {
-        Write-Host "  Viewer resource group:  $($values.VIEWER_RESOURCE_GROUP_NAME)"
-    }
+    Write-Host "  Environment resources:  $($values.AZURE_RESOURCE_GROUP)"
     Write-Host "  Defaults file:          $ConfigPath"
     if (Test-Path -LiteralPath $localConfigPath) {
         Write-Host "  Local override file:    $localConfigPath"

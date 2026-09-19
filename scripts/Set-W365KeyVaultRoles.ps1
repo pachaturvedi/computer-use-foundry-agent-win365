@@ -1,7 +1,8 @@
 #Requires -Version 7.4
 [CmdletBinding()]
 param(
-    [string]$Environment
+    [string]$Environment,
+    [switch]$IncludeViewer
 )
 
 $ErrorActionPreference = 'Stop'
@@ -31,8 +32,19 @@ function Get-AzdRequiredValue {
 }
 
 $subscriptionId = Get-AzdRequiredValue 'AZURE_SUBSCRIPTION_ID'
-$vaultName = Get-AzdRequiredValue 'VIEWER_KEY_VAULT_NAME'
-$viewerPrincipalId = Get-AzdRequiredValue 'VIEWER_IDENTITY_PRINCIPAL_ID'
+$vaultName = (& azd env get-value W365_KEY_VAULT_NAME 2>$null | Out-String).Trim().Trim('"')
+if ([string]::IsNullOrWhiteSpace($vaultName)) {
+    $vaultName = (& azd env get-value VIEWER_KEY_VAULT_NAME 2>$null | Out-String).Trim().Trim('"')
+}
+if ([string]::IsNullOrWhiteSpace($vaultName)) {
+    throw 'The selected azd environment does not contain W365_KEY_VAULT_NAME.'
+}
+$viewerPrincipalId = if ($IncludeViewer) {
+    Get-AzdRequiredValue 'VIEWER_IDENTITY_PRINCIPAL_ID'
+}
+else {
+    ''
+}
 $operatorObjectId = (& az ad signed-in-user show --query id --output tsv).Trim()
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($operatorObjectId)) {
     throw 'Unable to resolve the signed-in Azure user.'
@@ -50,18 +62,20 @@ Write-SampleDebug -Component 'viewer-keyvault-rbac' -Message "VaultId=$vaultId; 
 
 $assignments = @(
     @{
-        PrincipalId = $viewerPrincipalId
-        PrincipalType = 'ServicePrincipal'
-        RoleName = 'Key Vault Secrets User'
-        RoleId = '4633458b-17de-408a-b874-0445c86b69e6'
-    },
-    @{
         PrincipalId = $operatorObjectId
         PrincipalType = 'User'
         RoleName = 'Key Vault Secrets Officer'
         RoleId = 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7'
     }
 )
+if ($IncludeViewer) {
+    $assignments += @{
+        PrincipalId = $viewerPrincipalId
+        PrincipalType = 'ServicePrincipal'
+        RoleName = 'Key Vault Secrets User'
+        RoleId = '4633458b-17de-408a-b874-0445c86b69e6'
+    }
+}
 
 foreach ($assignment in $assignments) {
     $roleDefinitionId = "/subscriptions/$subscriptionId/providers/Microsoft.Authorization/roleDefinitions/$($assignment.RoleId)"
@@ -93,4 +107,5 @@ foreach ($assignment in $assignments) {
     }
 }
 
-Write-Host "Key Vault RBAC is configured for the viewer identity and current operator on '$vaultName'."
+$scopeDescription = if ($IncludeViewer) { 'the viewer identity and current operator' } else { 'the current operator' }
+Write-Host "Key Vault RBAC is configured for $scopeDescription on '$vaultName'."

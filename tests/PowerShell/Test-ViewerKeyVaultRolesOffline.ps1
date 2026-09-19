@@ -15,7 +15,7 @@ function azd {
     if ($arguments[0] -eq 'env' -and $arguments[1] -eq 'get-value') {
         switch ($arguments[2]) {
             'AZURE_SUBSCRIPTION_ID' { return '11111111-1111-1111-1111-111111111111' }
-            'VIEWER_KEY_VAULT_NAME' { return 'single-viewer-vault' }
+            'W365_KEY_VAULT_NAME' { return 'single-w365-vault' }
             'VIEWER_IDENTITY_PRINCIPAL_ID' { return '22222222-2222-2222-2222-222222222222' }
             default { return '' }
         }
@@ -30,7 +30,7 @@ function az {
         return '33333333-3333-3333-3333-333333333333'
     }
     if ($arguments[0] -eq 'keyvault' -and $arguments[1] -eq 'show') {
-        return '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/sample-rg/providers/Microsoft.KeyVault/vaults/single-viewer-vault'
+        return '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/sample-rg/providers/Microsoft.KeyVault/vaults/single-w365-vault'
     }
     if ($arguments[0] -eq 'role' -and $arguments[1] -eq 'assignment' -and $arguments[2] -eq 'list') {
         return ''
@@ -50,7 +50,7 @@ function az {
 }
 
 try {
-    & (Join-Path $root 'scripts\Set-ViewerKeyVaultRoles.ps1')
+    & (Join-Path $root 'scripts\Set-W365KeyVaultRoles.ps1') -IncludeViewer
 
     if ($global:viewerRoleCreates.Count -ne 2) {
         throw "Expected exactly two vault-scoped RBAC assignments, received $($global:viewerRoleCreates.Count)."
@@ -76,4 +76,4 @@ finally {
     Remove-Variable -Name viewerRoleCreates -Scope Global -ErrorAction SilentlyContinue
 }
 
-Write-Host 'Viewer Key Vault RBAC offline tests passed.'
+Write-Host 'W365 Key Vault RBAC offline tests passed.'

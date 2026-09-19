@@ -11,7 +11,7 @@ $global:viewerOidcEnvValues = @{
     AZURE_ENV_NAME = $environmentName
     AZURE_TENANT_ID = '11111111-1111-1111-1111-111111111111'
     VIEWER_PUBLIC_URL = 'https://viewer.example.com'
-    VIEWER_KEY_VAULT_NAME = 'viewer-vault'
+    W365_KEY_VAULT_NAME = 'w365-vault'
     RESOURCE_PREFIX = 'sample-dev'
     VIEWER_CLIENT_ID = ''
 }

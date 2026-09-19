@@ -6,7 +6,8 @@ param(
     [string]$ViewerBootstrapScriptPath = (Join-Path $PSScriptRoot 'Deploy-ViewerBootstrap.ps1'),
     [string]$ViewerSecretsScriptPath = (Join-Path $PSScriptRoot 'Set-ViewerSecrets.ps1'),
     [string]$ViewerActivationScriptPath = (Join-Path $PSScriptRoot 'Enable-ViewerLive.ps1'),
-    [string]$AgentDeploymentScriptPath = (Join-Path $PSScriptRoot 'Invoke-AzdDeployment.ps1')
+    [string]$AgentDeploymentScriptPath = (Join-Path $PSScriptRoot 'Invoke-AzdDeployment.ps1'),
+    [string]$DeploymentSummaryScriptPath = (Join-Path $PSScriptRoot 'Show-DeploymentSummary.ps1')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -97,17 +98,20 @@ else {
 }
 $deployViewer = Test-EnabledValue -Value ([string]$currentValues['DEPLOY_VIEWER'])
 $credentialMode = [string]$currentValues['W365_BLUEPRINT_CREDENTIAL_MODE']
-$viewerVaultName = [string]$currentValues['VIEWER_KEY_VAULT_NAME']
+$w365VaultName = [string]$currentValues['W365_KEY_VAULT_NAME']
+if ([string]::IsNullOrWhiteSpace($w365VaultName)) {
+    $w365VaultName = [string]$currentValues['VIEWER_KEY_VAULT_NAME']
+}
 $requiresBlueprintSecret = $credentialMode -eq 'client_secret' -and (
     (Test-EnabledValue -Value $env:ENABLE_W365) -or
     (Test-EnabledValue -Value ([string]$currentValues['W365_ENABLED']))
 )
-if ($deployViewer -and $requiresBlueprintSecret) {
-    if ([string]::IsNullOrWhiteSpace($viewerVaultName)) {
-        throw 'Viewer bootstrap did not produce VIEWER_KEY_VAULT_NAME before blueprint secret configuration.'
+if ($requiresBlueprintSecret) {
+    if ([string]::IsNullOrWhiteSpace($w365VaultName)) {
+        throw 'State provisioning did not produce W365_KEY_VAULT_NAME before blueprint secret configuration.'
     }
-    Write-SampleVerbose -Component 'postup' -Message 'Ensuring the blueprint client secret exists in the single viewer Key Vault.'
-    Write-SampleDebug -Component 'postup' -Message "Credential mode=$credentialMode; vault=$viewerVaultName."
+    Write-SampleVerbose -Component 'postup' -Message 'Ensuring the blueprint client secret exists in the shared W365 Key Vault.'
+    Write-SampleDebug -Component 'postup' -Message "Credential mode=$credentialMode; vault=$w365VaultName."
     & $ViewerSecretsScriptPath -Environment $environmentName -BlueprintOnly
     if (!$?) {
         throw 'Blueprint secret storage failed.'
@@ -203,7 +207,7 @@ if (![string]::IsNullOrWhiteSpace($env:AZURE_ENV_NAME)) {
     if ($deployViewer -and $w365EnabledAfter -and !$viewerLiveEnabled) {
         $liveRequired = @(
             'VIEWER_PUBLIC_URL',
-            'VIEWER_KEY_VAULT_NAME',
+            'W365_KEY_VAULT_NAME',
             'SCREENSHARE_SDK_URL',
             'SCREENSHARE_FRAME_ORIGINS',
             'SCREENSHARE_APP_URL'
@@ -245,5 +249,10 @@ if (![string]::IsNullOrWhiteSpace($env:AZURE_ENV_NAME)) {
                 $previousPostUpGuard,
                 'Process')
         }
+    }
+
+    & $DeploymentSummaryScriptPath -RepositoryRoot $RepositoryRoot -Environment $environmentName
+    if (!$?) {
+        throw 'Deployment summary failed.'
     }
 }

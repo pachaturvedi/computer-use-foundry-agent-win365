@@ -17,7 +17,7 @@ function azd {
     $global:LASTEXITCODE = 0
     if ($arguments[0] -eq 'env' -and $arguments[1] -eq 'get-value') {
         switch ($arguments[2]) {
-            'VIEWER_KEY_VAULT_NAME' { return 'single-viewer-vault' }
+            'W365_KEY_VAULT_NAME' { return 'single-w365-vault' }
             'AZURE_TENANT_ID' { return '11111111-1111-1111-1111-111111111111' }
             default { return '' }
         }
@@ -30,9 +30,9 @@ function az {
     $global:LASTEXITCODE = 0
     if ($arguments[0] -eq 'keyvault' -and $arguments[1] -eq 'show') {
         if ($arguments -contains 'id') {
-            return '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/sample-rg/providers/Microsoft.KeyVault/vaults/single-viewer-vault'
+            return '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/sample-rg/providers/Microsoft.KeyVault/vaults/single-w365-vault'
         }
-        return 'https://single-viewer-vault.vault.azure.net/'
+        return 'https://single-w365-vault.vault.azure.net/'
     }
     if ($arguments[0] -eq 'keyvault' -and $arguments[1] -eq 'secret') {
         $global:LASTEXITCODE = 1
@@ -54,8 +54,8 @@ function Invoke-RestMethod {
 try {
     New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
     Set-Content -LiteralPath $roleSetupPath -Value @'
-param([string]$Environment)
-@{ environment = $Environment } | ConvertTo-Json |
+param([string]$Environment, [switch]$IncludeViewer)
+@{ environment = $Environment; includeViewer = $IncludeViewer.IsPresent } | ConvertTo-Json |
     Set-Content -LiteralPath $env:TEST_VIEWER_ROLE_CALL_PATH
 '@
     $env:TEST_VIEWER_ROLE_CALL_PATH = $roleCallPath
@@ -73,8 +73,8 @@ param([string]$Environment)
         throw "Expected two writes to one Key Vault, received $($global:viewerSecretWrites.Count)."
     }
     foreach ($uri in $global:viewerSecretWrites) {
-        if ($uri -notmatch '^https://single-viewer-vault\.vault\.azure\.net/secrets/') {
-            throw "A secret was written outside the single viewer Key Vault: $uri"
+        if ($uri -notmatch '^https://single-w365-vault\.vault\.azure\.net/secrets/') {
+            throw "A secret was written outside the single W365 Key Vault: $uri"
         }
     }
     $writtenUris = $global:viewerSecretWrites -join "`n"

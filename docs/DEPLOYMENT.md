@@ -332,14 +332,15 @@ federated credentials, and the blueprint's prior `requiredResourceAccess`.
 
 The viewer is a separate process built from the same project (`--viewer`).
 Deploy it in bootstrap mode first so ACA can establish the public origin, UAMI,
-ACR, and Key Vault without requiring live W365 or OIDC settings.
+and ACR without requiring live W365 or OIDC settings. The shared W365
+credential vault is provisioned separately by the state layer.
 
 The viewer reuses the agent's existing `SESSION_BLOB_URI`; it does not create a
 second Storage account or session container. It also accepts an existing
 Container Apps managed-environment resource ID, which is the recommended path
 when the subscription is at the managed-environment quota. The foundation
 creates a managed environment and Log Analytics only when that ID is empty.
-It always creates the viewer ACR and Key Vault. The state-access module grants
+It always creates the viewer ACR. The state-access module grants
 the viewer UAMI Blob Data Contributor on the exact existing state container.
 
 For a new Foundry project and viewer, initialize the complete environment:
@@ -367,13 +368,14 @@ so later hosted and cleanup workflows can consume the same defaults and
 override precedence without duplicating parsing logic.
 
 For an environment already bound to a Foundry project, set the viewer layer
-explicitly. Resource names remain derived from the supplied prefix:
+explicitly. All sample-owned Azure resources use `AZURE_RESOURCE_GROUP`;
+`STATE_RESOURCE_GROUP_NAME` and `VIEWER_RESOURCE_GROUP_NAME` are compatibility
+outputs with that same value:
 
 ```powershell
 $resourcePrefix = "fawin365-dev"
 azd env set RESOURCE_PREFIX $resourcePrefix
 azd env set DEPLOY_VIEWER true
-azd env set VIEWER_RESOURCE_GROUP_NAME "$resourcePrefix-viewer-rg"
 azd env set VIEWER_IMAGE_NAME "win365-sample:v1"
 azd env set VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID `
   "/subscriptions/<subscription>/resourceGroups/<rg>/providers/Microsoft.App/managedEnvironments/<name>"
@@ -383,20 +385,27 @@ pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
 ```
 
 The viewer consumes the existing state outputs
-`STATE_RESOURCE_GROUP_NAME`, `STATE_STORAGE_ACCOUNT_NAME`,
+`AZURE_RESOURCE_GROUP`, `STATE_STORAGE_ACCOUNT_NAME`,
 `STATE_CONTAINER_NAME`, and `SESSION_BLOB_URI`. Any account, container, path,
 query, fragment, or protocol mismatch fails before deployment.
 
-`azd up` provisions the conditional Bicep layer, deploys the Foundry agent, then
+`azd up` creates one environment resource group in the core Foundry layer and
+reuses it for the shared W365 credential Key Vault, optional Blob state, and
+optional viewer resources. Blob session state remains conditional on
+`DEPLOY_STATE`, and
+the ACA viewer remains conditional on `DEPLOY_VIEWER`. The command prints a
+pre-provision table showing which components will be created, reused, or
+skipped, deploys the Foundry agent, then
 runs the Windows `postup` hook. The hook builds
 the repository image in the newly created ACR, waits for `AcrPull` role
 propagation, switches the Container App to that image, and verifies `/health`.
 ACR names remove hyphens, use lowercase alphanumerics, include a deterministic
 suffix, and stay within service-specific length limits.
 
-Before enabling `DEPLOY_VIEWER`, preview the viewer layer separately:
+Before enabling `DEPLOY_VIEWER`, preview the state and viewer layers separately:
 
 ```powershell
+azd provision state --preview --no-prompt
 azd provision viewer --preview --no-prompt
 ```
 
@@ -415,8 +424,8 @@ HTTPS-only replica. `/health` is healthy and other routes return 503; no OIDC
 configuration is needed until active.
 
 Phase-2 identity, operator, viewer and SDK parameters default to empty strings
-in Bicep. The foundation creates `keyVaultName`; no secret value or reference
-is needed in bootstrap.
+in Bicep. The state layer creates the shared vault; no secret value or
+reference is needed in viewer bootstrap.
 
 Record `viewerHostname`, `viewerIdentityClientId` and
 `viewerIdentityPrincipalId` from the deployment outputs. The **principal/object
@@ -449,19 +458,28 @@ layer after phase-1 identity discovery:
 
 ```powershell
 azd env set DEPLOY_STATE true
-azd env set STATE_RESOURCE_GROUP_NAME "fawin365-dev-state-rg"
 azd env set STATE_AGENT_PRINCIPAL_ID "<Foundry-agent-object-principal-GUID>"
 azd provision state --preview --no-prompt
 azd provision state --no-prompt
 ```
 
-The state layer derives a globally unique Storage account name, creates the
-private `desktop-state` container, grants the supplied agent principal Storage
-Blob Data Contributor only on that container, and emits `SESSION_BLOB_URI`.
-Greenfield phase 1 defaults `DEPLOY_STATE=false` because the agent principal is
-not available until the first hosted-agent deployment.
+The core layer creates the sample-owned environment resource group once. The
+state layer references that group and creates one shared W365 credential Key
+Vault, emitting `W365_KEY_VAULT_NAME`. When
+`DEPLOY_STATE=true`, it also derives a globally unique Storage account name,
+creates the private `desktop-state` container, grants the supplied agent
+principal Storage Blob Data Contributor only on that container, and emits
+`SESSION_BLOB_URI`. Greenfield phase 1 defaults `DEPLOY_STATE=false` because
+the agent principal is not available until the first hosted-agent deployment;
+that does not skip the credential vault.
 
-The validated development deployment created:
+Legacy development deployments may still have state in a separate
+`*-state-rg`. The templates do not move or delete those resources
+automatically. A new deployment uses the environment resource group and a new
+storage account; migrate any required session state deliberately before
+removing the legacy resource group.
+
+The earlier validated development deployment created:
 
 | Item | Value |
 | --- | --- |
@@ -481,6 +499,7 @@ Set non-secret values using `azd env set KEY VALUE`:
 | `W365_TENANT_ID`, `W365_BLUEPRINT_ID` | Setup output; Foundry/W365/viewer Azure tenant and blueprint app ID. |
 | `W365_AGENT_ID`, `W365_AGENT_OBJECT_ID`, `W365_AGENT_USER_ID` | Setup output; agent app ID, agent object ID, agent-user object ID. |
 | `SESSION_BLOB_URI` | `https://<storage>.blob.core.windows.net/desktop-state/slot.json` |
+| `W365_KEY_VAULT_NAME` | State-layer output naming the shared vault for the blueprint secret, optional viewer OIDC secret, and future certificate credential. |
 | `OPERATOR_TENANT_ID`, `OPERATOR_OBJECT_ID` | Exact human operator's tenant/object IDs. |
 | `HOSTED_ALLOWED_USER_ID` | **Foundry agent only:** platform user partition or `sha256:` fingerprint; see binding below. Not a viewer parameter. |
 | `VIEWER_PUBLIC_URL` | Optional for an agent-only deployment. When omitted, desktop execution remains available but live-view/take-control links are returned as unavailable. Required for the viewer itself. |
@@ -505,7 +524,8 @@ Finish [OIDC/SDK configuration](VIEWER.md#enable-the-hosted-viewer). The lean
 Windows activation sequence is:
 
 ```powershell
-# Bootstrap must already have produced VIEWER_PUBLIC_URL and VIEWER_KEY_VAULT_NAME.
+# Bootstrap must already have produced VIEWER_PUBLIC_URL. State provisioning
+# always produces W365_KEY_VAULT_NAME.
 pwsh -NoProfile -File .\scripts\Configure-ViewerOidc.ps1
 pwsh -NoProfile -File .\scripts\Set-ViewerSecrets.ps1 -BlueprintOnly
 azd env set W365_BLUEPRINT_CREDENTIAL_MODE client_secret
@@ -526,7 +546,7 @@ hosted agent.
 
 Only live activation references the two secrets. The Windows postup hook
 configures the two least-privilege, vault-scoped built-in RBAC assignments from
-one script: `Key Vault Secrets User` for the viewer UAMI and
+one script: `Key Vault Secrets User` for the viewer UAMI when enabled and
 `Key Vault Secrets Officer` for the signed-in setup operator. It then creates
 or reuses the OIDC credential, prompts only when the blueprint secret is
 absent, stores both in the same vault, and reprovisions the viewer.
@@ -534,7 +554,15 @@ absent, stores both in the same vault, and reprovisions the viewer.
 unless the exact viewer UAMI federation is present in the W365 ownership
 manifest.
 
-All Windows scripts support PowerShell's common `-Verbose` and `-Debug`
+Direct `azd up` runs print a pre-provision resource plan and a final resource
+table. Set `SAMPLE_LOG_LEVEL` to `summary` (default), `verbose`, or `debug`:
+
+```powershell
+azd env set SAMPLE_LOG_LEVEL verbose
+azd up
+```
+
+All Windows scripts also support PowerShell's common `-Verbose` and `-Debug`
 parameters. Use `-Verbose` for phase and command progress. Add `-Debug` for
 sanitized decisions, resource IDs, and parameter context; secret, token,
 password, credential, and certificate values are always redacted.

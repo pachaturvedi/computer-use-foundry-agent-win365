@@ -2,7 +2,7 @@
   "foundry": {
     "location": "eastus",
     "projectEndpoint": "",
-    "resourceGroupSuffix": "foundry-rg",
+    "resourceGroupSuffix": "rg",
     "accountNameSuffix": "ai",
     "projectNameSuffix": "project",
     "agentName": "win365-desktop-agent",
@@ -15,13 +15,11 @@
     "modelSkuCapacity": 50
   },
   "state": {
-    "deploy": false,
-    "resourceGroupSuffix": "state-rg"
+    "deploy": false
   },
   "viewer": {
     "deploy": false,
     "liveEnabled": false,
-    "resourceGroupSuffix": "viewer-rg",
     "imageName": "win365-sample:v1",
     "managedEnvironmentResourceId": "",
     "clientId": "",
@@ -39,6 +37,9 @@
     "poolMinimumCount": 1,
     "poolMaximumCount": 1,
     "poolEnableSingleSignOn": false
+  },
+  "logging": {
+    "level": "summary"
   },
   "w365AcceptanceDefaults": {
     "poolGeographicLocationType": "usCentral",

@@ -94,6 +94,14 @@ function Get-AzdOptionalValue {
         return ($value | Out-String).Trim()
     }
 
+    function Get-W365KeyVaultName {
+        $vaultName = Get-AzdOptionalValue 'W365_KEY_VAULT_NAME'
+        if ([string]::IsNullOrWhiteSpace($vaultName)) {
+            $vaultName = Get-AzdOptionalValue 'VIEWER_KEY_VAULT_NAME'
+        }
+        return $vaultName
+    }
+
     return ''
 }
 
@@ -117,7 +125,7 @@ function Assert-LiveViewerConfiguration {
         'SCREENSHARE_SDK_URL',
         'SCREENSHARE_FRAME_ORIGINS',
         'SCREENSHARE_APP_URL',
-        'VIEWER_KEY_VAULT_NAME',
+        'W365_KEY_VAULT_NAME',
         'W365_BLUEPRINT_CREDENTIAL_MODE'
     )
     $missing = @($required | Where-Object {
@@ -136,7 +144,7 @@ function Assert-LiveViewerConfiguration {
         -ViewerPrincipalId (Get-AzdValue 'VIEWER_IDENTITY_PRINCIPAL_ID') `
         -OwnershipManifestPath (Join-Path $root ".azure\$environmentName\w365-ownership.json")
 
-    $vaultName = Get-AzdOptionalValue 'VIEWER_KEY_VAULT_NAME'
+    $vaultName = Get-W365KeyVaultName
     $requiredSecrets = @('w365-viewer-client-secret')
     if ($credentialMode -eq 'client_secret') {
         $requiredSecrets += 'w365-blueprint-client-secret'
@@ -162,9 +170,9 @@ function Set-W365ClientSecretForDeployment {
         return
     }
 
-    $vaultName = Get-AzdOptionalValue 'VIEWER_KEY_VAULT_NAME'
+    $vaultName = Get-W365KeyVaultName
     if ([string]::IsNullOrWhiteSpace($vaultName)) {
-        throw 'Client-secret mode requires W365_CLIENT_SECRET in the current process or VIEWER_KEY_VAULT_NAME.'
+        throw 'Client-secret mode requires W365_CLIENT_SECRET in the current process or W365_KEY_VAULT_NAME.'
     }
     $secret = (& az keyvault secret show `
         --subscription (Get-AzdValue 'AZURE_SUBSCRIPTION_ID') `
@@ -279,7 +287,7 @@ try {
             -ResourceId (Get-AzdOptionalValue 'VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID')
         Assert-ViewerSharedStateConfiguration `
             -DeployState $stateEnabled `
-            -StateResourceGroupName (Get-AzdValue 'STATE_RESOURCE_GROUP_NAME') `
+            -StateResourceGroupName (Get-AzdValue 'AZURE_RESOURCE_GROUP') `
             -StateStorageAccountName (Get-AzdValue 'STATE_STORAGE_ACCOUNT_NAME') `
             -StateContainerName (Get-AzdValue 'STATE_CONTAINER_NAME') `
             -SessionBlobUri (Get-AzdValue 'SESSION_BLOB_URI')

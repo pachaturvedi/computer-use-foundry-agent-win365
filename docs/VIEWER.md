@@ -13,7 +13,8 @@ viewer is optional for direct W365 MCP execution.
 - A valid blueprint client secret for the default E2E path. Viewer federation
   is required only when explicitly selecting `managed_identity_federation`.
 - Approved W365 screen-share values available from onboarding: `SCREENSHARE_APP_URL`, `SCREENSHARE_SDK_URL`, and `SCREENSHARE_FRAME_ORIGINS`.
-- A single-tenant Entra web application and Key Vault secret plan ready for the viewer OIDC sign-in flow.
+- A shared W365 Key Vault, provisioned independently of the viewer, and a
+  single-tenant Entra web application for the viewer OIDC sign-in flow.
 
 ## Bootstrap and local mode
 
@@ -44,14 +45,14 @@ to create the UAMI with ACR pull and Blob roles. Record the outputs:
 `viewerIdentityPrincipalId` is its object ID for optional federation.
 `infra/viewer.bicep` defaults `w365Enabled` to `false`; it references secrets
 only when enabled. The postup workflow configures vault-scoped Azure RBAC in
-one place: `Key Vault Secrets User` for the viewer identity and
+one place: `Key Vault Secrets User` for the viewer identity when enabled and
 `Key Vault Secrets Officer` for the setup operator.
 
 ## Enable the hosted viewer
 
 The default E2E path sets `W365_BLUEPRINT_CREDENTIAL_MODE=client_secret`.
 Store the existing blueprint credential as `w365-blueprint-client-secret` in
-the viewer Key Vault. The viewer uses it only for the T1 blueprint exchange;
+the shared W365 Key Vault. The viewer uses it only for the T1 blueprint exchange;
 the same T2/user-FIC T3 exchanges and resource-scoped tokens remain unchanged.
 Managed-identity federation remains an explicit alternative and requires the
 approved viewer FIC documented in

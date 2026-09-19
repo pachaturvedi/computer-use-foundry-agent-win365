@@ -11,7 +11,6 @@ var compactPrefix = toLower(replace(resourcePrefix, '-', ''))
 var resourceSuffix = take(uniqueString(subscription().id, resourceGroup().id, resourcePrefix), 6)
 var environmentName = '${resourcePrefix}-cae'
 var registryName = take('${compactPrefix}cr${resourceSuffix}', 50)
-var keyVaultName = take('${resourcePrefix}-kv-${resourceSuffix}', 24)
 var logAnalyticsName = '${resourcePrefix}-viewer-logs'
 
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = if (createManagedEnvironment) {
@@ -58,28 +57,7 @@ resource registry 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
   }
 }
 
-resource vault 'Microsoft.KeyVault/vaults@2023-07-01' = {
-  name: keyVaultName
-  location: location
-  tags: tags
-  properties: {
-    enablePurgeProtection: true
-    enableRbacAuthorization: true
-    enabledForDeployment: false
-    enabledForDiskEncryption: false
-    enabledForTemplateDeployment: false
-    publicNetworkAccess: 'Enabled'
-    sku: {
-      family: 'A'
-      name: 'standard'
-    }
-    softDeleteRetentionInDays: 90
-    tenantId: tenant().tenantId
-  }
-}
-
 output environmentResourceId string = createManagedEnvironment ? environment!.id : ''
 output registryName string = registry.name
 output registryLoginServer string = registry.properties.loginServer
-output keyVaultName string = vault.name
 output logAnalyticsName string = logAnalytics.name

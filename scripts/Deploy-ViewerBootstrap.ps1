@@ -15,14 +15,13 @@ if ($env:DEPLOY_VIEWER -ne 'true') {
 
 $required = @(
     'AZURE_SUBSCRIPTION_ID',
-    'VIEWER_RESOURCE_GROUP_NAME',
+    'AZURE_RESOURCE_GROUP',
     'VIEWER_APP_NAME',
     'VIEWER_IDENTITY_PRINCIPAL_ID',
     'VIEWER_IDENTITY_RESOURCE_ID',
     'VIEWER_REGISTRY_NAME',
     'VIEWER_REGISTRY_ENDPOINT',
     'VIEWER_IMAGE_NAME',
-    'STATE_RESOURCE_GROUP_NAME',
     'STATE_STORAGE_ACCOUNT_NAME',
     'STATE_CONTAINER_NAME',
     'SESSION_BLOB_URI'
@@ -35,7 +34,7 @@ foreach ($name in $required) {
 
 Assert-ViewerSharedStateConfiguration `
     -DeployState $env:DEPLOY_STATE `
-    -StateResourceGroupName $env:STATE_RESOURCE_GROUP_NAME `
+    -StateResourceGroupName $env:AZURE_RESOURCE_GROUP `
     -StateStorageAccountName $env:STATE_STORAGE_ACCOUNT_NAME `
     -StateContainerName $env:STATE_CONTAINER_NAME `
     -SessionBlobUri $env:SESSION_BLOB_URI
@@ -58,7 +57,7 @@ function Invoke-Az {
 }
 
 $subscription = $env:AZURE_SUBSCRIPTION_ID
-$resourceGroup = $env:VIEWER_RESOURCE_GROUP_NAME
+$resourceGroup = $env:AZURE_RESOURCE_GROUP
 $appName = $env:VIEWER_APP_NAME
 $registryName = $env:VIEWER_REGISTRY_NAME
 $registryEndpoint = $env:VIEWER_REGISTRY_ENDPOINT
@@ -80,7 +79,7 @@ if ($env:VIEWER_LIVE_ENABLED -eq 'true') {
         'SCREENSHARE_SDK_URL',
         'SCREENSHARE_FRAME_ORIGINS',
         'SCREENSHARE_APP_URL',
-        'VIEWER_KEY_VAULT_NAME',
+        'W365_KEY_VAULT_NAME',
         'W365_BLUEPRINT_CREDENTIAL_MODE'
     )
     foreach ($name in $liveRequired) {
@@ -104,12 +103,12 @@ if ($env:VIEWER_LIVE_ENABLED -eq 'true') {
     foreach ($secretName in $requiredSecrets) {
         & az keyvault secret show `
             --subscription $subscription `
-            --vault-name $env:VIEWER_KEY_VAULT_NAME `
+            --vault-name $env:W365_KEY_VAULT_NAME `
             --name $secretName `
             --query id `
             --output none 2>$null
         if ($LASTEXITCODE -ne 0) {
-            throw "Key Vault '$($env:VIEWER_KEY_VAULT_NAME)' must contain secret '$secretName'."
+            throw "Key Vault '$($env:W365_KEY_VAULT_NAME)' must contain secret '$secretName'."
         }
     }
 }

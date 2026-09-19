@@ -76,15 +76,15 @@ var resolvedFoundryResourceGroupName = !useExistingProject
   ? ''
   : (!empty(existingFoundryResourceGroupName) ? existingFoundryResourceGroupName : fail('Existing-project mode requires AZURE_FOUNDRY_RESOURCE_GROUP.'))
 
-resource foundryResourceGroup 'Microsoft.Resources/resourceGroups@2023-07-01' = if (!useExistingProject) {
+resource environmentResourceGroup 'Microsoft.Resources/resourceGroups@2023-07-01' = {
   name: foundryResourceGroupName
   location: location
-  tags: tags
+  tags: union(tags, { component: 'environment' })
 }
 
 module foundry './resources.bicep' = if (!useExistingProject) {
   name: 'foundry-resources'
-  scope: foundryResourceGroup
+  scope: environmentResourceGroup
   params: {
     location: location
     accountName: accountName
@@ -103,9 +103,9 @@ module foundry './resources.bicep' = if (!useExistingProject) {
   }
 }
 
-output AZD_FOUNDRY_RESOURCE_GROUP_ID string = useExistingProject ? resolvedFoundryResourceGroupId : foundryResourceGroup.id
-output AZURE_FOUNDRY_RESOURCE_GROUP string = useExistingProject ? resolvedFoundryResourceGroupName : foundryResourceGroup.name
-output AZURE_RESOURCE_GROUP string = useExistingProject ? resolvedFoundryResourceGroupName : foundryResourceGroup.name
+output AZD_FOUNDRY_RESOURCE_GROUP_ID string = useExistingProject ? resolvedFoundryResourceGroupId : environmentResourceGroup.id
+output AZURE_FOUNDRY_RESOURCE_GROUP string = useExistingProject ? resolvedFoundryResourceGroupName : environmentResourceGroup.name
+output AZURE_RESOURCE_GROUP string = environmentResourceGroup.name
 output FOUNDRY_PROJECT_OWNERSHIP string = foundryProjectOwnership
 output AZURE_AI_ACCOUNT_NAME string = useExistingProject ? accountName : foundry!.outputs.accountName
 output AZURE_AI_PROJECT_NAME string = useExistingProject ? projectName : foundry!.outputs.projectName
