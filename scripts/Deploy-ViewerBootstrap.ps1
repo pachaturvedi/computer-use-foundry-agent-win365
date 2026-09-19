@@ -51,6 +51,36 @@ function Invoke-Az {
     }
 }
 
+function Get-ViewerImageBuildHash {
+    param([Parameter(Mandatory)][string]$RepositoryRoot)
+
+    $projectRoot = Join-Path $RepositoryRoot 'src\Win365Agent'
+    $inputFiles = @(
+        Get-Item -LiteralPath (Join-Path $RepositoryRoot '.dockerignore')
+        Get-Item -LiteralPath (Join-Path $RepositoryRoot 'Dockerfile')
+        Get-Item -LiteralPath (Join-Path $RepositoryRoot 'NuGet.Config')
+        Get-ChildItem -LiteralPath $projectRoot -File -Recurse |
+            Where-Object {
+                $_.FullName -notmatch '[\\/](bin|obj)[\\/]' -and
+                $_.Name -notmatch '^\.env' -and
+                $_.Extension -notin @('.pfx', '.pem', '.key') -and
+                $_.Name -ne 'appsettings.Development.json'
+            }
+    ) | Sort-Object FullName
+
+    $fingerprints = foreach ($file in $inputFiles) {
+        $relativePath = [IO.Path]::GetRelativePath($RepositoryRoot, $file.FullName).Replace('\', '/')
+        $fileHash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        "$relativePath`n$fileHash"
+    }
+    $baseImageRefresh = [DateTimeOffset]::UtcNow.ToString(
+        'yyyy-MM',
+        [Globalization.CultureInfo]::InvariantCulture)
+    $buildInputs = @($fingerprints) + "base-image-refresh`n$baseImageRefresh"
+    $bytes = [Text.Encoding]::UTF8.GetBytes($buildInputs -join "`n")
+    return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+}
+
 $subscription = $env:AZURE_SUBSCRIPTION_ID
 $resourceGroup = $env:AZURE_RESOURCE_GROUP
 $appName = $env:VIEWER_APP_NAME
@@ -59,6 +89,14 @@ $registryEndpoint = $env:VIEWER_REGISTRY_ENDPOINT
 $identityPrincipalId = $env:VIEWER_IDENTITY_PRINCIPAL_ID
 $identityResourceId = $env:VIEWER_IDENTITY_RESOURCE_ID
 $imageName = $env:VIEWER_IMAGE_NAME
+$repositoryRoot = Split-Path $PSScriptRoot
+$imageRepository = ($imageName -split ':', 2)[0]
+if ([string]::IsNullOrWhiteSpace($imageRepository)) {
+    throw "VIEWER_IMAGE_NAME '$imageName' must contain an ACR repository name."
+}
+$buildHash = Get-ViewerImageBuildHash -RepositoryRoot $repositoryRoot
+$buildTag = "build-$($buildHash.Substring(0, 12))"
+$resolvedImageName = "${imageRepository}:$buildTag"
 
 if ($env:VIEWER_LIVE_ENABLED -eq 'true') {
     $liveRequired = @(
@@ -108,15 +146,44 @@ if ($env:VIEWER_LIVE_ENABLED -eq 'true') {
     }
 }
 
-Invoke-Az @(
-    'acr', 'build',
-    '--subscription', $subscription,
-    '--registry', $registryName,
-    '--image', $imageName,
-    '--file', (Join-Path (Split-Path $PSScriptRoot) 'Dockerfile'),
-    (Split-Path $PSScriptRoot),
-    '--output', 'none'
-)
+$repositoryExists = (& az acr repository list `
+    --subscription $subscription `
+    --name $registryName `
+    --query "[?@=='$imageRepository'] | [0]" `
+    --output tsv).Trim()
+if ($LASTEXITCODE -ne 0) {
+    throw "Unable to inspect repositories in Azure Container Registry '$registryName'."
+}
+
+$imageExists = $false
+if ($repositoryExists -eq $imageRepository) {
+    $existingTag = (& az acr repository show-tags `
+        --subscription $subscription `
+        --name $registryName `
+        --repository $imageRepository `
+        --query "[?@=='$buildTag'] | [0]" `
+        --output tsv).Trim()
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to inspect tags for '$imageRepository' in Azure Container Registry '$registryName'."
+    }
+    $imageExists = $existingTag -eq $buildTag
+}
+
+if ($imageExists) {
+    Write-Host "Reusing unchanged viewer image: $registryEndpoint/$resolvedImageName"
+}
+else {
+    Write-Host "Viewer source changed; building image: $registryEndpoint/$resolvedImageName"
+    Invoke-Az @(
+        'acr', 'build',
+        '--subscription', $subscription,
+        '--registry', $registryName,
+        '--image', $resolvedImageName,
+        '--file', (Join-Path $repositoryRoot 'Dockerfile'),
+        $repositoryRoot,
+        '--output', 'none'
+    )
+}
 
 $registryId = (& az acr show `
     --subscription $subscription `
@@ -158,7 +225,7 @@ Invoke-Az @(
     '--subscription', $subscription,
     '--resource-group', $resourceGroup,
     '--name', $appName,
-    '--image', "$registryEndpoint/$imageName",
+    '--image', "$registryEndpoint/$resolvedImageName",
     '--output', 'none'
 )
 

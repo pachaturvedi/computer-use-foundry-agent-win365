@@ -400,6 +400,12 @@ pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
     -ConfirmResourceChanges
 ```
 
+The viewer bootstrap calculates a `build-<hash>` image tag from the Dockerfile,
+NuGet configuration, and viewer source. It reuses that ACR image on unchanged
+`azd up` runs instead of repeating the remote SDK pull, restore, build, and
+push. The hash changes monthly even when the source does not, allowing the
+floating .NET base-image tags to pick up servicing and security updates.
+
 The viewer consumes the existing state outputs
 `AZURE_RESOURCE_GROUP`, `STATE_STORAGE_ACCOUNT_NAME`,
 `STATE_CONTAINER_NAME`, and `SESSION_BLOB_URI`. Any account, container, path,

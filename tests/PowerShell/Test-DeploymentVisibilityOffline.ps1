@@ -118,6 +118,11 @@ try {
         $viewerDeployScript -notmatch 'Waiting up to five minutes for the ACA viewer to become healthy' -or
         $viewerDeployScript -notmatch "Component 'viewer-health'" -or
         $viewerDeployScript -notmatch 'Invoke-RestMethod.+-Verbose:\$false' -or
+        $viewerDeployScript -notmatch 'Get-ViewerImageBuildHash' -or
+        $viewerDeployScript -notmatch 'acr repository show-tags' -or
+        $viewerDeployScript -notmatch 'Reusing unchanged viewer image' -or
+        $viewerDeployScript -notmatch 'base-image-refresh' -or
+        $viewerDeployScript -notmatch 'build-\$\(\$buildHash\.Substring\(0, 12\)\)' -or
         $stateParameters -notmatch '"resourceGroupName": \{ "value": "\$\{AZURE_RESOURCE_GROUP\}" \}' -or
         $viewerParameters -notmatch '"resourceGroupName": \{ "value": "\$\{AZURE_RESOURCE_GROUP\}" \}') {
         throw 'Infrastructure layers do not consistently reuse one AZURE_RESOURCE_GROUP.'
