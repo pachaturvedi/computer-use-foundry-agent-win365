@@ -14,9 +14,11 @@ $environmentDirectory = Join-Path $tempRoot ".azure\$environmentName"
 $environmentPath = Join-Path $environmentDirectory '.env'
 $w365CallsPath = Join-Path $tempRoot 'w365-calls.json'
 $viewerCallsPath = Join-Path $tempRoot 'viewer-calls.json'
+$agentDeployCallsPath = Join-Path $tempRoot 'agent-deploy-calls.json'
 $mockW365Path = Join-Path $tempRoot 'Mock-W365Setup.ps1'
 $failingW365Path = Join-Path $tempRoot 'Mock-W365SetupFailure.ps1'
 $mockViewerPath = Join-Path $tempRoot 'Mock-Viewer.ps1'
+$mockAgentDeployPath = Join-Path $tempRoot 'Mock-AgentDeploy.ps1'
 
 $trackedEnvironmentVariables = @(
     'ENABLE_W365',
@@ -33,6 +35,7 @@ $trackedEnvironmentVariables = @(
     'W365_AGENT_ID',
     'W365_AGENT_OBJECT_ID',
     'W365_BLUEPRINT_ID'
+    'VIEWER_PUBLIC_URL'
 )
 $savedEnvironment = @{}
 foreach ($name in $trackedEnvironmentVariables) {
@@ -40,7 +43,7 @@ foreach ($name in $trackedEnvironmentVariables) {
 }
 
 function Reset-Calls {
-    Remove-Item -LiteralPath $w365CallsPath, $viewerCallsPath -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $w365CallsPath, $viewerCallsPath, $agentDeployCallsPath -ErrorAction SilentlyContinue
 }
 
 function Write-TestEnvironment {
@@ -109,6 +112,24 @@ param()
 @{
     w365Enabled = $env:W365_ENABLED
 } | ConvertTo-Json | Set-Content -LiteralPath $env:TEST_VIEWER_CALLS_PATH
+if (![string]::IsNullOrWhiteSpace($env:TEST_VIEWER_PUBLIC_URL)) {
+    $environmentPath = Join-Path $env:TEST_REPOSITORY_ROOT ".azure\$($env:AZURE_ENV_NAME)\.env"
+    Add-Content -LiteralPath $environmentPath -Value "VIEWER_PUBLIC_URL=`"$($env:TEST_VIEWER_PUBLIC_URL)`""
+}
+'@
+    Set-Content -LiteralPath $mockAgentDeployPath -Value @'
+param(
+    [string]$Mode,
+    [string]$Environment,
+    [switch]$ConfirmResourceChanges
+)
+@{
+    mode = $Mode
+    environment = $Environment
+    confirmResourceChanges = $ConfirmResourceChanges.IsPresent
+    viewerPublicUrl = $env:VIEWER_PUBLIC_URL
+    recursionGuard = $env:W365_POSTUP_IN_PROGRESS
+} | ConvertTo-Json | Set-Content -LiteralPath $env:TEST_AGENT_DEPLOY_CALLS_PATH
 '@
     Set-Content -LiteralPath $mockW365Path -Value @'
 param(
@@ -193,6 +214,8 @@ throw 'Simulated W365 setup failure.'
     $env:TEST_REPOSITORY_ROOT = $tempRoot
     $env:TEST_W365_CALLS_PATH = $w365CallsPath
     $env:TEST_VIEWER_CALLS_PATH = $viewerCallsPath
+    $env:TEST_AGENT_DEPLOY_CALLS_PATH = $agentDeployCallsPath
+    $env:TEST_VIEWER_PUBLIC_URL = ''
     $env:AZURE_ENV_NAME = $environmentName
     $env:AZURE_TENANT_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
     $env:W365_AGENT_USER_PRINCIPAL_NAME = ''
@@ -278,6 +301,26 @@ throw 'Simulated W365 setup failure.'
     }
 
     Reset-Calls
+    Write-TestEnvironment -Complete:$true
+    Write-CompleteManifest
+    $env:VIEWER_PUBLIC_URL = ''
+    $env:TEST_VIEWER_PUBLIC_URL = 'https://viewer.example.com'
+    & $scriptPath `
+        -RepositoryRoot $tempRoot `
+        -W365SetupScriptPath $mockW365Path `
+        -ViewerBootstrapScriptPath $mockViewerPath `
+        -AgentDeploymentScriptPath $mockAgentDeployPath
+    $agentDeployCall = Get-Content -LiteralPath $agentDeployCallsPath -Raw | ConvertFrom-Json
+    if ($agentDeployCall.mode -ne 'DeployAgent' -or
+        $agentDeployCall.environment -ne $environmentName -or
+        !$agentDeployCall.confirmResourceChanges -or
+        $agentDeployCall.viewerPublicUrl -ne 'https://viewer.example.com' -or
+        $agentDeployCall.recursionGuard -ne 'true') {
+        throw 'Postup did not redeploy the hosted agent after discovering the viewer URL.'
+    }
+    $env:TEST_VIEWER_PUBLIC_URL = ''
+
+    Reset-Calls
     Write-TestEnvironment -Complete:$false
     $env:ENABLE_W365 = 'true'
     $env:W365_ENABLED = 'false'
@@ -312,7 +355,14 @@ finally {
     foreach ($name in $trackedEnvironmentVariables) {
         [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name], 'Process')
     }
-    foreach ($name in @('TEST_SOURCE_ROOT', 'TEST_REPOSITORY_ROOT', 'TEST_W365_CALLS_PATH', 'TEST_VIEWER_CALLS_PATH')) {
+    foreach ($name in @(
+        'TEST_SOURCE_ROOT',
+        'TEST_REPOSITORY_ROOT',
+        'TEST_W365_CALLS_PATH',
+        'TEST_VIEWER_CALLS_PATH',
+        'TEST_AGENT_DEPLOY_CALLS_PATH',
+        'TEST_VIEWER_PUBLIC_URL'
+    )) {
         Remove-Item "Env:\$name" -ErrorAction SilentlyContinue
     }
     if (Test-Path -LiteralPath $tempRoot) {
