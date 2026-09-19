@@ -2,14 +2,19 @@ targetScope = 'resourceGroup'
 
 param location string = resourceGroup().location
 param appName string
-param environmentName string
+param managedEnvironmentResourceId string
 param registryName string
 param imageName string
 param keyVaultName string
 param oidcSecretName string = 'w365-viewer-client-secret'
+param blueprintSecretName string = 'w365-blueprint-client-secret'
 param w365Enabled bool = false
-param storageAccountName string
-param stateContainerName string = 'desktop-state'
+@allowed([
+  'client_secret'
+  'managed_identity_federation'
+])
+param blueprintCredentialMode string = 'client_secret'
+param sessionBlobUri string
 param viewerPublicUrl string = ''
 param viewerClientId string = ''
 param operatorTenantId string = ''
@@ -28,40 +33,22 @@ param tags object = {}
 var containerImage = useRegistry
   ? '${registry.properties.loginServer}/${imageName}'
   : imageName
+var clientSecretEnabled = w365Enabled && blueprintCredentialMode == 'client_secret'
 
-resource environment 'Microsoft.App/managedEnvironments@2024-03-01' existing = { name: environmentName }
 resource registry 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = { name: registryName }
 resource vault 'Microsoft.KeyVault/vaults@2023-07-01' existing = { name: keyVaultName }
-resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' existing = { name: storageAccountName }
-resource blobs 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' existing = {
-  parent: storage
-  name: 'default'
-}
-resource stateContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' existing = {
-  parent: blobs
-  name: stateContainerName
-}
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: '${appName}-identity'
   location: location
   tags: tags
 }
-resource vaultRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource vaultRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (w365Enabled) {
   name: guid(vault.id, identity.id, 'secrets')
   scope: vault
   properties: {
     principalId: identity.properties.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')
-  }
-}
-resource blobRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(stateContainer.id, identity.id, 'state')
-  scope: stateContainer
-  properties: {
-    principalId: identity.properties.principalId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
   }
 }
 resource registryRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
@@ -83,16 +70,23 @@ resource viewer 'Microsoft.App/containerApps@2024-03-01' = {
     userAssignedIdentities: { '${identity.id}': {} }
   }
   properties: {
-    managedEnvironmentId: environment.id
+    managedEnvironmentId: managedEnvironmentResourceId
     configuration: {
       activeRevisionsMode: 'Single'
       ingress: { external: true, targetPort: 8080, allowInsecure: false }
       registries: useRegistry ? [{ server: registry.properties.loginServer, identity: identity.id }] : []
-      secrets: w365Enabled ? [{
-        name: 'oidc-secret'
-        keyVaultUrl: '${vault.properties.vaultUri}secrets/${oidcSecretName}'
-        identity: identity.id
-      }] : []
+      secrets: concat(
+        w365Enabled ? [{
+          name: 'oidc-secret'
+          keyVaultUrl: '${vault.properties.vaultUri}secrets/${oidcSecretName}'
+          identity: identity.id
+        }] : [],
+        clientSecretEnabled ? [{
+          name: 'blueprint-secret'
+          keyVaultUrl: '${vault.properties.vaultUri}secrets/${blueprintSecretName}'
+          identity: identity.id
+        }] : []
+      )
     }
     template: {
       scale: { minReplicas: 1, maxReplicas: 1 }
@@ -112,7 +106,8 @@ resource viewer 'Microsoft.App/containerApps@2024-03-01' = {
           { name: 'W365_AGENT_ID', value: agentId }
           { name: 'W365_AGENT_OBJECT_ID', value: agentObjectId }
           { name: 'W365_AGENT_USER_ID', value: agentUserId }
-          { name: 'SESSION_BLOB_URI', value: '${storage.properties.primaryEndpoints.blob}${stateContainerName}/slot.json' }
+          { name: 'W365_BLUEPRINT_CREDENTIAL_MODE', value: blueprintCredentialMode }
+          { name: 'SESSION_BLOB_URI', value: sessionBlobUri }
           { name: 'OPERATOR_TENANT_ID', value: operatorTenantId }
           { name: 'OPERATOR_OBJECT_ID', value: operatorObjectId }
           { name: 'VIEWER_PUBLIC_URL', value: viewerPublicUrl }
@@ -120,7 +115,9 @@ resource viewer 'Microsoft.App/containerApps@2024-03-01' = {
           { name: 'SCREENSHARE_SDK_URL', value: screenShareSdkUrl }
           { name: 'SCREENSHARE_FRAME_ORIGINS', value: screenShareFrameOrigins }
           { name: 'SCREENSHARE_APP_URL', value: screenShareAppUrl }
-        ], w365Enabled ? [{ name: 'VIEWER_CLIENT_SECRET', secretRef: 'oidc-secret' }] : [])
+        ],
+        w365Enabled ? [{ name: 'VIEWER_CLIENT_SECRET', secretRef: 'oidc-secret' }] : [],
+        clientSecretEnabled ? [{ name: 'W365_CLIENT_SECRET', secretRef: 'blueprint-secret' }] : [])
         probes: [{
           type: 'Liveness'
           httpGet: { path: '/health', port: 8080 }
@@ -130,7 +127,7 @@ resource viewer 'Microsoft.App/containerApps@2024-03-01' = {
       }]
     }
   }
-  dependsOn: [vaultRole, blobRole, registryRole]
+  dependsOn: [vaultRole, registryRole]
 }
 output viewerHostname string = viewer.properties.configuration.ingress.fqdn
 output viewerName string = viewer.name

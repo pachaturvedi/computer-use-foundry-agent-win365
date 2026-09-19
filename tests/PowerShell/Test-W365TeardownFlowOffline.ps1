@@ -67,7 +67,9 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
         $scopeNames = switch ($AppId) {
             'da81128c-e5b5-4f9e-8d89-50d906f107c5' { @('Tools.ListInvoke.All') }
             'ea9ffc3e-8a23-4a7d-836d-234d7c7565c1' { @('McpServersMetadata.Read.All') }
-            '90ecec28-f5a6-42b3-9bde-dae1ca98f8b5' { @('Computer.See', 'Computer.Control') }
+            '90ecec28-f5a6-42b3-9bde-dae1ca98f8b5' {
+                @('Computer.See', 'Computer.Control', 'Computer.Do', 'Computer.Get')
+            }
             default { throw "Unknown mocked resource $AppId" }
         }
 

@@ -33,8 +33,8 @@ request argument, page or user-supplied credential. Active runtime requires shar
 
 | `W365_BLUEPRINT_CREDENTIAL_MODE` | Status |
 | --- | --- |
-| `client_secret` | Implemented and validated end to end for temporary test credentials. Requires `W365_CLIENT_SECRET`. |
-| `managed_identity_federation` | Implemented and remains the default, but the tested Foundry-hosted identity cannot chain its federated token into the blueprint exchange (`AADSTS700231`). |
+| `client_secret` | Default for the E2E demo and validated end to end. Requires `W365_CLIENT_SECRET`; the ACA viewer receives it from Key Vault. |
+| `managed_identity_federation` | Optional hardening path. The tested Foundry-hosted identity could not chain its federated token into the blueprint exchange (`AADSTS700231`). |
 | `key_vault_certificate` | Reserved for the next implementation phase. Configuration fails closed until certificate retrieval and signing are implemented and validated. |
 
 The modes are explicit and mutually exclusive. There is no fallback from one
@@ -80,7 +80,7 @@ skipped rather than invented.
 | --- | --- |
 | MCP through ATG | `da81128c-e5b5-4f9e-8d89-50d906f107c5/.default` |
 | Watch only | `90ecec28-f5a6-42b3-9bde-dae1ca98f8b5/Computer.See` |
-| Take control | ARI `Computer.See` plus `Computer.Control` |
+| Take control | ARI `Computer.See`, `Computer.Control`, `Computer.Do`, and `Computer.Get` |
 
 ## Runtime federation is a blueprint trust
 
@@ -106,8 +106,9 @@ Configure only an approved viewer, and do not run workflows needing human
 handoff without a usable approved viewer.
 
 The viewer OIDC client secret is a separate credential for the human sign-in
-web app. ACA retrieves it through a Key Vault secret reference **only when
-enabled**. Key Vault is not used for blueprint credentials.
+web app. In `client_secret` mode, ACA retrieves both it and the blueprint
+client secret through separate Key Vault secret references **only when
+enabled**.
 
 ## Browser authorization
 

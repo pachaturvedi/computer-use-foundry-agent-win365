@@ -315,6 +315,11 @@ hosting compatibility.
 
 ## Optional viewer federation
 
+This section applies only when
+`W365_BLUEPRINT_CREDENTIAL_MODE=managed_identity_federation`. The default E2E
+demo uses the existing blueprint client secret and does not require a viewer
+FIC. Credential modes are explicit and never fall back to each other.
+
 First deploy the viewer in bootstrap mode to obtain its existing UAMI
 `viewerIdentityPrincipalId` output. Only after administrator approval, add:
 
@@ -388,7 +393,7 @@ Runtime identities do not receive these Graph setup permissions.
 | --- | --- |
 | `da81128c-e5b5-4f9e-8d89-50d906f107c5` | `Tools.ListInvoke.All` |
 | `ea9ffc3e-8a23-4a7d-836d-234d7c7565c1` | `McpServersMetadata.Read.All` |
-| `90ecec28-f5a6-42b3-9bde-dae1ca98f8b5` | `Computer.See`, `Computer.Control` |
+| `90ecec28-f5a6-42b3-9bde-dae1ca98f8b5` | `Computer.See`, `Computer.Control`, `Computer.Do`, `Computer.Get` |
 
 Each resource is declared/consented on the blueprint and inherited by the agent.
 `allAllowed` inherits already granted scopes; `noRoles` avoids application-role

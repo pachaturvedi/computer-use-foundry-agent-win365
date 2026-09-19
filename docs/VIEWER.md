@@ -10,7 +10,8 @@ viewer is optional for direct W365 MCP execution.
 
 - Phase-1 hosted-agent deployment completed and, for the hosted path, W365 phase 2 is either planned or already enabled.
 - Viewer bootstrap outputs recorded from [deployment](DEPLOYMENT.md#optional-phase-1-viewer-bootstrap), especially `viewerIdentityClientId`, `viewerIdentityPrincipalId`, and `viewerHostname`.
-- Explicit administrator approval for optional viewer federation on the Foundry blueprint.
+- A valid blueprint client secret for the default E2E path. Viewer federation
+  is required only when explicitly selecting `managed_identity_federation`.
 - Approved W365 screen-share values available from onboarding: `SCREENSHARE_APP_URL`, `SCREENSHARE_SDK_URL`, and `SCREENSHARE_FRAME_ORIGINS`.
 - A single-tenant Entra web application and Key Vault secret plan ready for the viewer OIDC sign-in flow.
 
@@ -46,29 +47,22 @@ Key Vault secret and grants secret access only when enabled.
 
 ## Enable the hosted viewer
 
-First obtain explicit administrator approval and use
-[setup's optional FIC](W365-SETUP.md#optional-viewer-federation) to trust the
-**existing viewer UAMI object ID** on the Foundry blueprint. Its issuer is
-`https://login.microsoftonline.com/<tenant>/v2.0` and audience is
-`api://AzureADTokenExchange`. This authorizes **blueprint impersonation,
-potentially including sibling agent identities**, not ARI-only access. Do not
-grant it if shared-blueprint or administrator policy disallows it. The viewer
-may remain disabled; agent links may then be unavailable. Configure only an
-approved viewer and avoid workflows requiring handoff without one.
-
-The viewer selects its UAMI using `AZURE_CLIENT_ID`, obtains a managed identity
-token, and uses the FIC plus `fmi_path` for the agent to authenticate the blueprint
-for T1, then the same T2/user-FIC T3 exchanges as the agent. There is no DAC,
-CLI-token, certificate or secret fallback for W365. See
-[authentication](AUTHENTICATION.md).
+The default E2E path sets `W365_BLUEPRINT_CREDENTIAL_MODE=client_secret`.
+Store the existing blueprint credential as `w365-blueprint-client-secret` in
+the viewer Key Vault. The viewer uses it only for the T1 blueprint exchange;
+the same T2/user-FIC T3 exchanges and resource-scoped tokens remain unchanged.
+Managed-identity federation remains an explicit alternative and requires the
+approved viewer FIC documented in
+[W365 setup](W365-SETUP.md#optional-viewer-federation). There is no automatic
+fallback between credential modes.
 
 Create a **single-tenant web application** in Entra for the viewer. This is not
 the W365 agent blueprint. Set its web redirect URI to
 `https://<your-viewer-host>/signin-oidc` and record `VIEWER_CLIENT_ID`.
-Create a short-lived client credential for this web app and store it as a Key
-Vault secret; `infra/viewer.bicep` uses a Key Vault secret reference, not a literal
-secret parameter. Key Vault is used only for this OIDC secret, never a blueprint
-credential. OIDC uses code flow with PKCE and a secure HttpOnly cookie.
+Create a short-lived client credential for this web app and store it as
+`w365-viewer-client-secret`. `infra/viewer.bicep` uses Key Vault references for
+both viewer credentials, never literal secret parameters. OIDC uses code flow
+with PKCE and a secure HttpOnly cookie.
 
 Set `OPERATOR_TENANT_ID` and `OPERATOR_OBJECT_ID` to the **human operator's** Entra
 tenant and object ID. Both claims must match before any protected viewer page or
@@ -129,7 +123,9 @@ Take-control continues to use the authenticated companion `/view/<id>#control`
 flow.
 
 Agent and viewer must share the same valid W365 blueprint/agent/user IDs and
-the exact `SESSION_BLOB_URI`. Both require `W365_AGENT_OBJECT_ID` when active;
+the exact `SESSION_BLOB_URI`. Viewer deployment references the existing state
+account and grants its UAMI access to that exact container; it does not create
+a second session store. Both require `W365_AGENT_OBJECT_ID` when active;
 set Bicep `agentObjectId` to the agent object/principal ID, not `agentId`
 (app/client ID). `HOSTED_ALLOWED_USER_ID` belongs only to Foundry, not the
 viewer; Bicep has no `hostedAllowedUserId` parameter. Get `SCREENSHARE_SDK_URL` and
@@ -138,8 +134,9 @@ list of exact HTTPS origins, without paths, wildcards or trailing slashes,
 for CSP's iframe allowlist. Do not substitute an arbitrary CDN or weaken CSP.
 
 Fill the [viewer parameter example](../infra/viewer.parameters.example.json),
-then set `VIEWER_LIVE_ENABLED=true` only after FIC/OIDC/state configuration,
-the Key Vault OIDC secret, and all screen-share values are ready. The template
+then set `VIEWER_LIVE_ENABLED=true` only after credential/OIDC/state
+configuration, both required Key Vault secrets, and all screen-share values
+are ready. The template
 rejects live viewer activation unless `W365_ENABLED=true` and the required
 non-secret values are present. Redeploy the same app/UAMI. For the default
 ACA hostname, use `viewerHostname` from phase 1; make `viewerPublicUrl`, the

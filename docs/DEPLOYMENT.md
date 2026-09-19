@@ -331,22 +331,16 @@ federated credentials, and the blueprint's prior `requiredResourceAccess`.
 ## Optional phase-1 viewer bootstrap
 
 The viewer is a separate process built from the same project (`--viewer`).
-It may stay disabled if blueprint federation is not approved. Deploy bootstrap
-first when you need the viewer UAMI IDs for approval.
+Deploy it in bootstrap mode first so ACA can establish the public origin, UAMI,
+ACR, and Key Vault without requiring live W365 or OIDC settings.
 
-Create a dedicated prefix-driven resource group; do not reuse unrelated shared
-or production resources. `infra/viewer-foundation.bicep` creates the required
-ACA environment, ACR, Log Analytics workspace, Storage account/private
-`desktop-state` container, and Key Vault. `infra/viewer.bicep` then creates the
-viewer UAMI, resource-scoped roles, and Container App. Key Vault is **only for
-the phase-2 OIDC secret**; bootstrap does not reference an OIDC secret or grant
-its read role.
-
-The foundation uses POC defaults: ACR Basic, Storage LRS, 30-day logs,
-HTTPS/TLS 1.2+, disabled registry admin access, disabled Blob public/shared-key
-access, Key Vault RBAC, soft delete, and purge protection. Review redundancy,
-private networking, diagnostics, retention, and policy requirements before
-production use.
+The viewer reuses the agent's existing `SESSION_BLOB_URI`; it does not create a
+second Storage account or session container. It also accepts an existing
+Container Apps managed-environment resource ID, which is the recommended path
+when the subscription is at the managed-environment quota. The foundation
+creates a managed environment and Log Analytics only when that ID is empty.
+It always creates the viewer ACR and Key Vault. The state-access module grants
+the viewer UAMI Blob Data Contributor on the exact existing state container.
 
 For a new Foundry project and viewer, initialize the complete environment:
 
@@ -363,7 +357,11 @@ pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
 
 `-TenantId` is optional and should be supplied only to override the tenant
 selected by `azd auth login`. Omit `-DeployViewer` unless the dedicated viewer
-resources and Container Apps environment quota have been explicitly approved.
+resources have been approved. Put the full ID of an approved existing
+environment in `config\deployment.local.json` as
+`viewer.managedEnvironmentResourceId`; use
+`.\scripts\Get-ViewerManagedEnvironments.ps1` to list candidates. Leaving it
+empty explicitly requests a new managed environment.
 The initializer uses reusable config helpers in `scripts/DeploymentConfig.ps1`
 so later hosted and cleanup workflows can consume the same defaults and
 override precedence without duplicating parsing logic.
@@ -377,22 +375,24 @@ azd env set RESOURCE_PREFIX $resourcePrefix
 azd env set DEPLOY_VIEWER true
 azd env set VIEWER_RESOURCE_GROUP_NAME "$resourcePrefix-viewer-rg"
 azd env set VIEWER_IMAGE_NAME "win365-sample:v1"
+azd env set VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID `
+  "/subscriptions/<subscription>/resourceGroups/<rg>/providers/Microsoft.App/managedEnvironments/<name>"
 pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
     -Mode DeployAll `
     -ConfirmResourceChanges
 ```
 
-If you are deploying the viewer, set `SCREENSHARE_APP_URL` in the azd
-environment or an untracked parameter file to the endpoint supplied by W365
-onboarding. The repository intentionally does not contain a concrete endpoint.
+The viewer consumes the existing state outputs
+`STATE_RESOURCE_GROUP_NAME`, `STATE_STORAGE_ACCOUNT_NAME`,
+`STATE_CONTAINER_NAME`, and `SESSION_BLOB_URI`. Any account, container, path,
+query, fragment, or protocol mismatch fails before deployment.
 
-`azd up` provisions the conditional Bicep layer using the `SCREENSHARE_APP_URL`
-you supplied,
-deploys the Foundry agent, then runs the Windows `postup` hook. The hook builds
+`azd up` provisions the conditional Bicep layer, deploys the Foundry agent, then
+runs the Windows `postup` hook. The hook builds
 the repository image in the newly created ACR, waits for `AcrPull` role
 propagation, switches the Container App to that image, and verifies `/health`.
-Storage and ACR names remove hyphens, use lowercase alphanumerics, include a
-deterministic suffix, and stay within service-specific length limits.
+ACR names remove hyphens, use lowercase alphanumerics, include a deterministic
+suffix, and stay within service-specific length limits.
 
 Before enabling `DEPLOY_VIEWER`, preview the viewer layer separately:
 
@@ -401,21 +401,22 @@ azd provision viewer --preview --no-prompt
 ```
 
 Layered projects do not support a combined `azd provision --preview`. If the
-preview reports `MaxNumberOfGlobalEnvironmentsInSubExceeded`, stop and request
-a Container Apps managed-environment quota increase. Do not silently reuse an
-unrelated environment or switch hosting services.
+preview reports `MaxNumberOfGlobalEnvironmentsInSubExceeded`, select an
+approved existing environment by full resource ID or request a quota increase.
+The deployment never silently chooses an environment.
 
 The [parameter example](../infra/viewer.parameters.example.json) contains only
 identifiers and URLs, never secret values. Its phase-2 placeholders are not
 requirements for bootstrap. Keep your copy untracked. Prefer an immutable image
 digest for releases. The template defaults `w365Enabled` to `false`, creates
-the viewer UAMI with ACR pull and container-scoped Blob roles, and runs one
+the viewer UAMI with ACR pull, grants Blob access through the state-resource
+group module, and runs one
 HTTPS-only replica. `/health` is healthy and other routes return 503; no OIDC
 configuration is needed until active.
 
 Phase-2 identity, operator, viewer and SDK parameters default to empty strings
-in Bicep. The foundation creates `keyVaultName` for future OIDC use; no OIDC
-secret value or reference is needed in bootstrap.
+in Bicep. The foundation creates `keyVaultName`; no secret value or reference
+is needed in bootstrap.
 
 Record `viewerHostname`, `viewerIdentityClientId` and
 `viewerIdentityPrincipalId` from the deployment outputs. The **principal/object
@@ -484,6 +485,9 @@ Set non-secret values using `azd env set KEY VALUE`:
 | `HOSTED_ALLOWED_USER_ID` | **Foundry agent only:** platform user partition or `sha256:` fingerprint; see binding below. Not a viewer parameter. |
 | `VIEWER_PUBLIC_URL` | Optional for an agent-only deployment. When omitted, desktop execution remains available but live-view/take-control links are returned as unavailable. Required for the viewer itself. |
 | `SCREENSHARE_APP_URL` | **Viewer only:** W365-hosted view-only application origin supplied by W365 onboarding. It is required only when `VIEWER_LIVE_ENABLED=true`. |
+| `SCREENSHARE_SDK_URL`, `SCREENSHARE_FRAME_ORIGINS` | **Viewer only:** approved W365 SDK URL and exact space-separated frame origins. |
+| `VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID` | Optional full ID of the approved existing ACA managed environment. Empty means create one. |
+| `W365_BLUEPRINT_CREDENTIAL_MODE` | Explicitly `client_secret` for the proven E2E demo or `managed_identity_federation` for the separately approved FIC path. There is no fallback. |
 | `VIEWER_LIVE_ENABLED` | Explicit viewer phase switch. Leave `false` for bootstrap; set `true` only after OIDC, state, W365, SDK/frame-origin values, and the Key Vault secret are ready. |
 | `W365_ENABLED` | Internal phase switch. Bootstrap sets it to `false`; `Setup-W365.ps1` persists `true` only after phase-2 prerequisites are ready. |
 
@@ -497,13 +501,33 @@ viewer, separately from `W365_AGENT_ID` (app/client ID). Set viewer `agentObject
 from the corresponding setup output, not the agent's app ID. The viewer has no
 `hostedAllowedUserId` Bicep parameter; its authorization uses the human OIDC claims.
 
-For an approved viewer, finish [OIDC/SDK configuration](VIEWER.md#enable-the-hosted-viewer).
-Store its OIDC web-app secret as `w365-viewer-client-secret` in Key Vault. Never
-put the value in `.azure`, parameter files, `azure.yaml` or the image. Fill the
-phase-2 viewer parameters, set `VIEWER_LIVE_ENABLED=true`, review the deployment
-what-if, and redeploy using the same viewer name/UAMI. Only then does the template reference
-the OIDC secret and grant Key Vault access. No blueprint certificate parameter
-or W365 Key Vault credential setting is used.
+Finish [OIDC/SDK configuration](VIEWER.md#enable-the-hosted-viewer). The lean
+Windows activation sequence is:
+
+```powershell
+# Bootstrap must already have produced VIEWER_PUBLIC_URL and VIEWER_KEY_VAULT_NAME.
+pwsh -NoProfile -File .\scripts\Configure-ViewerOidc.ps1
+pwsh -NoProfile -File .\scripts\Set-ViewerSecrets.ps1 -BlueprintOnly
+azd env set W365_BLUEPRINT_CREDENTIAL_MODE client_secret
+azd env set VIEWER_LIVE_ENABLED true
+pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
+    -Mode DeployAll `
+    -ConfirmResourceChanges
+```
+
+`Configure-ViewerOidc.ps1` creates or reconciles the single-tenant web app,
+exact `https://<viewer-host>/signin-oidc` callback, service principal, operator
+binding, and `w365-viewer-client-secret`. `Set-ViewerSecrets.ps1
+-BlueprintOnly` prompts securely for the proven blueprint credential and stores
+it as `w365-blueprint-client-secret`. Neither secret is stored in `.azure`,
+JSON, Bicep parameters, `azure.yaml`, or the image. The deployment script loads
+the blueprint secret into its process environment only while publishing the
+hosted agent.
+
+Only live activation references the two secrets and grants the viewer UAMI
+Key Vault access. `managed_identity_federation` does not require the blueprint
+secret, but fails unless the exact viewer UAMI federation is present in the
+W365 ownership manifest.
 
 Agent and enabled viewer must use **exactly the same W365 identities and state
 Blob**. Their compute identities remain different. Viewer `AZURE_CLIENT_ID`
