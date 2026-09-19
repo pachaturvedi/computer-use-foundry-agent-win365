@@ -12,9 +12,11 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
     $script:connectCalls = 0
     $script:connectShouldFail = $false
     $script:timeoutFailuresRemaining = 0
+    $script:lastContextScope = ''
     function Connect-MgGraph {
-        param($TenantId, $Scopes, $ContextScope, [switch]$NoWelcome, [switch]$UseDeviceCode)
+        param($TenantId, $Scopes, $ContextScope, $ClientTimeout, [switch]$NoWelcome, [switch]$UseDeviceCode)
         $script:connectCalls += 1
+        $script:lastContextScope = $ContextScope
         if ($script:timeoutFailuresRemaining -gt 0) {
             $script:timeoutFailuresRemaining -= 1
             throw 'Authentication timed out after 120 seconds due to inactivity. Please try again.'
@@ -36,24 +38,80 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
         if ($Method -ne 'GET') {
             throw "Unexpected method: $Method"
         }
-        if ($path -ne 'beta/deviceManagement/virtualEndpoint/cloudPcPools/8607571b-2177-462c-bd6f-b8d1dac75333') {
-            throw "Unexpected path: $path"
+
+        if ($path -eq 'beta/deviceManagement/virtualEndpoint/cloudPcPools') {
+            return @{
+                value = @(
+                    @{
+                        '@odata.type' = '#microsoft.graph.cloudPcAgentPool'
+                        id = '8607571b-2177-462c-bd6f-b8d1dac75333'
+                        displayName = 'w365a-billingplan'
+                        billingConfiguration = @{ billingType = 'payAsYouGo'; billingPlanId = '66666666-6666-6666-6666-666666666666' }
+                        cloudPcConfiguration = @{ imageId = 'gallery-image' }
+                        networkConfiguration = @{ geographicLocationType = 'usCentral'; regionGroups = @(@{ regionGroup = 'usCentral'; regions = @('centralus') }) }
+                    }
+                )
+            }
+        }
+        if ($path -eq 'beta/deviceManagement/virtualEndpoint/supportedRegions') {
+            return @{
+                value = @(
+                    @{
+                        id = 'centralus'
+                        displayName = 'Central US'
+                        regionStatus = 'available'
+                        supportedSolution = 'windows365'
+                        regionGroup = 'usCentral'
+                        geographicLocationType = 'usCentral'
+                    },
+                    @{
+                        id = 'blocked-region'
+                        displayName = 'Blocked'
+                        regionStatus = 'restricted'
+                    }
+                )
+            }
+        }
+        if ($path -eq 'beta/deviceManagement/virtualEndpoint/galleryImages') {
+            return @{
+                value = @(
+                    @{
+                        id = 'gallery-image'
+                        displayName = 'Windows 11 Enterprise 25H2'
+                        skuDisplayName = '25H2'
+                        recommendedSku = 'light'
+                        status = 'supported'
+                        expirationDate = '2028-01-01'
+                    },
+                    @{
+                        id = 'expired-image'
+                        displayName = 'Expired'
+                        status = 'expired'
+                    }
+                )
+            }
+        }
+        if ($path -eq 'beta/deviceManagement/virtualEndpoint/cloudPcPools/8607571b-2177-462c-bd6f-b8d1dac75333') {
+            return @{
+                '@odata.type' = '#microsoft.graph.cloudPcAgentPool'
+                id = '8607571b-2177-462c-bd6f-b8d1dac75333'
+                displayName = 'su-cua-test'
+                description = 'source description'
+                billingConfiguration = @{ billingType = 'payAsYouGo'; billingPlanId = '66666666-6666-6666-6666-666666666666' }
+                capabilities = @{ enableSingleSignOn = $false }
+                cloudPcConfiguration = @{ imageId = 'gallery-image'; imageType = 'gallery'; osLocale = 'en-US' }
+                networkConfiguration = @{ geographicLocationType = 'usCentral'; regionGroups = @(@{ regionGroup = 'usCentral'; regions = @('centralus') }) }
+                scalingPolicy = @{ minimumCount = 2; maximumCount = 2 }
+            }
         }
 
-        return @{
-            '@odata.type' = '#microsoft.graph.cloudPcAgentPool'
-            id = '8607571b-2177-462c-bd6f-b8d1dac75333'
-            displayName = 'su-cua-test'
-            description = 'source description'
-            billingConfiguration = @{ billingType = 'payAsYouGo'; billingPlanId = '66666666-6666-6666-6666-666666666666' }
-            capabilities = @{ enableSingleSignOn = $false }
-            cloudPcConfiguration = @{ imageId = 'gallery-image'; imageType = 'gallery'; osLocale = 'en-US' }
-            networkConfiguration = @{ geographicLocationType = 'usCentral'; regionGroups = @(@{ regionGroup = 'usCentral'; regions = @('centralus') }) }
-            scalingPolicy = @{ minimumCount = 2; maximumCount = 2 }
-        }
+        throw "Unexpected path: $path"
     }
     function Get-ConnectCalls {
         $script:connectCalls
+    }
+    function Get-LastContextScope {
+        $script:lastContextScope
     }
     function Set-ConnectFailure {
         param([bool]$Value)
@@ -69,54 +127,15 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
         $script:connectCalls = 0
         $script:connectShouldFail = $false
         $script:timeoutFailuresRemaining = 0
+        $script:lastContextScope = ''
     }
-    Export-ModuleMember -Function Connect-MgGraph, Get-MgContext, Invoke-MgGraphRequest, Get-ConnectCalls, Set-ConnectFailure, Set-ConnectTimeoutFailures, Reset-GraphState
+    Export-ModuleMember -Function Connect-MgGraph, Get-MgContext, Invoke-MgGraphRequest, Get-ConnectCalls, Get-LastContextScope, Set-ConnectFailure, Set-ConnectTimeoutFailures, Reset-GraphState
 }
 
 $module | Import-Module -Global
 $repoRoot = Split-Path (Split-Path $PSScriptRoot)
 $scriptsRoot = Join-Path $repoRoot 'scripts'
 $tempPath = Join-Path ([IO.Path]::GetTempPath()) 'w365-pool-template-test.json'
-$script:AzCalls = 0
-function global:az {
-    param(
-        [Parameter(ValueFromRemainingArguments = $true)]
-        [string[]]$Arguments
-    )
-
-    $argumentList = @($Arguments)
-    if ($argumentList.Count -ge 3 -and $argumentList[0] -eq 'account' -and $argumentList[1] -eq 'get-access-token') {
-        $script:AzCalls += 1
-        return '{"tenant":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","accessToken":"offline-token"}'
-    }
-
-    throw "Unexpected az invocation: $($argumentList -join ' ')"
-}
-function global:Invoke-RestMethod {
-    param($Method, $Uri, $Headers)
-
-    if ($Method -ne 'GET') {
-        throw "Unexpected REST method: $Method"
-    }
-    if ($Uri -ne 'https://graph.microsoft.com/beta/deviceManagement/virtualEndpoint/cloudPcPools/8607571b-2177-462c-bd6f-b8d1dac75333') {
-        throw "Unexpected REST URI: $Uri"
-    }
-    if ($Headers.Authorization -ne 'Bearer offline-token') {
-        throw 'Azure CLI Graph token was not passed to the REST request.'
-    }
-
-    return [pscustomobject]@{
-        '@odata.type' = '#microsoft.graph.cloudPcAgentPool'
-        id = '8607571b-2177-462c-bd6f-b8d1dac75333'
-        displayName = 'su-cua-test'
-        description = 'source description'
-        billingConfiguration = [pscustomobject]@{ billingType = 'payAsYouGo'; billingPlanId = '66666666-6666-6666-6666-666666666666' }
-        capabilities = [pscustomobject]@{ enableSingleSignOn = $false }
-        cloudPcConfiguration = [pscustomobject]@{ imageId = 'gallery-image'; imageType = 'gallery'; osLocale = 'en-US' }
-        networkConfiguration = [pscustomobject]@{ geographicLocationType = 'usCentral'; regionGroups = @([pscustomobject]@{ regionGroup = 'usCentral'; regions = @('centralus') }) }
-        scalingPolicy = [pscustomobject]@{ minimumCount = 2; maximumCount = 2 }
-    }
-}
 try {
     Reset-GraphState
     Set-Content -LiteralPath $tempPath -Value @'
@@ -156,12 +175,11 @@ try {
     if ((Get-ConnectCalls) -ne 1) {
         throw 'Device-code mode should authenticate through Connect-MgGraph first.'
     }
-    if ($script:AzCalls -ne 0) {
-        throw 'Azure CLI must remain a fallback when device-code auth succeeds.'
+    if ((Get-LastContextScope) -ne 'Process') {
+        throw 'Direct Graph authentication must use a process-scoped context.'
     }
 
     Reset-GraphState
-    $script:AzCalls = 0
     Set-ConnectTimeoutFailures -Value 1
 
     & "$scriptsRoot\Save-W365PoolTemplate.ps1" `
@@ -173,11 +191,75 @@ try {
     if ((Get-ConnectCalls) -ne 2) {
         throw 'Device-code timeout retry should re-run Connect-MgGraph with a fresh code.'
     }
-    if ($script:AzCalls -ne 0) {
-        throw 'Azure CLI must not be used when a later device-code retry succeeds.'
+
+    Reset-GraphState
+    Set-ConnectFailure -Value $true
+    $directFailureReported = $false
+    try {
+        & "$scriptsRoot\Save-W365PoolTemplate.ps1" `
+            -PoolIdOrUrl '8607571b-2177-462c-bd6f-b8d1dac75333' `
+            -UseDeviceCode `
+            -DeviceCodeMaxAttempts 1 `
+            -OutputPath $tempPath | Out-Null
+    }
+    catch {
+        $directFailureReported = $_.Exception.Message -like '*Direct delegated Microsoft Graph sign-in failed*' -and
+            $_.Exception.Message -like '*CloudPC.Read.All*' -and
+            $_.Exception.Message -like '*Azure CLI tokens are intentionally not used*'
+    }
+    if (!$directFailureReported) {
+        throw 'Direct Graph authentication failures did not provide actionable consent guidance.'
     }
 
-    Write-Output 'Offline pool template capture: create-or-update of deployment.local.json values passed.'
+    Reset-GraphState
+    Set-ConnectTimeoutFailures -Value 1
+    $options = & "$scriptsRoot\Get-W365DiscoveryOptions.ps1" `
+        -TenantId 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' `
+        -UseDeviceCode `
+        -DeviceCodeMaxAttempts 2
+    if (@($options.pools).Count -ne 1 -or
+        $options.pools[0].billingPlanId -ne '66666666-6666-6666-6666-666666666666' -or
+        @($options.regions).Count -ne 1 -or
+        $options.regions[0].id -ne 'centralus' -or
+        @($options.galleryImages).Count -ne 1 -or
+        $options.galleryImages[0].id -ne 'gallery-image') {
+        throw 'Read-only W365 discovery did not return filtered pools, regions, and images.'
+    }
+    if ((Get-ConnectCalls) -ne 2) {
+        throw 'Read-only discovery should retry a timed-out device-code prompt with a fresh code.'
+    }
+
+    $global:W365DiscoveryReadHostResponses = [Collections.Generic.Queue[string]]::new()
+    $global:W365DiscoveryReadHostResponses.Enqueue('')
+    $global:W365DiscoveryReadHostResponses.Enqueue('')
+    $global:W365DiscoveryReadHostResponses.Enqueue('')
+    function global:Read-Host {
+        param([string]$Prompt)
+        if ($global:W365DiscoveryReadHostResponses.Count -eq 0) {
+            throw "Unexpected selection prompt: $Prompt"
+        }
+        return $global:W365DiscoveryReadHostResponses.Dequeue()
+    }
+
+    & "$scriptsRoot\Get-W365DiscoveryOptions.ps1" `
+        -TenantId 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' `
+        -UseDeviceCode `
+        -Configure `
+        -DefaultBillingPlanId '66666666-6666-6666-6666-666666666666' `
+        -OutputPath $tempPath
+
+    $configured = Get-Content -LiteralPath $tempPath -Raw |
+        ConvertFrom-Json -AsHashtable -Depth 20
+    if ($global:W365DiscoveryReadHostResponses.Count -ne 0 -or
+        $configured.w365.poolBillingPlanId -ne '66666666-6666-6666-6666-666666666666' -or
+        $configured.w365.poolRegions[0] -ne 'centralus' -or
+        $configured.w365.poolImageId -ne 'gallery-image' -or
+        $configured.w365.poolMinimumCount -ne 1 -or
+        $configured.w365.poolMaximumCount -ne 1) {
+        throw 'Guided discovery did not accept and save the configured defaults.'
+    }
+
+    Write-Output 'Offline W365 discovery and pool template capture: direct delegated Graph auth passed.'
 }
 finally {
     if (Test-Path -LiteralPath $tempPath) {
@@ -185,6 +267,6 @@ finally {
     }
 
     Remove-Module Microsoft.Graph.Authentication
-    Remove-Item Function:\global:az -ErrorAction SilentlyContinue
-    Remove-Item Function:\global:Invoke-RestMethod -ErrorAction SilentlyContinue
+    Remove-Item Function:\global:Read-Host -ErrorAction SilentlyContinue
+    Remove-Variable W365DiscoveryReadHostResponses -Scope Global -ErrorAction SilentlyContinue
 }

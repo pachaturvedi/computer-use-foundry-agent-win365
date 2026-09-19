@@ -81,26 +81,58 @@ pwsh -NoProfile -File .\scripts\Save-W365PoolTemplate.ps1 `
     -UseDeviceCode
 ```
 
+To review tenant-supported choices before writing configuration, authenticate
+first and query the read-only discovery catalogs:
+
+```powershell
+pwsh -NoProfile -File .\scripts\Get-W365DiscoveryOptions.ps1 `
+    -TenantId "<tenant-guid>" `
+    -UseDeviceCode
+```
+
+The result contains:
+
+- existing W365 agent pools with display name, pool ID, and billing-plan GUID;
+- currently available region names, geographic location types, and groups;
+- currently supported gallery image IDs and display names.
+
+Use the selected pool URL with `Save-W365PoolTemplate.ps1`, or pass the selected
+billing-plan GUID to `Invoke-W365LiveAcceptance.ps1`. Discovery is read-only
+and never adopts or modifies the source pool.
+
+For the guided path, add `-Configure`:
+
+```powershell
+pwsh -NoProfile -File .\scripts\Get-W365DiscoveryOptions.ps1 `
+    -TenantId "<tenant-guid>" `
+    -UseDeviceCode `
+    -Configure `
+    -DefaultBillingPlanId "<billing-plan-guid>"
+```
+
+The helper displays numbered tenant-supported billing plans, available regions,
+and supported gallery images. It marks the existing local value or checked-in
+sample value as `(default)`. Press Enter to accept the default, or enter another
+number to choose from the discovered list. The selected minimum-capacity
+profile is written to ignored `config\deployment.local.json`; discovery does
+not create or modify any W365 resource.
+
 When `-UseDeviceCode` is supplied, the helper now skips the default Windows
-interactive path and goes directly to the device-code prompt. In embedded
-terminals, complete that prompt promptly after the code appears.
+interactive path and prints the browser URL, timing guidance, and device-code
+prompt. Open `https://login.microsoft.com/device`, enter the displayed code,
+and complete sign-in within 120 seconds. The command waits for authentication
+and then continues discovery; do not close the terminal.
 
 If you miss the first prompt, the helper retries device-code sign-in once by
 default and shows a fresh code. Adjust that bounded retry count with
 `-DeviceCodeMaxAttempts` when needed.
 
-In this workflow, device-code Graph sign-in is the primary path. If the Graph
-PowerShell sign-in attempt fails, the helper can fall back to an existing Azure
-CLI Microsoft Graph token. `GraphClientTimeoutSeconds` only affects Graph HTTP
-requests; it does not extend the fixed device-code sign-in window.
-
-If the helper reports that the Azure CLI token lacks CloudPC consent, refresh
-the CLI sign-in with the required Graph scope and rerun the helper:
-
-```powershell
-az logout
-az login --tenant "01eed126-9f96-4d2d-a127-dc2e786a898b" --scope "https://graph.microsoft.com/CloudPC.Read.All"
-```
+This workflow uses direct delegated Microsoft Graph authentication with
+`CloudPC.Read.All`. It intentionally does not use Azure CLI tokens for Graph
+discovery because the Azure CLI public client cannot request this first-party
+scope in every tenant. Complete the displayed device code promptly as an
+authorized tenant operator. `GraphClientTimeoutSeconds` affects Graph HTTP
+requests, not the fixed device-code sign-in window.
 
 Rerun the same command whenever the source pool changes. The script updates the
 stored `w365` values in place while preserving unrelated settings in
