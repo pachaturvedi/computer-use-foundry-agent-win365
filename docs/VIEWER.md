@@ -3,6 +3,17 @@
 The same application runs as the companion viewer with `--viewer`. It does not
 host the model or expose an agent `/responses` endpoint in this mode.
 
+## Prerequisites
+
+Use this guide only when you need authenticated live view or human handoff. The
+viewer is optional for direct W365 MCP execution.
+
+- Phase-1 hosted-agent deployment completed and, for the hosted path, W365 phase 2 is either planned or already enabled.
+- Viewer bootstrap outputs recorded from [deployment](DEPLOYMENT.md#optional-phase-1-viewer-bootstrap), especially `viewerIdentityClientId`, `viewerIdentityPrincipalId`, and `viewerHostname`.
+- Explicit administrator approval for optional viewer federation on the Foundry blueprint.
+- Approved W365 screen-share values available from onboarding: `SCREENSHARE_APP_URL`, `SCREENSHARE_SDK_URL`, and `SCREENSHARE_FRAME_ORIGINS`.
+- A single-tenant Entra web application and Key Vault secret plan ready for the viewer OIDC sign-in flow.
+
 ## Bootstrap and local mode
 
 Use the canonical Windows workflow from the repository root:
@@ -154,3 +165,9 @@ client refreshes the same permission purpose; a failed refresh stays paused.
 Other SDK errors are displayed without logging tokens/session links.
 
 [Official SDK documentation](https://github.com/microsoft/windows-365-for-agents/blob/main/docs/screen-sharing.md).
+
+## Next steps
+
+- Return to [deployment phase 2](DEPLOYMENT.md#phase-2-bind-and-enable) when the viewer needs to be enabled together with shared state and the hosted agent.
+- Return to [W365 setup](W365-SETUP.md#optional-viewer-federation) for the optional viewer FIC approval and identity-binding details.
+- Use [authentication](AUTHENTICATION.md) when you need the credential and token-exchange boundaries behind the hosted viewer flow.

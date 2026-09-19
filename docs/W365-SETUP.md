@@ -26,6 +26,23 @@ A task timeout is not a billing cap. Stop/delete unneeded pools in Intune.
 [billing](https://learn.microsoft.com/windows-365/agents/billing-w365a),
 [pool creation](https://github.com/microsoft/windows-365-for-agents/blob/main/docs/cloud-pc-pools.md).
 
+## Setup permission summary
+
+The setup flow runs with an operator's delegated Microsoft Graph permissions.
+These are separate from the runtime credential mode documented in
+[authentication](AUTHENTICATION.md).
+
+- The operator must be able to sign in interactively with Microsoft Graph through `Connect-MgGraph` or an Azure CLI Graph token fallback.
+- The operator must have tenant-approved delegated access to read and update the existing blueprint app registration, reconcile required resource access, create or reuse the agent user, and assign that user to the selected W365 pool.
+- The operator must also have the Azure-side access needed to read the selected azd environment and redeploy the hosted agent after setup persists the non-secret `W365_*` identifiers.
+
+If your tenant uses PIM or admin consent workflows, activate those roles before
+running setup. The script fails closed when the delegated setup identity cannot
+prove the required parent/ownership chain.
+
+The exact delegated Graph scope list appears later under
+[Setup permissions (delegated, not runtime)](#setup-permissions-delegated-not-runtime).
+
 ## Bind the existing Foundry identities
 
 From the repository root, either substitute the IDs returned by discovery or let
@@ -277,6 +294,19 @@ cover the exact read-only version URL, ID types, tenant binding, missing
 metadata and untrusted endpoint rejection. This is separate from setup `-WhatIf`,
 which prints the offline plan for your supplied arguments. Neither proves live
 hosting compatibility.
+
+## Troubleshooting
+
+| Symptom | Cause or check | Resolution |
+| --- | --- | --- |
+| Device-code sign-in expires before completion | The Graph PowerShell prompt was not completed within its fixed sign-in window. | Rerun with `-UseDeviceCode`, complete the displayed code immediately, and increase `-DeviceCodeMaxAttempts` only when the first prompt is routinely missed. |
+| Azure CLI fallback reports missing CloudPC consent | The cached Azure CLI Graph token does not include the required CloudPC scope or consent. | Run `az logout`, then `az login --tenant "<tenant-id>" --scope "https://graph.microsoft.com/CloudPC.Read.All"`, and rerun the helper. |
+| Setup refuses to reuse an existing pool or agent user | The parent/ownership chain or persisted ownership manifest does not match the supplied entities. | Review the emitted validation error, confirm the exact blueprint, agent object ID, agent app ID, and pool ID, then rerun with the intended environment selected. |
+
+## Next steps
+
+- Return to [deployment phase 2](DEPLOYMENT.md#phase-2-bind-and-enable) to redeploy the same hosted agent name with desktop access enabled.
+- Use [viewer setup](VIEWER.md) only after the core W365 flow is working and you have explicit approval for viewer federation.
 
 ## Optional viewer federation
 

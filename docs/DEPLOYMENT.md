@@ -8,6 +8,18 @@ a single-operator preview sample, not a production multi-user service.
 Deployment has two phases: **bootstrap to obtain Foundry-owned identities**,
 then **bind W365 to those exact identities and enable the runtime**.
 
+## Prerequisites
+
+Use this guide when you are ready to deploy or redeploy the hosted agent. For
+the shortest operator path, start in [README](../README.md) and come here when
+you need the full staged deployment, rollback, or live-acceptance detail.
+
+- Azure CLI and Azure Developer CLI authenticated to the intended subscription and tenant.
+- PowerShell 7.4+ and .NET 10 installed on the Windows operator machine.
+- One Foundry path selected up front: either a fresh environment that will provision a dedicated Foundry project, or an existing Foundry project with a supported model deployment.
+- Windows 365 onboarding, billing, and pool decisions reviewed before enabling phase 2.
+- Viewer deployment approved only if you need authenticated live view or human handoff.
+
 | Stage | Operation | Current status |
 | --- | --- | --- |
 | Phase 1 | Deploy `win365-desktop-agent` with `W365_ENABLED=false` | Completed; active version `1` |
@@ -624,3 +636,9 @@ that identity capability without adding stored credentials:
 [Foundry deployment reference](https://learn.microsoft.com/azure/foundry/agents/how-to/deploy-hosted-agent),
 [Foundry agent identity](https://learn.microsoft.com/azure/foundry/agents/concepts/agent-identity),
 [public token helper](https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/csharp/foundry-autopilot-agent/src/hello_world_a365_agent/Services/AgentTokenHelper.cs).
+
+## Next steps
+
+- Use [W365 setup](W365-SETUP.md) for delegated Graph permissions, identity binding, pool creation or reuse, and cleanup ownership.
+- Use [Viewer](VIEWER.md) only after the core hosted-agent and W365 path is working and viewer federation has been explicitly approved.
+- Use [Architecture](ARCHITECTURE.md) when rollback or live validation points to slot recovery, ownership, or session lifecycle behavior.

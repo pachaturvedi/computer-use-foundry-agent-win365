@@ -14,7 +14,7 @@ must support function calling and image inputs.
 > capacity are required. Review [security](SECURITY.md) before using real data.
 > [Live acceptance](docs/DEPLOYMENT.md#live-acceptance) is required before publication.
 
-## Included
+## What this sample demonstrates
 
 | Component | Purpose |
 | --- | --- |
@@ -31,7 +31,7 @@ history. `previous_response_id`, `conversation` and background execution are
 rejected. This trades multi-turn desktop continuity for explicit ownership and
 bounded screenshot payloads.
 
-## Architecture
+## How it works
 
 ```mermaid
 flowchart LR
@@ -67,11 +67,22 @@ See [architecture](docs/ARCHITECTURE.md) for the provisioning and runtime
 sequence diagrams and [authentication](docs/AUTHENTICATION.md) for token
 boundaries.
 
+## Prerequisites
+
+What the sample needs depends on whether you are validating it offline on
+Windows or deploying it to Foundry and Windows 365.
+
+- **Offline validation:** Windows, [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0), [PowerShell 7.4+](https://learn.microsoft.com/powershell/scripting/install/installing-powershell), and Git.
+- **Live deployment:** an Azure subscription and tenant onboarded for Foundry and Windows 365, plus Azure CLI, Azure Developer CLI with the required Foundry extensions, PowerShell 7.4+, and .NET 10.
+- **Windows 365 readiness:** an existing W365 agent pool with licensing, billing, image, and capacity ready, or a reviewed `config\deployment.local.json` profile that the stitched `azd up` flow can use to create one.
+- **Foundry path:** either create a fresh environment that provisions a dedicated Foundry account, project, and model deployment, or reuse an existing Foundry project that already has a deployed model supporting function calling and image inputs.
+- **Roles:** if you reuse an existing Foundry project, you need `Foundry Project Manager` access to that project and the delegated setup permissions listed in [W365 setup](docs/W365-SETUP.md#setup-permissions-delegated-not-runtime).
+
 ## Guides
 
 | Goal | Guide |
 | --- | --- |
-| Verify the sample locally on Windows | [Windows quickstart](#windows-quickstart-no-azure-required) |
+| Verify the sample locally on Windows | [Windows quickstart](#option-1-windows-quickstart-no-azure-required) |
 | Initialize and deploy the Foundry hosted agent | [Deployment](docs/DEPLOYMENT.md) |
 | Bind the deployed Foundry identities to W365 | [W365 setup](docs/W365-SETUP.md) |
 | Deploy live view and human handoff | [Viewer](docs/VIEWER.md) |
@@ -84,14 +95,10 @@ The C# application is organized as a single modular monolith with feature
 folders and mirrored tests; see the
 [source layout](docs/ARCHITECTURE.md#source-layout).
 
-## Windows quickstart (no Azure required)
+## Option 1: Windows quickstart (no Azure required)
 
 This path verifies the complete offline sample without contacting Foundry,
 Microsoft Graph, a model, or a Cloud PC.
-
-**Prerequisites:** Windows, [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0),
-[PowerShell 7.4+](https://learn.microsoft.com/powershell/scripting/install/installing-powershell)
-and Git.
 
 Visual Studio is optional. IDE builds require a version compatible with the
 .NET 10 SDK. The PowerShell quickstart uses the installed `dotnet` CLI directly
@@ -124,38 +131,13 @@ Local mode is unauthenticated and loopback-only. Do not publish or tunnel these
 ports. To rebuild without running tests, use
 `.\scripts\Setup-Local.ps1 -SkipTests`.
 
-### Windows troubleshooting
+## Option 2: Azure Developer CLI (`azd`)
 
-| Error | Fix |
-| --- | --- |
-| `pwsh` is not recognized | Install PowerShell 7.4+, then open a new terminal. Windows PowerShell 5.1 is not supported. |
-| The .NET 10 SDK is required | Install the SDK, not only the runtime, then open a new terminal. |
-| `MSB4236`, `NETSDK1209`, or the IDE says `Microsoft.NET.Sdk(.Web)` is unavailable | The SDK may be installed while the IDE's bundled MSBuild is incompatible. Run `pwsh -NoProfile -File .\scripts\Setup-Local.ps1` with the standalone SDK, or upgrade the IDE to a .NET 10-compatible version. |
-| The azd check reports version `1.20.0` after upgrading | `1.20.0` cannot parse this Foundry project, and the current agent/project extensions require `azd 1.32.0+`. Windows may have an older machine-wide `azd` before the current user installation on `PATH`. The check uses the newest compatible installation and prints the exact `$env:Path` command to run before direct `azd` commands. |
-| `NU1101` and only `library-packs` is listed | Pull the latest `NuGet.Config`; it clears inherited disabled feeds. |
-| `NU1301` or TLS handshake failure for `nuget.org` | The checked-in configuration also uses Microsoft's package-feed proxy for managed Windows environments. Verify your corporate proxy permits it. |
-| Port 5050 or 8088 is already in use | Stop the owning process, or run `.\scripts\Start-Local.ps1 -AgentPort 18088 -ViewerPort 15050`. |
+This path publishes the Foundry hosted agent and then binds the Foundry-owned
+identity chain to Windows 365. The repository already contains `azure.yaml`; do
+not run `azd init` or `azd ai agent init` inside the clone.
 
-## Live quickstart
-
-Live deployment uses two phases so Foundry can create the blueprint and agent
-identity before they are bound to Windows 365.
-
-### Prerequisites
-
-- An Azure subscription and tenant onboarded for Foundry and Windows 365.
-- An existing W365 agent pool with licensing, billing, image, and capacity ready.
-- For Foundry, choose one path:
-    - create a fresh environment that provisions a dedicated Foundry account, project, and model deployment
-    - reuse an existing Foundry project that already has a deployed model that supports function calling and images
-- If you are reusing an existing Foundry project, you need **Foundry Project Manager** access to that project and the delegated permissions listed in [W365 setup](docs/W365-SETUP.md#setup-permissions-delegated-not-runtime).
-- Azure CLI, Azure Developer CLI with the required Foundry extensions,
-  PowerShell 7.4+, and .NET 10.
-
-The repository already contains `azure.yaml`; do not run `azd init` or
-`azd ai agent init` inside the clone.
-
-### 1. Authenticate and validate tooling
+### Authenticate and validate tooling
 
 ```powershell
 az login
@@ -168,7 +150,7 @@ azd ai agent doctor --local-only
 Use the same tenant and subscription for `az` and `azd`. Review the validation
 output before making resource changes.
 
-### 2. Create and deploy a fresh azd environment
+### Fresh environment path
 
 For a fresh environment, do not set existing-project identifiers up front. If
 you want azd to create a dedicated Foundry project and perform the W365-enabled
@@ -192,9 +174,28 @@ domains. Use `-AgentUserPrincipalName` or `-AgentUserDomain` only when an
 explicit override is required.
 
 If you want only the phase-1 bootstrap first, omit `-EnableW365`, then use the
-staged flow below.
+staged deployment flow in [deployment](docs/DEPLOYMENT.md).
 
-### 3. Deploy the Foundry bootstrap
+### Existing Foundry project path
+
+Only use the following `azd env set` values when you are binding this sample to
+an already existing Foundry project. They are not part of the initial fresh
+environment setup.
+
+```powershell
+azd env new <environment-name>
+azd env set FOUNDRY_PROJECT_ENDPOINT "<existing-foundry-project-endpoint>"
+azd env set FOUNDRY_PROJECT_OWNERSHIP "existing"
+azd env set AZURE_AI_ACCOUNT_NAME "<existing-foundry-account-name>"
+azd env set AZURE_AI_PROJECT_NAME "<existing-foundry-project-name>"
+azd env set AZURE_AI_PROJECT_ID "<existing-foundry-project-resource-id>"
+azd env set AZD_FOUNDRY_RESOURCE_GROUP_ID "<existing-foundry-resource-group-id>"
+azd env set AZURE_FOUNDRY_RESOURCE_GROUP "<existing-foundry-resource-group-name>"
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME "<existing-model-deployment-name>"
+pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 -Mode Validate
+```
+
+### Deploy the Foundry bootstrap
 
 ```powershell
 pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
@@ -207,14 +208,10 @@ This deploys the agent with `W365_ENABLED=false`. A healthy agent returns a
 phase-2 configuration response instead of attempting desktop access. See
 [phase 1](docs/DEPLOYMENT.md#phase-1-deploy-bootstrap) for verification.
 
-### 4. Bind Foundry identity to W365
+### Bind Foundry identity to W365
 
-1. Run the read-only
-   [identity discovery](docs/DEPLOYMENT.md#discover-the-foundry-identity) for
-   the exact deployed agent version.
-2. Run [W365 setup](docs/W365-SETUP.md) with the discovered blueprint and agent
-    IDs, an agent-user UPN, and either an existing W365 pool ID or the values
-    needed to create the pool.
+1. Run the read-only [identity discovery](docs/DEPLOYMENT.md#discover-the-foundry-identity) for the exact deployed agent version.
+2. Run [W365 setup](docs/W365-SETUP.md) with the discovered blueprint and agent IDs, an agent-user UPN, and either an existing W365 pool ID or the values needed to create the pool.
 3. Confirm the script persisted the emitted `W365_*` values into the selected azd environment. They are identifiers, not credentials.
 
 Setup validates the existing identity chain, reconciles approved permissions,
@@ -234,7 +231,7 @@ pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
      -UseDeviceCode
 ```
 
-### 5. Enable desktop access
+### Enable desktop access and verify
 
 Configure the remaining private Blob session state, allowed operator,
 and approved blueprint credential mode, then redeploy the same agent name:
@@ -247,69 +244,27 @@ pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
     -ConfirmResourceChanges
 ```
 
-Follow [phase 2](docs/DEPLOYMENT.md#phase-2-bind-and-enable) for the complete setting
-list and state deployment. Keep credentials out of source control and plain azd
-environment values; follow [authentication](docs/AUTHENTICATION.md) for the
-supported credential paths.
-
-### 6. Run live acceptance
-
-Run the bounded checks in [live acceptance](docs/DEPLOYMENT.md#live-acceptance)
+Then run the bounded checks in [live acceptance](docs/DEPLOYMENT.md#live-acceptance)
 before allowing real tasks. Confirm identity continuity, token scopes, pool
 readiness, session cleanup, and fail-closed behavior.
 
 The optional [viewer](docs/VIEWER.md) adds authenticated live view and human
 handoff. It is not required for direct W365 MCP execution.
 
-### Existing Foundry project instead of a fresh environment
+## Troubleshooting
 
-Only use the following `azd env set` values when you are binding this sample to
-an already existing Foundry project. They are not part of the initial fresh
-environment setup.
-
-```powershell
-azd env new <environment-name>
-azd env set FOUNDRY_PROJECT_ENDPOINT "<existing-foundry-project-endpoint>"
-azd env set FOUNDRY_PROJECT_OWNERSHIP "existing"
-azd env set AZURE_AI_ACCOUNT_NAME "<existing-foundry-account-name>"
-azd env set AZURE_AI_PROJECT_NAME "<existing-foundry-project-name>"
-azd env set AZURE_AI_PROJECT_ID "<existing-foundry-project-resource-id>"
-azd env set AZD_FOUNDRY_RESOURCE_GROUP_ID "<existing-foundry-resource-group-id>"
-azd env set AZURE_FOUNDRY_RESOURCE_GROUP "<existing-foundry-resource-group-name>"
-azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME "<existing-model-deployment-name>"
-pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 -Mode Validate
-```
-
-### No existing Foundry project or model
-
-Use the initializer to create a prefix-based environment, then review and deploy
-the declared Foundry resources. Phase-1 defaults live in `config/deployment.defaults.json`.
-If you want different values, copy `config/deployment.local.example.json` to
-`config/deployment.local.json` or set environment variables before running the
-initializer.
-
-```powershell
-az login --tenant "<tenant-id>"
-az account set --subscription "<subscription-id>"
-azd auth login
-pwsh -NoProfile -File .\scripts\Initialize-Greenfield.ps1 `
-    -SubscriptionId "<subscription-id>" `
-    -Prefix "<resource-prefix>" `
-    -Environment "<environment-name>"
-pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
-    -Mode DeployAll `
-    -ConfirmResourceChanges
-```
-
-Environment variables override both config files. Useful overrides include
-`FOUNDRY_PROJECT_ENDPOINT`, `AZURE_AI_MODEL_DEPLOYMENT_NAME`,
-`FOUNDRY_MODEL_VERSION`, `FOUNDRY_MODEL_SKU_NAME`, `FOUNDRY_MODEL_SKU_CAPACITY`,
-and `VIEWER_IMAGE_NAME`.
-
-Review the subscription, region, model availability, quota, and cost before
-deployment. After the bootstrap completes, continue at step 3 above. See the
-[deployment guide](docs/DEPLOYMENT.md) for greenfield options and resource
-details.
+| Error | Fix |
+| --- | --- |
+| `pwsh` is not recognized | Install PowerShell 7.4+, then open a new terminal. Windows PowerShell 5.1 is not supported. |
+| The .NET 10 SDK is required | Install the SDK, not only the runtime, then open a new terminal. |
+| `MSB4236`, `NETSDK1209`, or the IDE says `Microsoft.NET.Sdk(.Web)` is unavailable | The SDK may be installed while the IDE's bundled MSBuild is incompatible. Run `pwsh -NoProfile -File .\scripts\Setup-Local.ps1` with the standalone SDK, or upgrade the IDE to a .NET 10-compatible version. |
+| The azd check reports version `1.20.0` after upgrading | `1.20.0` cannot parse this Foundry project, and the current agent/project extensions require `azd 1.32.0+`. Windows may have an older machine-wide `azd` before the current user installation on `PATH`. The check uses the newest compatible installation and prints the exact `$env:Path` command to run before direct `azd` commands. |
+| `NU1101` and only `library-packs` is listed | Pull the latest `NuGet.Config`; it clears inherited disabled feeds. |
+| `NU1301` or TLS handshake failure for `nuget.org` | The checked-in configuration also uses Microsoft's package-feed proxy for managed Windows environments. Verify your corporate proxy permits it. |
+| Port 5050 or 8088 is already in use | Stop the owning process, or run `.\scripts\Start-Local.ps1 -AgentPort 18088 -ViewerPort 15050`. |
+| `azd init` or `azd ai agent init` fails inside this clone | This repository already contains `azure.yaml`. Stay in the clone and use `azd env new` or `Initialize-Greenfield.ps1` instead. |
+| W365 setup prompts for a device code and then times out | Rerun with `-UseDeviceCode`, complete the prompt as soon as the code appears, and increase `-DeviceCodeMaxAttempts` only if your sign-in flow routinely misses the first prompt. |
+| You are reusing a Foundry project and validation fails before deployment | Confirm the environment contains the full existing-project identifiers and that your operator identity has `Foundry Project Manager` on that project. |
 
 ## Deploy and develop
 
@@ -333,6 +288,12 @@ az bicep build --file .\infra\viewer.bicep --stdout
 
 Tests do not contact a Cloud PC or model. NuGet dependencies are pinned in project
 files; upgrade the preview hosting packages as a compatible set.
+
+## Next steps
+
+- Follow [deployment](docs/DEPLOYMENT.md) for the staged bootstrap, rollback, teardown, and live-acceptance details.
+- Follow [W365 setup](docs/W365-SETUP.md) when you need delegated Graph permissions, pool template capture, or viewer federation.
+- Follow [viewer setup](docs/VIEWER.md) only if you need authenticated live view or human handoff.
 
 ## References
 
