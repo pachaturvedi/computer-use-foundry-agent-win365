@@ -48,7 +48,8 @@ $trackedEnvironmentVariables = @(
     'W365_BLUEPRINT_CREDENTIAL_MODE',
     'SCREENSHARE_SDK_URL',
     'SCREENSHARE_FRAME_ORIGINS',
-    'SCREENSHARE_APP_URL'
+    'SCREENSHARE_APP_URL',
+    'SAMPLE_LOG_LEVEL'
 )
 $savedEnvironment = @{}
 foreach ($name in $trackedEnvironmentVariables) {
@@ -272,19 +273,31 @@ throw 'Simulated W365 setup failure.'
     Write-TestEnvironment -Complete:$false
     $env:ENABLE_W365 = 'false'
     $env:W365_ENABLED = 'false'
+    $env:SAMPLE_LOG_LEVEL = 'verbose'
     $planOutput = & $scriptPath -RepositoryRoot $tempRoot -W365SetupScriptPath $mockW365Path -ViewerBootstrapScriptPath $mockViewerPath -ViewerSecretsScriptPath $mockViewerSecretsPath *>&1 | Out-String
+    $env:SAMPLE_LOG_LEVEL = ''
     $planOutput = $planOutput -replace "`r", ''
     $planIndex = $planOutput.IndexOf('postup plan (runs after azd provision, before this hook exits):')
     $bootstrapIndex = $planOutput.IndexOf('MOCK-VIEWER-BOOTSTRAP-RAN')
     if ($planIndex -lt 0 -or $bootstrapIndex -lt 0 -or $planIndex -gt $bootstrapIndex) {
         throw 'The postup plan summary did not print before viewer bootstrap execution.'
     }
-    if ($planOutput -notmatch '(?m)^\s*1\. Skip viewer image build and health check because DEPLOY_VIEWER is not true\.$' -or
-        $planOutput -notmatch '(?m)^\s*2\. Skip Windows 365 setup because ENABLE_W365 is not true\.$' -or
-        $planOutput -notmatch '(?m)^\s*3\. Skip live-viewer activation\.$' -or
-        $planOutput -notmatch '(?m)^\s*4\. Redeploy the hosted agent only if a new viewer URL became available during this run\.$' -or
-        $planOutput -notmatch '(?m)^\s*5\. Print the final deployment summary table\.$') {
+    if ($planOutput -notmatch '(?m)^.*1\. Skip viewer image build and health check because DEPLOY_VIEWER is not true\.$' -or
+        $planOutput -notmatch '(?m)^.*2\. Skip Windows 365 setup because ENABLE_W365 is not true\.$' -or
+        $planOutput -notmatch '(?m)^.*3\. Skip live-viewer activation\.$' -or
+        $planOutput -notmatch '(?m)^.*4\. Redeploy the hosted agent only if a new viewer URL became available during this run\.$' -or
+        $planOutput -notmatch '(?m)^.*5\. Print the final deployment summary table\.$') {
         throw 'The postup plan summary did not describe every disabled step accurately.'
+    }
+
+    Reset-Calls
+    Write-TestEnvironment -Complete:$false
+    $env:ENABLE_W365 = 'false'
+    $env:W365_ENABLED = 'false'
+    $env:SAMPLE_LOG_LEVEL = ''
+    $summaryModeOutput = & $scriptPath -RepositoryRoot $tempRoot -W365SetupScriptPath $mockW365Path -ViewerBootstrapScriptPath $mockViewerPath -ViewerSecretsScriptPath $mockViewerSecretsPath *>&1 | Out-String
+    if ($summaryModeOutput -match 'postup plan \(runs after azd provision, before this hook exits\):') {
+        throw 'The postup plan summary printed in default/summary mode; it should only appear in verbose or debug mode.'
     }
 
     Reset-Calls

@@ -108,12 +108,10 @@ function Show-PostUpPlan {
     $steps.Add('4. Redeploy the hosted agent only if a new viewer URL became available during this run.')
     $steps.Add('5. Print the final deployment summary table.')
 
-    Write-Host ''
-    Write-Host 'postup plan (runs after azd provision, before this hook exits):'
+    Write-SampleVerbose -Component 'postup' -Message 'postup plan (runs after azd provision, before this hook exits):'
     foreach ($step in $steps) {
-        Write-Host "  $step"
+        Write-SampleVerbose -Component 'postup' -Message "  $step"
     }
-    Write-Host ''
 }
 
 if (Test-EnabledValue -Value $env:W365_POSTUP_IN_PROGRESS) {

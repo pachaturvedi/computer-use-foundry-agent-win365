@@ -260,6 +260,7 @@ try {
     }
     $createOutput = & "$scriptsRoot\Setup-W365.ps1" @createArgs
     if ('W365_POOL_ID=77777777-7777-7777-7777-777777777777' -notin $createOutput -or
+        'W365_POOL_NAME=Created pool' -notin $createOutput -or
         'W365_ENABLED=true' -notin $createOutput) { throw 'Pool creation outputs were not persisted.' }
     $manifest = Get-Content -LiteralPath $ownershipManifestPath -Raw | ConvertFrom-Json -AsHashtable
     if ($manifest.w365.pool.id -ne '77777777-7777-7777-7777-777777777777' -or

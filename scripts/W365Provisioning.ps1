@@ -144,7 +144,13 @@ function Get-W365PoolDisplayName {
 
     $prefixToken = ConvertTo-W365NameToken -Value $ResourcePrefix
     $environmentToken = ConvertTo-W365NameToken -Value $EnvironmentName
-    $name = "foundry-w365-$prefixToken-$environmentToken"
+    $ownershipToken = if ($prefixToken -eq $environmentToken) {
+        $environmentToken
+    }
+    else {
+        "$prefixToken-$environmentToken"
+    }
+    $name = "foundry-w365-$ownershipToken"
     if ($name.Length -le $MaximumLength) {
         return $name
     }
