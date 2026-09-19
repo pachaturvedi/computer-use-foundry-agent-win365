@@ -96,6 +96,8 @@ try {
         $viewerBicep -notmatch "resource environmentResourceGroup 'Microsoft.Resources/resourceGroups@[^']+' existing" -or
         $stateBicep -match 'resource stateResourceGroup' -or
         $viewerBicep -match 'resource viewerResourceGroup' -or
+        $viewerBicep -notmatch "resource existingManagedEnvironment 'Microsoft.App/managedEnvironments@[^']+' existing" -or
+        $viewerBicep -notmatch 'location: createManagedEnvironment \? location : existingManagedEnvironment!\.location' -or
         $stateParameters -notmatch '"resourceGroupName": \{ "value": "\$\{AZURE_RESOURCE_GROUP\}" \}' -or
         $viewerParameters -notmatch '"resourceGroupName": \{ "value": "\$\{AZURE_RESOURCE_GROUP\}" \}') {
         throw 'Infrastructure layers do not consistently reuse one AZURE_RESOURCE_GROUP.'

@@ -362,7 +362,10 @@ resources have been approved. Put the full ID of an approved existing
 environment in `config\deployment.local.json` as
 `viewer.managedEnvironmentResourceId`; use
 `.\scripts\Get-ViewerManagedEnvironments.ps1` to list candidates. Leaving it
-empty explicitly requests a new managed environment.
+empty explicitly requests a new managed environment. The approved environment
+may be in another Azure region; the viewer Container App and its managed
+identity are created in that environment's region while the remaining
+sample-owned resources stay in `AZURE_RESOURCE_GROUP`.
 The initializer uses reusable config helpers in `scripts/DeploymentConfig.ps1`
 so later hosted and cleanup workflows can consume the same defaults and
 override precedence without duplicating parsing logic.

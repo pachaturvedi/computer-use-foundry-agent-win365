@@ -39,6 +39,7 @@ param screenShareAppUrl string = ''
 var viewerEnabled = toLower(deployViewer) == 'true'
 var liveViewerEnabled = viewerEnabled && toLower(viewerLiveEnabled) == 'true'
 var createManagedEnvironment = empty(viewerManagedEnvironmentResourceId)
+var managedEnvironmentIdSegments = split(viewerManagedEnvironmentResourceId, '/')
 var tags = {
   'azd-env-name': environmentName
   component: 'viewer'
@@ -48,6 +49,11 @@ var tags = {
 
 resource environmentResourceGroup 'Microsoft.Resources/resourceGroups@2023-07-01' existing = {
   name: resourceGroupName
+}
+
+resource existingManagedEnvironment 'Microsoft.App/managedEnvironments@2024-03-01' existing = if (!createManagedEnvironment) {
+  name: managedEnvironmentIdSegments[8]
+  scope: resourceGroup(managedEnvironmentIdSegments[2], managedEnvironmentIdSegments[4])
 }
 
 module foundation '../viewer-foundation.bicep' = if (viewerEnabled) {
@@ -65,6 +71,7 @@ module viewer '../viewer.bicep' = if (viewerEnabled) {
   name: 'viewer-bootstrap'
   scope: environmentResourceGroup
   params: {
+    location: createManagedEnvironment ? location : existingManagedEnvironment!.location
     appName: '${resourcePrefix}-viewer'
     managedEnvironmentResourceId: createManagedEnvironment
       ? foundation!.outputs.environmentResourceId
