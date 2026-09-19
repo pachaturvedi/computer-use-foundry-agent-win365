@@ -7,6 +7,7 @@ param(
     [ValidatePattern('^[a-z][a-z0-9]{1,11}$')]
     [string]$Prefix,
     [Parameter(Mandatory)][string]$Location,
+    [guid]$PoolBillingPlanId = [guid]::Empty,
     [ValidatePattern('^[a-zA-Z0-9.-]+$')]
     [string]$AgentUserDomain,
     [ValidateSet('I_APPROVE_W365_BILLING_AND_CLEANUP')]
@@ -78,7 +79,16 @@ function Assert-W365AcceptanceProfile {
         $missing += 'poolRegions'
     }
     if ($missing.Count -gt 0) {
-        throw "The W365 acceptance profile is incomplete: $($missing -join ', '). Configure config\deployment.local.json and retry."
+        throw @"
+The W365 acceptance profile is incomplete: $($missing -join ', ').
+The checked-in sample defaults provide:
+  geographic location type: usCentral
+  region group:              usCentral
+  regions:                   centralus
+  gallery image:             microsoftwindowsdesktop_windows-ent-cpc_win11-25h2-ent-cpc-m365
+Supply the tenant-specific billing plan with -PoolBillingPlanId, or override
+unsupported defaults in config\deployment.local.json.
+"@
     }
 
     $billingPlanId = [guid]::Empty
@@ -93,8 +103,41 @@ function Assert-W365AcceptanceProfile {
     return [pscustomobject]@{
         Path = $deploymentConfig.Path
         LocalOverridePath = $deploymentConfig.LocalOverridePath
+        GeographicLocationType = [string]$w365.poolGeographicLocationType
+        RegionGroup = [string]$w365.poolRegionGroup
+        Regions = @($w365.poolRegions | ForEach-Object { [string]$_ })
+        ImageId = [string]$w365.poolImageId
         RegionCount = @($w365.poolRegions).Count
     }
+}
+
+function Initialize-W365AcceptanceProfile {
+    $baseConfig = Read-DeploymentConfigFile -Path (Join-Path $RepositoryRoot 'config\deployment.defaults.json')
+    $acceptanceDefaults = $baseConfig.w365AcceptanceDefaults
+    if (!($acceptanceDefaults -is [hashtable])) {
+        throw 'Configuration does not contain w365AcceptanceDefaults.'
+    }
+    $localConfigPath = Join-Path $RepositoryRoot 'config\deployment.local.json'
+    $localConfig = if (Test-Path -LiteralPath $localConfigPath) {
+        Read-DeploymentConfigFile -Path $localConfigPath
+    }
+    else {
+        @{}
+    }
+    if (!$localConfig.ContainsKey('w365') -or !($localConfig.w365 -is [hashtable])) {
+        $localConfig.w365 = @{}
+    }
+
+    foreach ($entry in $acceptanceDefaults.GetEnumerator()) {
+        if (!$localConfig.w365.ContainsKey($entry.Key)) {
+            $localConfig.w365[$entry.Key] = $entry.Value
+        }
+    }
+    if ($PoolBillingPlanId -ne [guid]::Empty) {
+        $localConfig.w365.poolBillingPlanId = $PoolBillingPlanId.ToString()
+    }
+    $localConfig | ConvertTo-Json -Depth 20 |
+        Set-Content -LiteralPath $localConfigPath -Encoding utf8
 }
 
 function Confirm-W365Acceptance {
@@ -141,6 +184,7 @@ if (!$environmentExists -and $Resume) {
     throw "Azd environment '$environmentName' does not exist, so it cannot be resumed."
 }
 
+Initialize-W365AcceptanceProfile
 $profile = Assert-W365AcceptanceProfile
 if (!(Get-Module -Name Microsoft.Graph.Authentication) -and
     !(Get-Module -ListAvailable -Name Microsoft.Graph.Authentication)) {
@@ -205,7 +249,10 @@ try {
     Write-Host "Acceptance environment: $environmentName"
     Write-Host "Azure location:        $Location"
     Write-Host "W365 profile:          $($profile.LocalOverridePath)"
-    Write-Host "W365 regions:          $($profile.RegionCount)"
+    Write-Host "W365 geography:        $($profile.GeographicLocationType)"
+    Write-Host "W365 region group:     $($profile.RegionGroup)"
+    Write-Host "W365 regions:          $($profile.Regions -join ', ')"
+    Write-Host "W365 gallery image:    $($profile.ImageId)"
     Confirm-W365Acceptance
     $cleanupRequired = $true
 

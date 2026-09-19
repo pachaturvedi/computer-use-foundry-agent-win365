@@ -124,8 +124,8 @@ pass the operator-specific values such as the agent-user UPN.
         "poolImageDisplayName": "Windows 11 Enterprise 25H2",
         "poolImageType": "gallery",
         "poolOsLocale": "en-US",
-        "poolMinimumCount": 2,
-        "poolMaximumCount": 2,
+        "poolMinimumCount": 1,
+        "poolMaximumCount": 1,
         "poolEnableSingleSignOn": false
     }
 }
@@ -366,11 +366,12 @@ old Key Vault certificate secrets. Preserve the viewer's separate OIDC secret.
 The authoritative acceptance path is a Windows PowerShell driver centered on
 one isolated azd environment. It does not require a GitHub Environment.
 
-First copy `config\deployment.local.example.json` to the ignored
-`config\deployment.local.json` and set the tenant-approved billing plan, image,
-geography, region group, regions, and minimum/maximum capacity of `1`. Verify
-Foundry model quota, W365 licensing, billing/image availability, and regional
-capacity before continuing.
+The checked-in defaults use the sample's Windows 11 Enterprise 25H2 gallery
+image in `centralus`, region group/geography `usCentral`, and minimum/maximum
+capacity of `1`. The pool display name and description are derived from the
+isolated azd environment. Confirm those defaults are supported in the tenant;
+override only values that differ in ignored `config\deployment.local.json`.
+The billing-plan GUID is tenant-specific and must be supplied to the driver.
 
 Sign in to Azure and run:
 
@@ -382,7 +383,17 @@ pwsh -NoProfile -File .\scripts\Invoke-W365LiveAcceptance.ps1 `
     -SubscriptionId "<subscription-guid>" `
     -TenantId "<tenant-guid>" `
     -Location "eastus" `
-    -Prefix "w365accept"
+    -Prefix "w365accept" `
+    -PoolBillingPlanId "<tenant-billing-plan-guid>"
+```
+
+Example effective defaults:
+
+```text
+Geographic location type: usCentral
+Region group:              usCentral
+Regions:                   centralus
+Gallery image ID:          microsoftwindowsdesktop_windows-ent-cpc_win11-25h2-ent-cpc-m365
 ```
 
 The driver creates `w365accept-live`, previews the Azure deployment, and then

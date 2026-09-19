@@ -12,36 +12,42 @@ on:
         required: true
         type: string
       azure_location:
-        description: Azure location
+        description: Azure location; change if the tenant uses another supported region
         required: true
+        default: eastus
         type: string
       resource_prefix:
         description: Unique 2-12 character lowercase acceptance prefix
         required: true
+        default: w365accept
         type: string
       agent_user_domain:
         description: Optional verified tenant domain; leave empty for automatic default
         required: false
         type: string
       w365_pool_billing_plan_id:
-        description: Tenant-approved W365 billing plan ID
+        description: Tenant-specific W365 billing plan GUID (no portable default)
         required: true
         type: string
       w365_pool_geographic_location_type:
-        description: Tenant-approved W365 geographic location type
+        description: Sample default; change if unsupported by the tenant
         required: true
+        default: usCentral
         type: string
       w365_pool_region_group:
-        description: Tenant-approved W365 region group
+        description: Sample default; change if unsupported by the tenant
         required: true
+        default: usCentral
         type: string
       w365_pool_regions:
-        description: Comma-separated tenant-approved W365 regions
+        description: Comma-separated sample regions; change if unsupported
         required: true
+        default: centralus
         type: string
       w365_pool_image_id:
-        description: Tenant-approved W365 gallery image ID
+        description: Windows 11 Enterprise 25H2 sample; change if unavailable
         required: true
+        default: microsoftwindowsdesktop_windows-ent-cpc_win11-25h2-ent-cpc-m365
         type: string
       billing_approval:
         description: Type I_APPROVE_W365_BILLING_AND_CLEANUP

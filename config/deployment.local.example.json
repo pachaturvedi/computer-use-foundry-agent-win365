@@ -29,8 +29,8 @@
     "poolImageId": "microsoftwindowsdesktop_windows-ent-cpc_win11-25h2-ent-cpc-m365",
     "poolImageType": "gallery",
     "poolOsLocale": "en-US",
-    "poolMinimumCount": 2,
-    "poolMaximumCount": 2,
+    "poolMinimumCount": 1,
+    "poolMaximumCount": 1,
     "poolEnableSingleSignOn": false
   }
 }
