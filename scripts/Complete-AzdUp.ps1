@@ -79,10 +79,51 @@ function Confirm-ViewerLiveActivation {
     }
 }
 
+function Show-PostUpPlan {
+    param(
+        [bool]$ViewerEnabled,
+        [bool]$W365Enabled,
+        [bool]$EnableW365,
+        [bool]$ViewerLiveEnabled
+    )
+
+    $steps = [System.Collections.Generic.List[string]]::new()
+    $steps.Add($(if ($ViewerEnabled) {
+        '1. Build (only if changed) and push the viewer image, then wait for the ACA viewer health check.'
+    } else {
+        '1. Skip viewer image build and health check because DEPLOY_VIEWER is not true.'
+    }))
+    $steps.Add($(if ($EnableW365 -and !$W365Enabled) {
+        '2. Run interactive Windows 365 setup: Entra agent user, Cloud PC pool, and consent.'
+    } elseif ($W365Enabled) {
+        '2. Verify the existing Windows 365 environment is already complete.'
+    } else {
+        '2. Skip Windows 365 setup because ENABLE_W365 is not true.'
+    }))
+    $steps.Add($(if ($ViewerEnabled -and $W365Enabled -and !$ViewerLiveEnabled) {
+        '3. Activate the authenticated live viewer if OIDC/screen-share prerequisites are already set; otherwise warn what is missing.'
+    } else {
+        '3. Skip live-viewer activation.'
+    }))
+    $steps.Add('4. Redeploy the hosted agent only if a new viewer URL became available during this run.')
+    $steps.Add('5. Print the final deployment summary table.')
+
+    Write-SampleVerbose -Component 'postup' -Message 'postup plan (runs after azd provision, before this hook exits):'
+    foreach ($step in $steps) {
+        Write-SampleVerbose -Component 'postup' -Message "  $step"
+    }
+}
+
 if (Test-EnabledValue -Value $env:W365_POSTUP_IN_PROGRESS) {
     Write-Host 'Nested W365 postup execution skipped.'
     return
 }
+
+Show-PostUpPlan `
+    -ViewerEnabled (Test-EnabledValue -Value $env:DEPLOY_VIEWER) `
+    -W365Enabled (Test-EnabledValue -Value $env:W365_ENABLED) `
+    -EnableW365 (Test-EnabledValue -Value $env:ENABLE_W365) `
+    -ViewerLiveEnabled (Test-EnabledValue -Value $env:VIEWER_LIVE_ENABLED)
 
 $viewerUrlBefore = [string]$env:VIEWER_PUBLIC_URL
 Write-SampleVerbose -Component 'postup' -Message 'Running viewer bootstrap before enabled W365 deployment.'
@@ -116,6 +157,14 @@ if ($requiresBlueprintSecret) {
     if (!$?) {
         throw 'Blueprint secret storage failed.'
     }
+}
+
+$hostedAgentPossible = (Test-EnabledValue -Value $env:ENABLE_W365) -or
+    (Test-EnabledValue -Value ([string]$currentValues['W365_ENABLED']))
+if ($hostedAgentPossible -and ![string]::IsNullOrWhiteSpace($environmentName)) {
+    Write-SampleVerbose -Component 'postup' -Message 'Resolving hosted-agent operator defaults (OPERATOR_TENANT_ID, OPERATOR_OBJECT_ID, HOSTED_ALLOWED_USER_ID) before any hosted-agent deployment.'
+    $environmentFilePath = Join-Path (Join-Path $RepositoryRoot ".azure\$environmentName") '.env'
+    $currentValues = Resolve-W365HostedAgentOperatorDefaults -EnvironmentFilePath $environmentFilePath -EnvironmentValues $currentValues
 }
 
 $enableW365 = Test-EnabledValue -Value $env:ENABLE_W365
@@ -234,20 +283,30 @@ if (![string]::IsNullOrWhiteSpace($env:AZURE_ENV_NAME)) {
         !$w365SetupRan -and
         ![string]::IsNullOrWhiteSpace($viewerUrlAfter) -and
         $viewerUrlAfter -ne $viewerUrlBefore) {
-        Write-Host "Viewer URL '$viewerUrlAfter' was added; redeploying the hosted agent so live-view links are available."
-        $previousPostUpGuard = $env:W365_POSTUP_IN_PROGRESS
-        $env:W365_POSTUP_IN_PROGRESS = 'true'
-        try {
-            & $AgentDeploymentScriptPath `
-                -Mode DeployAgent `
-                -Environment $environmentName `
-                -ConfirmResourceChanges
+        $agentRequired = @('OPERATOR_TENANT_ID', 'OPERATOR_OBJECT_ID', 'HOSTED_ALLOWED_USER_ID')
+        $agentMissing = @($agentRequired | Where-Object {
+            [string]::IsNullOrWhiteSpace([string]$updatedValues[$_])
+        })
+        if ($agentMissing.Count -gt 0) {
+            Write-Warning "Skipping hosted-agent redeploy: the running container would crash on startup without $($agentMissing -join ', '). Set these values (see 'Bind the hosted operator' in docs/DEPLOYMENT.md) and rerun azd up."
         }
-        finally {
-            [Environment]::SetEnvironmentVariable(
-                'W365_POSTUP_IN_PROGRESS',
-                $previousPostUpGuard,
-                'Process')
+        else {
+            Write-Host "Viewer URL '$viewerUrlAfter' was added; redeploying the hosted agent so live-view links are available."
+            $previousPostUpGuard = $env:W365_POSTUP_IN_PROGRESS
+            $env:W365_POSTUP_IN_PROGRESS = 'true'
+            try {
+                & $AgentDeploymentScriptPath `
+                    -Mode DeployAgent `
+                    -Environment $environmentName `
+                    -ConfirmResourceChanges `
+                    -SmokeInvoke
+            }
+            finally {
+                [Environment]::SetEnvironmentVariable(
+                    'W365_POSTUP_IN_PROGRESS',
+                    $previousPostUpGuard,
+                    'Process')
+            }
         }
     }
 

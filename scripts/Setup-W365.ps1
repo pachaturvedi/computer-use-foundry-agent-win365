@@ -1024,6 +1024,7 @@ $phaseTwoValues = [ordered]@{
     W365_AGENT_USER_ID = $agentUser.id
     W365_AGENT_USER_PRINCIPAL_NAME = $AgentUserPrincipalName
     W365_POOL_ID = $PoolId.ToString()
+    W365_POOL_NAME = [string]$pool.displayName
     W365_ENABLED = 'true'
 }
 

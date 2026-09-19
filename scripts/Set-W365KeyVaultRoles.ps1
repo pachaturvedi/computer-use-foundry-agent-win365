@@ -45,7 +45,7 @@ $viewerPrincipalId = if ($IncludeViewer) {
 else {
     ''
 }
-$operatorObjectId = (& az ad signed-in-user show --query id --output tsv).Trim()
+$operatorObjectId = (& az ad signed-in-user show --query id --output tsv | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($operatorObjectId)) {
     throw 'Unable to resolve the signed-in Azure user.'
 }
@@ -53,7 +53,7 @@ $vaultId = (& az keyvault show `
     --subscription $subscriptionId `
     --name $vaultName `
     --query id `
-    --output tsv).Trim()
+    --output tsv | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($vaultId)) {
     throw "Unable to resolve Key Vault '$vaultName'."
 }

@@ -89,6 +89,12 @@ try {
     $foundryBicep = Get-Content -LiteralPath (Join-Path $root 'infra\foundry\main.bicep') -Raw
     $stateBicep = Get-Content -LiteralPath (Join-Path $root 'infra\state\main.bicep') -Raw
     $viewerBicep = Get-Content -LiteralPath (Join-Path $root 'infra\viewer\main.bicep') -Raw
+    $viewerFoundationBicep = Get-Content -LiteralPath (Join-Path $root 'infra\viewer-foundation.bicep') -Raw
+    $viewerAppBicep = Get-Content -LiteralPath (Join-Path $root 'infra\viewer.bicep') -Raw
+    $azureYaml = Get-Content -LiteralPath (Join-Path $root 'azure.yaml') -Raw
+    $upContextScript = Get-Content -LiteralPath (Join-Path $root 'scripts\Show-AzdUpContext.ps1') -Raw
+    $planScript = Get-Content -LiteralPath (Join-Path $root 'scripts\Show-DeploymentPlan.ps1') -Raw
+    $viewerDeployScript = Get-Content -LiteralPath (Join-Path $root 'scripts\Deploy-ViewerBootstrap.ps1') -Raw
     $stateParameters = Get-Content -LiteralPath (Join-Path $root 'infra\state\main.parameters.json') -Raw
     $viewerParameters = Get-Content -LiteralPath (Join-Path $root 'infra\viewer\main.parameters.json') -Raw
     if ($foundryBicep -notmatch "resource environmentResourceGroup 'Microsoft.Resources/resourceGroups@" -or
@@ -96,6 +102,27 @@ try {
         $viewerBicep -notmatch "resource environmentResourceGroup 'Microsoft.Resources/resourceGroups@[^']+' existing" -or
         $stateBicep -match 'resource stateResourceGroup' -or
         $viewerBicep -match 'resource viewerResourceGroup' -or
+        $viewerBicep -notmatch "resource existingManagedEnvironment 'Microsoft.App/managedEnvironments@[^']+' existing" -or
+        $viewerBicep -notmatch 'var createManagedEnvironment = empty\(viewerManagedEnvironmentResourceId\)' -or
+        $viewerBicep -notmatch 'if \(viewerEnabled && !createManagedEnvironment\)' -or
+        $viewerBicep -notmatch 'createManagedEnvironment: createManagedEnvironment' -or
+        $viewerBicep -notmatch "enableLogAnalytics: toLower\(viewerLogAnalyticsEnabled\) == 'true'" -or
+        $viewerBicep -notmatch 'location: createManagedEnvironment \? location : existingManagedEnvironment!\.location' -or
+        $viewerFoundationBicep -notmatch "destination: 'none'" -or
+        $viewerFoundationBicep -notmatch 'createManagedEnvironment && enableLogAnalytics' -or
+        $viewerAppBicep -notmatch "name: 'W365_ENABLED', value: w365Enabled \? 'true' : 'false'" -or
+        $azureYaml -notmatch '(?ms)^\s{2}preup:\s+windows:.*Show-AzdUpContext\.ps1' -or
+        $upContextScript -notmatch 'informational, not failures' -or
+        $planScript -notmatch 'Assert-ViewerAzureCliPrerequisites' -or
+        $viewerDeployScript -notmatch 'Assert-ViewerAzureCliPrerequisites' -or
+        $viewerDeployScript -notmatch 'Waiting up to five minutes for the ACA viewer to become healthy' -or
+        $viewerDeployScript -notmatch "Component 'viewer-health'" -or
+        $viewerDeployScript -notmatch 'Invoke-RestMethod.+-Verbose:\$false' -or
+        $viewerDeployScript -notmatch 'Get-ViewerImageBuildHash' -or
+        $viewerDeployScript -notmatch 'acr repository show-tags' -or
+        $viewerDeployScript -notmatch 'Reusing unchanged viewer image' -or
+        $viewerDeployScript -notmatch 'base-image-refresh' -or
+        $viewerDeployScript -notmatch 'build-\$\(\$buildHash\.Substring\(0, 12\)\)' -or
         $stateParameters -notmatch '"resourceGroupName": \{ "value": "\$\{AZURE_RESOURCE_GROUP\}" \}' -or
         $viewerParameters -notmatch '"resourceGroupName": \{ "value": "\$\{AZURE_RESOURCE_GROUP\}" \}') {
         throw 'Infrastructure layers do not consistently reuse one AZURE_RESOURCE_GROUP.'

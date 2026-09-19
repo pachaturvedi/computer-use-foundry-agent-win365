@@ -5,6 +5,7 @@ param location string = resourceGroup().location
 @maxLength(24)
 param resourcePrefix string
 param createManagedEnvironment bool = true
+param enableLogAnalytics bool = false
 param tags object = {}
 
 var compactPrefix = toLower(replace(resourcePrefix, '-', ''))
@@ -13,7 +14,7 @@ var environmentName = '${resourcePrefix}-cae'
 var registryName = take('${compactPrefix}cr${resourceSuffix}', 50)
 var logAnalyticsName = '${resourcePrefix}-viewer-logs'
 
-resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = if (createManagedEnvironment) {
+resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = if (createManagedEnvironment && enableLogAnalytics) {
   name: logAnalyticsName
   location: location
   tags: tags
@@ -33,13 +34,17 @@ resource environment 'Microsoft.App/managedEnvironments@2024-03-01' = if (create
   location: location
   tags: tags
   properties: {
-    appLogsConfiguration: {
-      destination: 'log-analytics'
-      logAnalyticsConfiguration: {
-        customerId: logAnalytics!.properties.customerId
-        sharedKey: logAnalytics!.listKeys().primarySharedKey
-      }
-    }
+    appLogsConfiguration: enableLogAnalytics
+      ? {
+          destination: 'log-analytics'
+          logAnalyticsConfiguration: {
+            customerId: logAnalytics!.properties.customerId
+            sharedKey: logAnalytics!.listKeys().primarySharedKey
+          }
+        }
+      : {
+          destination: 'none'
+        }
   }
 }
 
@@ -60,4 +65,4 @@ resource registry 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
 output environmentResourceId string = createManagedEnvironment ? environment!.id : ''
 output registryName string = registry.name
 output registryLoginServer string = registry.properties.loginServer
-output logAnalyticsName string = logAnalytics.name
+output logAnalyticsName string = createManagedEnvironment && enableLogAnalytics ? logAnalytics!.name : ''

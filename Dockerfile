@@ -4,7 +4,7 @@ COPY NuGet.Config .
 COPY src/Win365Agent/Win365Agent.csproj src/Win365Agent/
 RUN dotnet restore src/Win365Agent/Win365Agent.csproj --configfile NuGet.Config
 COPY src/Win365Agent/ src/Win365Agent/
-RUN dotnet publish src/Win365Agent/Win365Agent.csproj -c Release --no-restore -o /app
+RUN dotnet publish src/Win365Agent/Win365Agent.csproj -c Release --no-restore -p:UseAppHost=false -o /app
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
 WORKDIR /app

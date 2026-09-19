@@ -118,3 +118,44 @@ function Read-AzdEnvironmentFile {
 
     return $values
 }
+
+function Set-AzdEnvironmentFileValues {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][System.Collections.IDictionary]$Values
+    )
+
+    if (!(Test-Path -LiteralPath $Path)) {
+        throw "azd environment file '$Path' was not found."
+    }
+
+    $lines = [System.Collections.Generic.List[string]]::new([string[]](Get-Content -LiteralPath $Path))
+    $remaining = [ordered]@{}
+    foreach ($entry in $Values.GetEnumerator()) {
+        $remaining[[string]$entry.Key] = [string]$entry.Value
+    }
+
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        $line = $lines[$i]
+        if ([string]::IsNullOrWhiteSpace($line) -or $line.TrimStart().StartsWith('#')) {
+            continue
+        }
+
+        $separatorIndex = $line.IndexOf('=')
+        if ($separatorIndex -lt 1) {
+            continue
+        }
+
+        $name = $line.Substring(0, $separatorIndex).Trim()
+        if ($remaining.Contains($name)) {
+            $lines[$i] = '{0}="{1}"' -f $name, $remaining[$name]
+            $remaining.Remove($name)
+        }
+    }
+
+    foreach ($entry in $remaining.GetEnumerator()) {
+        $lines.Add('{0}="{1}"' -f [string]$entry.Key, [string]$entry.Value)
+    }
+
+    Set-Content -LiteralPath $Path -Value $lines
+}

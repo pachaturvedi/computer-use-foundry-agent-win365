@@ -86,6 +86,26 @@ public sealed class SettingsTests
     public void MisspelledEnableFlagDoesNotSilentlyDisableDesktop() =>
         Assert.Throws<InvalidOperationException>(() => Config(new() { ["W365_ENABLED"] = "tru" }).Validate());
 
+    [Theory]
+    [InlineData("true", true)]
+    [InlineData("True", true)]
+    [InlineData("TRUE", true)]
+    [InlineData("false", false)]
+    [InlineData("False", false)]
+    [InlineData("FALSE", false)]
+    public void EnabledFlagToleratesAnyCasingWrittenByIacOrTooling(string rawValue, bool expected) =>
+        Assert.Equal(expected, Config(new() { ["W365_ENABLED"] = rawValue }).Enabled);
+
+    [Theory]
+    [InlineData("true", true)]
+    [InlineData("True", true)]
+    [InlineData("TRUE", true)]
+    [InlineData("false", false)]
+    [InlineData("False", false)]
+    [InlineData("anything-else", false)]
+    public void LocalModeFlagToleratesAnyCasingWrittenByIacOrTooling(string rawValue, bool expected) =>
+        Assert.Equal(expected, Config(new() { ["SAMPLE_LOCAL_MODE"] = rawValue }).Local);
+
     [Fact]
     public void WrongFoundryBlueprintIsRejected()
     {

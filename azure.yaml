@@ -70,6 +70,12 @@ infra:
         - foundry
         - state
 hooks:
+  preup:
+    windows:
+      shell: pwsh
+      run: ./scripts/Show-AzdUpContext.ps1
+      interactive: false
+      continueOnError: false
   preprovision:
     windows:
       shell: pwsh

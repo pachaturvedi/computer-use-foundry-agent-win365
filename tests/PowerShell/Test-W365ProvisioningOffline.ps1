@@ -62,6 +62,10 @@ try {
     if ($name -ne 'foundry-w365-contoso-sample-dev-01') {
         throw "Unexpected deterministic W365 pool display name '$name'."
     }
+    $dedupedName = Get-W365PoolDisplayName -ResourcePrefix 'fawsep18-dev' -EnvironmentName 'fawsep18-dev'
+    if ($dedupedName -ne 'foundry-w365-fawsep18-dev') {
+        throw "W365 pool display name did not deduplicate a matching prefix/environment token: '$dedupedName'."
+    }
     $longName = Get-W365PoolDisplayName `
         -ResourcePrefix ('prefix-' + ('a' * 80)) `
         -EnvironmentName ('environment-' + ('b' * 80))

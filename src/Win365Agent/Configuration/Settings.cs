@@ -21,14 +21,26 @@ public sealed class Settings(IConfiguration config)
     public string? Optional(string key) => string.IsNullOrWhiteSpace(config[key]) ? null : config[key];
 
     /// <summary>Gets whether the application is running in local bootstrap mode.</summary>
-    public bool Local => Optional("SAMPLE_LOCAL_MODE") == "true";
+    /// <remarks>
+    /// Comparison is case-insensitive so that <c>true</c>, <c>True</c>, and <c>TRUE</c> are all
+    /// accepted regardless of which tool wrote the environment variable (Bicep, PowerShell, the
+    /// Azure portal, or a manually edited <c>.env</c> file).
+    /// </remarks>
+    public bool Local => string.Equals(Optional("SAMPLE_LOCAL_MODE"), "true", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Gets whether live Windows 365 integration is enabled.</summary>
-    /// <exception cref="InvalidOperationException"><c>W365_ENABLED</c> is not <c>true</c> or <c>false</c>.</exception>
+    /// <remarks>
+    /// Comparison is case-insensitive so that <c>true</c>/<c>false</c>, <c>True</c>/<c>False</c>, and
+    /// <c>TRUE</c>/<c>FALSE</c> are all accepted regardless of which tool wrote the environment
+    /// variable. Any other value still fails fast rather than silently disabling W365 so a
+    /// misspelled flag (for example <c>W365_ENABLED=tru</c>) cannot pass unnoticed.
+    /// </remarks>
+    /// <exception cref="InvalidOperationException"><c>W365_ENABLED</c> is not <c>true</c> or <c>false</c> (case-insensitive).</exception>
     public bool Enabled => Optional("W365_ENABLED") switch
     {
-        null or "false" => false,
-        "true" => true,
+        null => false,
+        { } value when string.Equals(value, "false", StringComparison.OrdinalIgnoreCase) => false,
+        { } value when string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) => true,
         _ => throw new InvalidOperationException("W365_ENABLED must be true or false.")
     };
 

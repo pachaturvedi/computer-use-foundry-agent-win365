@@ -48,11 +48,33 @@ $trackedEnvironmentVariables = @(
     'W365_BLUEPRINT_CREDENTIAL_MODE',
     'SCREENSHARE_SDK_URL',
     'SCREENSHARE_FRAME_ORIGINS',
-    'SCREENSHARE_APP_URL'
+    'SCREENSHARE_APP_URL',
+    'SAMPLE_LOG_LEVEL'
 )
 $savedEnvironment = @{}
 foreach ($name in $trackedEnvironmentVariables) {
     $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+}
+
+$script:azBehavior = 'success'
+function az {
+    $arguments = @($args)
+    $global:LASTEXITCODE = 0
+    if ($arguments[0] -eq 'account' -and $arguments[1] -eq 'show') {
+        if ($script:azBehavior -eq 'fail') {
+            $global:LASTEXITCODE = 1
+            return ''
+        }
+        return '99999999-9999-9999-9999-999999999999'
+    }
+    if ($arguments[0] -eq 'ad' -and $arguments[1] -eq 'signed-in-user') {
+        if ($script:azBehavior -eq 'fail') {
+            $global:LASTEXITCODE = 1
+            return ''
+        }
+        return '88888888-8888-8888-8888-888888888888'
+    }
+    throw "Unexpected az call: $($arguments -join ' ')"
 }
 
 function Reset-Calls {
@@ -95,7 +117,10 @@ function Write-TestEnvironment {
             'W365_AGENT_USER_ID="22222222-2222-2222-2222-222222222222"',
             'W365_AGENT_ID="33333333-3333-3333-3333-333333333333"',
             'W365_AGENT_OBJECT_ID="44444444-4444-4444-4444-444444444444"',
-            'W365_BLUEPRINT_ID="55555555-5555-5555-5555-555555555555"'
+            'W365_BLUEPRINT_ID="55555555-5555-5555-5555-555555555555"',
+            'OPERATOR_TENANT_ID="66666666-6666-6666-6666-666666666666"',
+            'OPERATOR_OBJECT_ID="77777777-7777-7777-7777-777777777777"',
+            'HOSTED_ALLOWED_USER_ID="pending"'
         )
     }
     Set-Content -LiteralPath $environmentPath -Value $lines
@@ -132,6 +157,7 @@ try {
     New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
     Set-Content -LiteralPath $mockViewerPath -Value @'
 param()
+Write-Host 'MOCK-VIEWER-BOOTSTRAP-RAN'
 @{
     w365Enabled = $env:W365_ENABLED
 } | ConvertTo-Json | Set-Content -LiteralPath $env:TEST_VIEWER_CALLS_PATH
@@ -271,6 +297,37 @@ throw 'Simulated W365 setup failure.'
     Write-TestEnvironment -Complete:$false
     $env:ENABLE_W365 = 'false'
     $env:W365_ENABLED = 'false'
+    $env:SAMPLE_LOG_LEVEL = 'verbose'
+    $planOutput = & $scriptPath -RepositoryRoot $tempRoot -W365SetupScriptPath $mockW365Path -ViewerBootstrapScriptPath $mockViewerPath -ViewerSecretsScriptPath $mockViewerSecretsPath *>&1 | Out-String
+    $env:SAMPLE_LOG_LEVEL = ''
+    $planOutput = $planOutput -replace "`r", ''
+    $planIndex = $planOutput.IndexOf('postup plan (runs after azd provision, before this hook exits):')
+    $bootstrapIndex = $planOutput.IndexOf('MOCK-VIEWER-BOOTSTRAP-RAN')
+    if ($planIndex -lt 0 -or $bootstrapIndex -lt 0 -or $planIndex -gt $bootstrapIndex) {
+        throw 'The postup plan summary did not print before viewer bootstrap execution.'
+    }
+    if ($planOutput -notmatch '(?m)^.*1\. Skip viewer image build and health check because DEPLOY_VIEWER is not true\.$' -or
+        $planOutput -notmatch '(?m)^.*2\. Skip Windows 365 setup because ENABLE_W365 is not true\.$' -or
+        $planOutput -notmatch '(?m)^.*3\. Skip live-viewer activation\.$' -or
+        $planOutput -notmatch '(?m)^.*4\. Redeploy the hosted agent only if a new viewer URL became available during this run\.$' -or
+        $planOutput -notmatch '(?m)^.*5\. Print the final deployment summary table\.$') {
+        throw 'The postup plan summary did not describe every disabled step accurately.'
+    }
+
+    Reset-Calls
+    Write-TestEnvironment -Complete:$false
+    $env:ENABLE_W365 = 'false'
+    $env:W365_ENABLED = 'false'
+    $env:SAMPLE_LOG_LEVEL = ''
+    $summaryModeOutput = & $scriptPath -RepositoryRoot $tempRoot -W365SetupScriptPath $mockW365Path -ViewerBootstrapScriptPath $mockViewerPath -ViewerSecretsScriptPath $mockViewerSecretsPath *>&1 | Out-String
+    if ($summaryModeOutput -match 'postup plan \(runs after azd provision, before this hook exits\):') {
+        throw 'The postup plan summary printed in default/summary mode; it should only appear in verbose or debug mode.'
+    }
+
+    Reset-Calls
+    Write-TestEnvironment -Complete:$false
+    $env:ENABLE_W365 = 'false'
+    $env:W365_ENABLED = 'false'
     & $scriptPath -RepositoryRoot $tempRoot -W365SetupScriptPath $mockW365Path -ViewerBootstrapScriptPath $mockViewerPath -ViewerSecretsScriptPath $mockViewerSecretsPath
     if (Test-Path -LiteralPath $w365CallsPath) {
         throw 'Disabled postup invoked W365 setup.'
@@ -362,6 +419,32 @@ throw 'Simulated W365 setup failure.'
         $agentDeployCall.viewerPublicUrl -ne 'https://viewer.example.com' -or
         $agentDeployCall.recursionGuard -ne 'true') {
         throw 'Postup did not redeploy the hosted agent after discovering the viewer URL.'
+    }
+    $env:TEST_VIEWER_PUBLIC_URL = ''
+
+    Reset-Calls
+    Write-TestEnvironment -Complete:$true
+    Write-CompleteManifest
+    $envLines = Get-Content -LiteralPath $environmentPath | Where-Object {
+        $_ -notmatch '^(OPERATOR_TENANT_ID|OPERATOR_OBJECT_ID|HOSTED_ALLOWED_USER_ID)='
+    }
+    Set-Content -LiteralPath $environmentPath -Value $envLines
+    $env:VIEWER_PUBLIC_URL = ''
+    $env:TEST_VIEWER_PUBLIC_URL = 'https://viewer.example.com'
+    $missingOperatorOutput = & $scriptPath `
+        -RepositoryRoot $tempRoot `
+        -W365SetupScriptPath $mockW365Path `
+        -ViewerBootstrapScriptPath $mockViewerPath `
+        -ViewerSecretsScriptPath $mockViewerSecretsPath `
+        -AgentDeploymentScriptPath $mockAgentDeployPath *>&1 | Out-String
+    if (Test-Path -LiteralPath $agentDeployCallsPath) {
+        throw 'Postup redeployed the hosted agent even though OPERATOR_TENANT_ID/OPERATOR_OBJECT_ID/HOSTED_ALLOWED_USER_ID were missing.'
+    }
+    if ($missingOperatorOutput -notmatch 'Skipping hosted-agent redeploy' -or
+        $missingOperatorOutput -notmatch 'OPERATOR_TENANT_ID' -or
+        $missingOperatorOutput -notmatch 'OPERATOR_OBJECT_ID' -or
+        $missingOperatorOutput -notmatch 'HOSTED_ALLOWED_USER_ID') {
+        throw 'Postup did not warn about missing hosted-agent operator prerequisites.'
     }
     $env:TEST_VIEWER_PUBLIC_URL = ''
 

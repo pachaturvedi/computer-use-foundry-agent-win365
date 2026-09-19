@@ -101,6 +101,54 @@ function Set-W365AzdValues {
     }
 }
 
+function Resolve-W365HostedAgentOperatorDefaults {
+    param(
+        [Parameter(Mandatory)][string]$EnvironmentFilePath,
+        [Parameter(Mandatory)][System.Collections.IDictionary]$EnvironmentValues
+    )
+
+    $updates = [ordered]@{}
+
+    if ([string]::IsNullOrWhiteSpace([string]$EnvironmentValues['OPERATOR_TENANT_ID'])) {
+        $tenantId = (& az account show --query tenantId --output tsv 2>$null | Out-String).Trim()
+        $parsedTenantId = [guid]::Empty
+        if ($LASTEXITCODE -eq 0 -and [guid]::TryParse($tenantId, [ref]$parsedTenantId) -and $parsedTenantId -ne [guid]::Empty) {
+            $updates['OPERATOR_TENANT_ID'] = $parsedTenantId.ToString()
+        }
+        else {
+            Write-SampleVerbose -Component 'postup' -Message 'Unable to auto-resolve OPERATOR_TENANT_ID from az account show; it must be set manually.'
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace([string]$EnvironmentValues['OPERATOR_OBJECT_ID'])) {
+        $objectId = (& az ad signed-in-user show --query id --output tsv 2>$null | Out-String).Trim()
+        $parsedObjectId = [guid]::Empty
+        if ($LASTEXITCODE -eq 0 -and [guid]::TryParse($objectId, [ref]$parsedObjectId) -and $parsedObjectId -ne [guid]::Empty) {
+            $updates['OPERATOR_OBJECT_ID'] = $parsedObjectId.ToString()
+        }
+        else {
+            Write-SampleVerbose -Component 'postup' -Message 'Unable to auto-resolve OPERATOR_OBJECT_ID from az ad signed-in-user show; it must be set manually.'
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace([string]$EnvironmentValues['HOSTED_ALLOWED_USER_ID'])) {
+        $updates['HOSTED_ALLOWED_USER_ID'] = 'pending'
+    }
+
+    if ($updates.Count -eq 0) {
+        return $EnvironmentValues
+    }
+
+    Set-AzdEnvironmentFileValues -Path $EnvironmentFilePath -Values $updates
+    foreach ($entry in $updates.GetEnumerator()) {
+        $EnvironmentValues[[string]$entry.Key] = [string]$entry.Value
+        [Environment]::SetEnvironmentVariable([string]$entry.Key, [string]$entry.Value, 'Process')
+        Write-Host "Resolved and persisted $($entry.Key) for the hosted-agent operator binding."
+    }
+
+    return $EnvironmentValues
+}
+
 function Resolve-W365TenantId {
     param(
         [Parameter(Mandatory)]$Azd,
@@ -144,7 +192,13 @@ function Get-W365PoolDisplayName {
 
     $prefixToken = ConvertTo-W365NameToken -Value $ResourcePrefix
     $environmentToken = ConvertTo-W365NameToken -Value $EnvironmentName
-    $name = "foundry-w365-$prefixToken-$environmentToken"
+    $ownershipToken = if ($prefixToken -eq $environmentToken) {
+        $environmentToken
+    }
+    else {
+        "$prefixToken-$environmentToken"
+    }
+    $name = "foundry-w365-$ownershipToken"
     if ($name.Length -le $MaximumLength) {
         return $name
     }

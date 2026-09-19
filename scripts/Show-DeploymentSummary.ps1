@@ -29,7 +29,7 @@ $rows = @(
     [pscustomobject]@{ Resource = 'W365 credential vault'; ResourceGroup = Get-Value 'AZURE_RESOURCE_GROUP'; Name = Get-Value 'W365_KEY_VAULT_NAME'; Result = 'Ready' }
     [pscustomobject]@{ Resource = 'Shared Blob state'; ResourceGroup = Get-Value 'AZURE_RESOURCE_GROUP'; Name = Get-Value 'STATE_STORAGE_ACCOUNT_NAME'; Result = $(if ((Get-Value 'DEPLOY_STATE') -eq 'true') { 'Ready' } else { 'Skipped' }) }
     [pscustomobject]@{ Resource = 'ACA viewer'; ResourceGroup = Get-Value 'AZURE_RESOURCE_GROUP'; Name = Get-Value 'VIEWER_APP_NAME'; Result = $(if ((Get-Value 'DEPLOY_VIEWER') -eq 'true') { Get-Value 'VIEWER_PUBLIC_URL' } else { 'Skipped' }) }
-    [pscustomobject]@{ Resource = 'Windows 365'; ResourceGroup = '-'; Name = Get-Value 'W365_POOL_ID'; Result = $(if ((Get-Value 'W365_ENABLED') -eq 'true') { 'Ready' } else { 'Skipped' }) }
+    [pscustomobject]@{ Resource = 'Windows 365'; ResourceGroup = '-'; Name = $(if ((Get-Value 'W365_POOL_NAME') -ne '-') { Get-Value 'W365_POOL_NAME' } else { Get-Value 'W365_POOL_ID' }); Result = $(if ((Get-Value 'W365_ENABLED') -eq 'true') { 'Ready' } else { 'Skipped' }) }
 )
 
 Write-Host ''

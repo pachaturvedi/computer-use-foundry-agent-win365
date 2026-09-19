@@ -6,6 +6,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 . (Join-Path $PSScriptRoot 'Logging.ps1')
+. (Join-Path $PSScriptRoot 'ViewerConfiguration.ps1')
 Initialize-SampleScriptLogging -ScriptName $MyInvocation.MyCommand.Name -Parameters $PSBoundParameters
 
 function Test-True {
@@ -22,6 +23,9 @@ $viewerEnabled = Test-True $env:DEPLOY_VIEWER
 $stateEnabled = Test-True $env:DEPLOY_STATE
 $w365Enabled = Test-True $env:W365_ENABLED
 $enableW365 = Test-True $env:ENABLE_W365
+if ($viewerEnabled) {
+    Assert-ViewerAzureCliPrerequisites
+}
 $vaultName = if (![string]::IsNullOrWhiteSpace($env:W365_KEY_VAULT_NAME)) {
     $env:W365_KEY_VAULT_NAME
 }

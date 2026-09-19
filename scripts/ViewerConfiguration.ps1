@@ -4,6 +4,23 @@ Set-StrictMode -Version Latest
 Write-SampleVerbose -Component 'ViewerConfiguration' -Message 'Loaded viewer validation helpers.'
 Write-SampleDebug -Component 'ViewerConfiguration' -Message 'Validation is fail-closed for state, URLs, credential mode, and identity binding.'
 
+function Assert-ViewerAzureCliPrerequisites {
+    if (!(Get-Command az -ErrorAction SilentlyContinue)) {
+        throw 'Azure CLI is required when DEPLOY_VIEWER=true.'
+    }
+
+    foreach ($arguments in @(
+        @('containerapp', 'show', '--help'),
+        @('containerapp', 'update', '--help'),
+        @('containerapp', 'registry', 'set', '--help')
+    )) {
+        & az @arguments *> $null
+        if ($LASTEXITCODE -ne 0) {
+            throw "Required Azure CLI Container Apps commands are unavailable. Upgrade Azure CLI, then install or upgrade the extension if needed: az extension add --name containerapp --upgrade"
+        }
+    }
+}
+
 function Assert-ViewerSharedStateConfiguration {
     param(
         [Parameter(Mandatory)][string]$DeployState,

@@ -41,12 +41,7 @@ Assert-ViewerSharedStateConfiguration `
 Assert-ViewerManagedEnvironmentResourceId `
     -ResourceId $env:VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID
 
-if (!(Get-Command az -ErrorAction SilentlyContinue)) {
-    throw 'Azure CLI is required for the viewer image deployment hook.'
-}
-if (!(az extension show --name containerapp --output none 2>$null)) {
-    throw 'Azure CLI extension containerapp is required. Install it before running azd up.'
-}
+Assert-ViewerAzureCliPrerequisites
 function Invoke-Az {
     param([Parameter(Mandatory)][string[]]$Arguments)
 
@@ -54,6 +49,36 @@ function Invoke-Az {
     if ($LASTEXITCODE -ne 0) {
         throw "az $($Arguments -join ' ') failed with exit code $LASTEXITCODE."
     }
+}
+
+function Get-ViewerImageBuildHash {
+    param([Parameter(Mandatory)][string]$RepositoryRoot)
+
+    $projectRoot = Join-Path $RepositoryRoot 'src\Win365Agent'
+    $inputFiles = @(
+        Get-Item -LiteralPath (Join-Path $RepositoryRoot '.dockerignore')
+        Get-Item -LiteralPath (Join-Path $RepositoryRoot 'Dockerfile')
+        Get-Item -LiteralPath (Join-Path $RepositoryRoot 'NuGet.Config')
+        Get-ChildItem -LiteralPath $projectRoot -File -Recurse |
+            Where-Object {
+                $_.FullName -notmatch '[\\/](bin|obj)[\\/]' -and
+                $_.Name -notmatch '^\.env' -and
+                $_.Extension -notin @('.pfx', '.pem', '.key') -and
+                $_.Name -ne 'appsettings.Development.json'
+            }
+    ) | Sort-Object FullName
+
+    $fingerprints = foreach ($file in $inputFiles) {
+        $relativePath = [IO.Path]::GetRelativePath($RepositoryRoot, $file.FullName).Replace('\', '/')
+        $fileHash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        "$relativePath`n$fileHash"
+    }
+    $baseImageRefresh = [DateTimeOffset]::UtcNow.ToString(
+        'yyyy-MM',
+        [Globalization.CultureInfo]::InvariantCulture)
+    $buildInputs = @($fingerprints) + "base-image-refresh`n$baseImageRefresh"
+    $bytes = [Text.Encoding]::UTF8.GetBytes($buildInputs -join "`n")
+    return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
 }
 
 $subscription = $env:AZURE_SUBSCRIPTION_ID
@@ -64,6 +89,14 @@ $registryEndpoint = $env:VIEWER_REGISTRY_ENDPOINT
 $identityPrincipalId = $env:VIEWER_IDENTITY_PRINCIPAL_ID
 $identityResourceId = $env:VIEWER_IDENTITY_RESOURCE_ID
 $imageName = $env:VIEWER_IMAGE_NAME
+$repositoryRoot = Split-Path $PSScriptRoot
+$imageRepository = ($imageName -split ':', 2)[0]
+if ([string]::IsNullOrWhiteSpace($imageRepository)) {
+    throw "VIEWER_IMAGE_NAME '$imageName' must contain an ACR repository name."
+}
+$buildHash = Get-ViewerImageBuildHash -RepositoryRoot $repositoryRoot
+$buildTag = "build-$($buildHash.Substring(0, 12))"
+$resolvedImageName = "${imageRepository}:$buildTag"
 
 if ($env:VIEWER_LIVE_ENABLED -eq 'true') {
     $liveRequired = @(
@@ -113,21 +146,53 @@ if ($env:VIEWER_LIVE_ENABLED -eq 'true') {
     }
 }
 
-Invoke-Az @(
-    'acr', 'build',
-    '--subscription', $subscription,
-    '--registry', $registryName,
-    '--image', $imageName,
-    '--file', (Join-Path (Split-Path $PSScriptRoot) 'Dockerfile'),
-    (Split-Path $PSScriptRoot),
-    '--output', 'none'
-)
+$repositoryListOutput = & az acr repository list `
+    --subscription $subscription `
+    --name $registryName `
+    --query "[?@=='$imageRepository'] | [0]" `
+    --output tsv
+if ($LASTEXITCODE -ne 0) {
+    throw "Unable to inspect repositories in Azure Container Registry '$registryName'."
+}
+$repositoryExists = if ($null -eq $repositoryListOutput) { '' } else { ([string]$repositoryListOutput).Trim() }
 
-$registryId = (& az acr show `
+$imageExists = $false
+if ($repositoryExists -eq $imageRepository) {
+    $existingTagOutput = & az acr repository show-tags `
+        --subscription $subscription `
+        --name $registryName `
+        --repository $imageRepository `
+        --query "[?@=='$buildTag'] | [0]" `
+        --output tsv
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to inspect tags for '$imageRepository' in Azure Container Registry '$registryName'."
+    }
+    $existingTag = if ($null -eq $existingTagOutput) { '' } else { ([string]$existingTagOutput).Trim() }
+    $imageExists = $existingTag -eq $buildTag
+}
+
+if ($imageExists) {
+    Write-Host "Reusing unchanged viewer image: $registryEndpoint/$resolvedImageName"
+}
+else {
+    Write-Host "Viewer source changed; building image: $registryEndpoint/$resolvedImageName"
+    Invoke-Az @(
+        'acr', 'build',
+        '--subscription', $subscription,
+        '--registry', $registryName,
+        '--image', $resolvedImageName,
+        '--file', (Join-Path $repositoryRoot 'Dockerfile'),
+        $repositoryRoot,
+        '--output', 'none'
+    )
+}
+
+$registryIdOutput = & az acr show `
     --subscription $subscription `
     --name $registryName `
     --query 'id' `
-    --output tsv).Trim()
+    --output tsv
+$registryId = if ($null -eq $registryIdOutput) { '' } else { ([string]$registryIdOutput).Trim() }
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($registryId)) {
     throw 'Unable to resolve the viewer registry resource ID.'
 }
@@ -163,37 +228,56 @@ Invoke-Az @(
     '--subscription', $subscription,
     '--resource-group', $resourceGroup,
     '--name', $appName,
-    '--image', "$registryEndpoint/$imageName",
+    '--image', "$registryEndpoint/$resolvedImageName",
     '--output', 'none'
 )
 
-$hostname = (& az containerapp show `
+$hostnameOutput = & az containerapp show `
     --subscription $subscription `
     --resource-group $resourceGroup `
     --name $appName `
     --query 'properties.configuration.ingress.fqdn' `
-    --output tsv).Trim()
+    --output tsv
+$hostname = if ($null -eq $hostnameOutput) { '' } else { ([string]$hostnameOutput).Trim() }
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($hostname)) {
     throw 'Unable to resolve the viewer hostname.'
 }
 
 $healthUri = "https://$hostname/health"
 $deadline = [DateTimeOffset]::UtcNow.AddMinutes(5)
+$healthAttempt = 0
+$lastHealthObservation = 'No response received.'
+Write-Host "Waiting up to five minutes for the ACA viewer to become healthy: $healthUri"
 do {
+    $healthAttempt++
     try {
-        $health = Invoke-RestMethod -Uri $healthUri -TimeoutSec 10
+        $health = Invoke-RestMethod -Uri $healthUri -TimeoutSec 10 -Verbose:$false
         if ($health.status -eq 'healthy') {
             & azd env set VIEWER_PUBLIC_URL "https://$hostname"
             if ($LASTEXITCODE -ne 0) {
                 throw 'Unable to save VIEWER_PUBLIC_URL to the azd environment.'
             }
-            Write-Host "Viewer bootstrap is healthy: $healthUri"
+            Write-Host "ACA viewer is healthy after $healthAttempt health-check attempt(s): $healthUri"
             return
         }
+        $reportedStatus = if ([string]::IsNullOrWhiteSpace([string]$health.status)) {
+            '<missing>'
+        }
+        else {
+            [string]$health.status
+        }
+        $lastHealthObservation = "The endpoint responded with status '$reportedStatus'."
     }
     catch {
+        $lastHealthObservation = $_.Exception.Message
+    }
+
+    Write-SampleVerbose `
+        -Component 'viewer-health' `
+        -Message "Attempt $healthAttempt is not healthy yet. $lastHealthObservation Retrying in 10 seconds."
+    if ([DateTimeOffset]::UtcNow -lt $deadline) {
         Start-Sleep -Seconds 10
     }
 } while ([DateTimeOffset]::UtcNow -lt $deadline)
 
-throw "Viewer did not become healthy within five minutes. Check Container Apps logs for $appName."
+throw "ACA viewer '$appName' did not return status=healthy from '$healthUri' within five minutes after $healthAttempt attempt(s). Last observation: $lastHealthObservation Check the latest Container Apps revision and console logs."

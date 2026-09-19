@@ -346,6 +346,9 @@ the viewer UAMI Blob Data Contributor on the exact existing state container.
 For a new Foundry project and viewer, initialize the complete environment:
 
 ```powershell
+az containerapp show --help
+az containerapp update --help
+az containerapp registry set --help
 pwsh -NoProfile -File .\scripts\Initialize-Greenfield.ps1 `
     -SubscriptionId "<subscription-id>" `
     -Prefix "fawin365" `
@@ -356,13 +359,26 @@ pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
     -ConfirmResourceChanges
 ```
 
+The three Azure CLI checks must succeed when the viewer is enabled. Upgrade
+Azure CLI if they are unavailable; install or upgrade the `containerapp`
+extension only when the upgraded CLI still does not provide them.
+
 `-TenantId` is optional and should be supplied only to override the tenant
 selected by `azd auth login`. Omit `-DeployViewer` unless the dedicated viewer
 resources have been approved. Put the full ID of an approved existing
 environment in `config\deployment.local.json` as
 `viewer.managedEnvironmentResourceId`; use
 `.\scripts\Get-ViewerManagedEnvironments.ps1` to list candidates. Leaving it
-empty explicitly requests a new managed environment.
+empty is the normal/default path and creates a dedicated managed environment.
+Supplying the resource ID is an optional reuse path for quota-constrained or
+shared-infrastructure environments. The approved environment may be in another
+Azure region; the viewer Container App and its managed identity are created in
+that environment's region while the remaining sample-owned resources stay in
+`AZURE_RESOURCE_GROUP`. When `DEPLOY_VIEWER=false`, neither path is evaluated.
+New managed environments default to `VIEWER_LOG_ANALYTICS_ENABLED=false`, which
+uses the ACA `none` log destination and avoids creating a Log Analytics
+workspace for the demo. Set it to `true` when retained application logs are
+required. Reused environments keep their existing logging configuration.
 The initializer uses reusable config helpers in `scripts/DeploymentConfig.ps1`
 so later hosted and cleanup workflows can consume the same defaults and
 override precedence without duplicating parsing logic.
@@ -383,6 +399,12 @@ pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
     -Mode DeployAll `
     -ConfirmResourceChanges
 ```
+
+The viewer bootstrap calculates a `build-<hash>` image tag from the Dockerfile,
+NuGet configuration, and viewer source. It reuses that ACR image on unchanged
+`azd up` runs instead of repeating the remote SDK pull, restore, build, and
+push. The hash changes monthly even when the source does not, allowing the
+floating .NET base-image tags to pick up servicing and security updates.
 
 The viewer consumes the existing state outputs
 `AZURE_RESOURCE_GROUP`, `STATE_STORAGE_ACCOUNT_NAME`,
@@ -508,6 +530,7 @@ Set non-secret values using `azd env set KEY VALUE`:
 | `VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID` | Optional full ID of the approved existing ACA managed environment. Empty means create one. |
 | `W365_BLUEPRINT_CREDENTIAL_MODE` | Explicitly `client_secret` for the proven E2E demo or `managed_identity_federation` for the separately approved FIC path. There is no fallback. |
 | `VIEWER_LIVE_ENABLED` | Explicit viewer phase switch. Leave `false` for bootstrap; set `true` only after OIDC, state, W365, SDK/frame-origin values, and the Key Vault secret are ready. |
+| `VIEWER_LOG_ANALYTICS_ENABLED` | Optional for a newly created ACA environment; defaults to `false`. Ignored when an existing environment resource ID is supplied. |
 | `W365_ENABLED` | Internal phase switch. Bootstrap sets it to `false`; `Setup-W365.ps1` persists `true` only after phase-2 prerequisites are ready. |
 
 Enabled configuration requires valid identity IDs and same-tenant Foundry/W365/

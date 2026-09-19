@@ -13,6 +13,11 @@ param resourcePrefix string
 param resourceGroupName string
 param viewerImageName string = 'win365-sample:v1'
 param viewerManagedEnvironmentResourceId string = ''
+@allowed([
+  'true'
+  'false'
+])
+param viewerLogAnalyticsEnabled string = 'false'
 param w365KeyVaultName string
 @allowed([
   'true'
@@ -39,6 +44,7 @@ param screenShareAppUrl string = ''
 var viewerEnabled = toLower(deployViewer) == 'true'
 var liveViewerEnabled = viewerEnabled && toLower(viewerLiveEnabled) == 'true'
 var createManagedEnvironment = empty(viewerManagedEnvironmentResourceId)
+var managedEnvironmentIdSegments = split(viewerManagedEnvironmentResourceId, '/')
 var tags = {
   'azd-env-name': environmentName
   component: 'viewer'
@@ -50,6 +56,11 @@ resource environmentResourceGroup 'Microsoft.Resources/resourceGroups@2023-07-01
   name: resourceGroupName
 }
 
+resource existingManagedEnvironment 'Microsoft.App/managedEnvironments@2024-03-01' existing = if (viewerEnabled && !createManagedEnvironment) {
+  name: managedEnvironmentIdSegments[8]
+  scope: resourceGroup(managedEnvironmentIdSegments[2], managedEnvironmentIdSegments[4])
+}
+
 module foundation '../viewer-foundation.bicep' = if (viewerEnabled) {
   name: 'viewer-foundation'
   scope: environmentResourceGroup
@@ -57,6 +68,7 @@ module foundation '../viewer-foundation.bicep' = if (viewerEnabled) {
     location: location
     resourcePrefix: resourcePrefix
     createManagedEnvironment: createManagedEnvironment
+    enableLogAnalytics: toLower(viewerLogAnalyticsEnabled) == 'true'
     tags: tags
   }
 }
@@ -65,6 +77,7 @@ module viewer '../viewer.bicep' = if (viewerEnabled) {
   name: 'viewer-bootstrap'
   scope: environmentResourceGroup
   params: {
+    location: createManagedEnvironment ? location : existingManagedEnvironment!.location
     appName: '${resourcePrefix}-viewer'
     managedEnvironmentResourceId: createManagedEnvironment
       ? foundation!.outputs.environmentResourceId

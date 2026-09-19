@@ -82,7 +82,7 @@ if (!$setBlueprint -and !$setOidc) {
 $vaultUri = (& az keyvault show `
     --name $vaultName `
     --query properties.vaultUri `
-    --output tsv).Trim()
+    --output tsv | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($vaultUri)) {
     throw "Unable to resolve Key Vault '$vaultName'."
 }
@@ -90,7 +90,7 @@ $accessToken = (& az account get-access-token `
     --tenant $tenantId `
     --resource https://vault.azure.net `
     --query accessToken `
-    --output tsv).Trim()
+    --output tsv | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($accessToken)) {
     throw 'Unable to acquire a Key Vault access token.'
 }

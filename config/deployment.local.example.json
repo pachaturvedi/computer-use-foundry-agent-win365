@@ -16,6 +16,7 @@
     "liveEnabled": false,
     "imageName": "win365-sample:v2",
     "managedEnvironmentResourceId": "/subscriptions/YOUR-SUBSCRIPTION-ID/resourceGroups/YOUR-SHARED-RG/providers/Microsoft.App/managedEnvironments/YOUR-ENVIRONMENT",
+    "logAnalyticsEnabled": false,
     "clientId": "YOUR-VIEWER-OIDC-APP-CLIENT-ID",
     "operatorTenantId": "YOUR-OPERATOR-TENANT-ID",
     "operatorObjectId": "YOUR-OPERATOR-OBJECT-ID",
