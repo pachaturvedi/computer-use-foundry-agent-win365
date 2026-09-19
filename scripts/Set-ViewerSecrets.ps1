@@ -7,7 +7,7 @@ param(
     [switch]$BlueprintOnly,
     [switch]$OidcOnly,
     [switch]$Overwrite,
-    [string]$RoleSetupScriptPath = (Join-Path $PSScriptRoot 'Set-ViewerKeyVaultRoles.ps1')
+    [string]$RoleSetupScriptPath = (Join-Path $PSScriptRoot 'Set-W365KeyVaultRoles.ps1')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -26,10 +26,13 @@ if (![string]::IsNullOrWhiteSpace($Environment)) {
     }
 }
 
-$vaultName = (& azd env get-value VIEWER_KEY_VAULT_NAME 2>$null | Out-String).Trim().Trim('"')
+$vaultName = (& azd env get-value W365_KEY_VAULT_NAME 2>$null | Out-String).Trim().Trim('"')
+if ([string]::IsNullOrWhiteSpace($vaultName)) {
+    $vaultName = (& azd env get-value VIEWER_KEY_VAULT_NAME 2>$null | Out-String).Trim().Trim('"')
+}
 $tenantId = (& azd env get-value AZURE_TENANT_ID 2>$null | Out-String).Trim().Trim('"')
 if ([string]::IsNullOrWhiteSpace($vaultName) -or [string]::IsNullOrWhiteSpace($tenantId)) {
-    throw 'VIEWER_KEY_VAULT_NAME and AZURE_TENANT_ID must exist in the selected azd environment.'
+    throw 'W365_KEY_VAULT_NAME and AZURE_TENANT_ID must exist in the selected azd environment.'
 }
 
 if ($BlueprintOnly -and $OidcOnly) {
@@ -38,7 +41,7 @@ if ($BlueprintOnly -and $OidcOnly) {
 $setBlueprint = !$OidcOnly
 $setOidc = !$BlueprintOnly
 
-& $RoleSetupScriptPath -Environment $Environment
+& $RoleSetupScriptPath -Environment $Environment -IncludeViewer:$setOidc
 if (!$?) {
     throw 'Viewer Key Vault RBAC setup failed.'
 }

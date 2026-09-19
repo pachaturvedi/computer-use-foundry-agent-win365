@@ -45,7 +45,10 @@ function Get-AzdValue {
 $environmentName = Get-AzdValue 'AZURE_ENV_NAME'
 $tenantId = [guid](Get-AzdValue 'AZURE_TENANT_ID')
 $viewerPublicUrl = Get-AzdValue 'VIEWER_PUBLIC_URL'
-$vaultName = Get-AzdValue 'VIEWER_KEY_VAULT_NAME'
+$vaultName = Get-AzdValue 'W365_KEY_VAULT_NAME' -AllowMissing
+if ([string]::IsNullOrWhiteSpace($vaultName)) {
+    $vaultName = Get-AzdValue 'VIEWER_KEY_VAULT_NAME'
+}
 $resourcePrefix = Get-AzdValue 'RESOURCE_PREFIX'
 $redirectUri = Get-ViewerOidcRedirectUri -ViewerPublicUrl $viewerPublicUrl
 if ([string]::IsNullOrWhiteSpace($ApplicationName)) {

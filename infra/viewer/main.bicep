@@ -10,9 +10,10 @@ param deployViewer string = 'false'
 @minLength(2)
 @maxLength(24)
 param resourcePrefix string
-param viewerResourceGroupName string = '${resourcePrefix}-viewer-rg'
+param resourceGroupName string
 param viewerImageName string = 'win365-sample:v1'
 param viewerManagedEnvironmentResourceId string = ''
+param w365KeyVaultName string
 @allowed([
   'true'
   'false'
@@ -22,7 +23,6 @@ param viewerPublicUrl string = ''
 param viewerClientId string = ''
 param operatorTenantId string = ''
 param operatorObjectId string = ''
-param stateResourceGroupName string = ''
 param stateStorageAccountName string = ''
 param stateContainerName string = ''
 param sessionBlobUri string = ''
@@ -46,15 +46,13 @@ var tags = {
   'managed-by': 'azd'
 }
 
-resource viewerResourceGroup 'Microsoft.Resources/resourceGroups@2023-07-01' = if (viewerEnabled) {
-  name: viewerResourceGroupName
-  location: location
-  tags: tags
+resource environmentResourceGroup 'Microsoft.Resources/resourceGroups@2023-07-01' existing = {
+  name: resourceGroupName
 }
 
 module foundation '../viewer-foundation.bicep' = if (viewerEnabled) {
   name: 'viewer-foundation'
-  scope: viewerResourceGroup
+  scope: environmentResourceGroup
   params: {
     location: location
     resourcePrefix: resourcePrefix
@@ -65,7 +63,7 @@ module foundation '../viewer-foundation.bicep' = if (viewerEnabled) {
 
 module viewer '../viewer.bicep' = if (viewerEnabled) {
   name: 'viewer-bootstrap'
-  scope: viewerResourceGroup
+  scope: environmentResourceGroup
   params: {
     appName: '${resourcePrefix}-viewer'
     managedEnvironmentResourceId: createManagedEnvironment
@@ -73,7 +71,7 @@ module viewer '../viewer.bicep' = if (viewerEnabled) {
       : viewerManagedEnvironmentResourceId
     registryName: foundation!.outputs.registryName
     imageName: 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
-    keyVaultName: foundation!.outputs.keyVaultName
+    keyVaultName: w365KeyVaultName
     sessionBlobUri: sessionBlobUri
     w365Enabled: liveViewerEnabled
     viewerPublicUrl: viewerPublicUrl
@@ -96,7 +94,7 @@ module viewer '../viewer.bicep' = if (viewerEnabled) {
 
 module viewerStateAccess '../viewer-state-access.bicep' = if (viewerEnabled) {
   name: 'viewer-state-access'
-  scope: resourceGroup(stateResourceGroupName)
+  scope: environmentResourceGroup
   params: {
     storageAccountName: stateStorageAccountName
     stateContainerName: stateContainerName
@@ -104,7 +102,7 @@ module viewerStateAccess '../viewer-state-access.bicep' = if (viewerEnabled) {
   }
 }
 
-output VIEWER_RESOURCE_GROUP_NAME string = viewerEnabled ? viewerResourceGroup.name : ''
+output VIEWER_RESOURCE_GROUP_NAME string = environmentResourceGroup.name
 output VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID string = viewerEnabled
   ? (createManagedEnvironment ? foundation!.outputs.environmentResourceId : viewerManagedEnvironmentResourceId)
   : ''
@@ -117,5 +115,4 @@ output VIEWER_REGISTRY_NAME string = viewerEnabled ? foundation!.outputs.registr
 output VIEWER_REGISTRY_ENDPOINT string = viewerEnabled ? foundation!.outputs.registryLoginServer : ''
 output VIEWER_STORAGE_ACCOUNT_NAME string = viewerEnabled ? stateStorageAccountName : ''
 output VIEWER_STATE_CONTAINER_NAME string = viewerEnabled ? stateContainerName : ''
-output VIEWER_KEY_VAULT_NAME string = viewerEnabled ? foundation!.outputs.keyVaultName : ''
 output VIEWER_IMAGE_NAME string = viewerImageName

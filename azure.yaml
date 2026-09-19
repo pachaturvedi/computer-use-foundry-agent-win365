@@ -68,7 +68,14 @@ infra:
       path: ./infra/viewer
       dependsOn:
         - foundry
+        - state
 hooks:
+  preprovision:
+    windows:
+      shell: pwsh
+      run: ./scripts/Show-DeploymentPlan.ps1
+      interactive: false
+      continueOnError: false
   predown:
     windows:
       shell: pwsh

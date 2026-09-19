@@ -43,6 +43,7 @@ $trackedEnvironmentVariables = @(
     'DEPLOY_VIEWER',
     'VIEWER_LIVE_ENABLED',
     'VIEWER_LIVE_CHANGES_CONFIRMED',
+    'W365_KEY_VAULT_NAME',
     'VIEWER_KEY_VAULT_NAME',
     'W365_BLUEPRINT_CREDENTIAL_MODE',
     'SCREENSHARE_SDK_URL',
@@ -79,6 +80,7 @@ function Write-TestEnvironment {
         'DEPLOY_VIEWER="false"',
         'VIEWER_LIVE_ENABLED="false"',
         'W365_BLUEPRINT_CREDENTIAL_MODE="client_secret"',
+        'W365_KEY_VAULT_NAME="sample-w365-vault"',
         "W365_ENABLED=`"$($Complete.ToString().ToLowerInvariant())`""
     )
     if (![string]::IsNullOrWhiteSpace($AgentUserPrincipalName)) {
@@ -269,7 +271,7 @@ throw 'Simulated W365 setup failure.'
     Write-TestEnvironment -Complete:$false
     $env:ENABLE_W365 = 'false'
     $env:W365_ENABLED = 'false'
-    & $scriptPath -RepositoryRoot $tempRoot -W365SetupScriptPath $mockW365Path -ViewerBootstrapScriptPath $mockViewerPath
+    & $scriptPath -RepositoryRoot $tempRoot -W365SetupScriptPath $mockW365Path -ViewerBootstrapScriptPath $mockViewerPath -ViewerSecretsScriptPath $mockViewerSecretsPath
     if (Test-Path -LiteralPath $w365CallsPath) {
         throw 'Disabled postup invoked W365 setup.'
     }
@@ -286,7 +288,7 @@ throw 'Simulated W365 setup failure.'
     $env:W365_RESOURCE_CHANGES_CONFIRMED = ''
     $approvalFailed = $false
     try {
-        & $scriptPath -RepositoryRoot $tempRoot -W365SetupScriptPath $mockW365Path -ViewerBootstrapScriptPath $mockViewerPath
+        & $scriptPath -RepositoryRoot $tempRoot -W365SetupScriptPath $mockW365Path -ViewerBootstrapScriptPath $mockViewerPath -ViewerSecretsScriptPath $mockViewerSecretsPath
     }
     catch {
         $approvalFailed = $true
@@ -297,7 +299,7 @@ throw 'Simulated W365 setup failure.'
 
     Reset-Calls
     $env:W365_RESOURCE_CHANGES_CONFIRMED = 'true'
-    & $scriptPath -RepositoryRoot $tempRoot -W365SetupScriptPath $mockW365Path -ViewerBootstrapScriptPath $mockViewerPath
+    & $scriptPath -RepositoryRoot $tempRoot -W365SetupScriptPath $mockW365Path -ViewerBootstrapScriptPath $mockViewerPath -ViewerSecretsScriptPath $mockViewerSecretsPath
     $w365Call = Get-Content -LiteralPath $w365CallsPath -Raw | ConvertFrom-Json
     if ($w365Call.environment -ne $environmentName -or
         $w365Call.tenantId -ne 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' -or
@@ -322,7 +324,7 @@ throw 'Simulated W365 setup failure.'
         -Complete:$false `
         -AgentUserPrincipalName 'explicit@custom.example' `
         -AgentUserDomain 'custom.example'
-    & $scriptPath -RepositoryRoot $tempRoot -W365SetupScriptPath $mockW365Path -ViewerBootstrapScriptPath $mockViewerPath
+    & $scriptPath -RepositoryRoot $tempRoot -W365SetupScriptPath $mockW365Path -ViewerBootstrapScriptPath $mockViewerPath -ViewerSecretsScriptPath $mockViewerSecretsPath
     $overrideCall = Get-Content -LiteralPath $w365CallsPath -Raw | ConvertFrom-Json
     if ($overrideCall.agentUserPrincipalName -ne 'explicit@custom.example' -or
         $overrideCall.agentUserDomain -ne 'custom.example') {
@@ -334,7 +336,7 @@ throw 'Simulated W365 setup failure.'
     Write-CompleteManifest
     $env:ENABLE_W365 = 'true'
     $env:W365_ENABLED = 'true'
-    & $scriptPath -RepositoryRoot $tempRoot -W365SetupScriptPath $mockW365Path -ViewerBootstrapScriptPath $mockViewerPath
+    & $scriptPath -RepositoryRoot $tempRoot -W365SetupScriptPath $mockW365Path -ViewerBootstrapScriptPath $mockViewerPath -ViewerSecretsScriptPath $mockViewerSecretsPath
     if (Test-Path -LiteralPath $w365CallsPath) {
         throw 'Completed W365 environment reran setup.'
     }
@@ -351,6 +353,7 @@ throw 'Simulated W365 setup failure.'
         -RepositoryRoot $tempRoot `
         -W365SetupScriptPath $mockW365Path `
         -ViewerBootstrapScriptPath $mockViewerPath `
+        -ViewerSecretsScriptPath $mockViewerSecretsPath `
         -AgentDeploymentScriptPath $mockAgentDeployPath
     $agentDeployCall = Get-Content -LiteralPath $agentDeployCallsPath -Raw | ConvertFrom-Json
     if ($agentDeployCall.mode -ne 'DeployAgent' -or
@@ -367,7 +370,7 @@ throw 'Simulated W365 setup failure.'
     Write-CompleteManifest
     Add-Content -LiteralPath $environmentPath -Value @(
         'DEPLOY_VIEWER="true"',
-        'VIEWER_KEY_VAULT_NAME="sample-viewer-vault"',
+        'W365_KEY_VAULT_NAME="sample-w365-vault"',
         'SCREENSHARE_SDK_URL="https://screenshare.example.com/sdk.js"',
         'SCREENSHARE_FRAME_ORIGINS="https://screenshare.example.com"',
         'SCREENSHARE_APP_URL="https://viewer-static.example.com"'
@@ -399,7 +402,7 @@ throw 'Simulated W365 setup failure.'
     $env:W365_ENABLED = 'false'
     $failed = $false
     try {
-        & $scriptPath -RepositoryRoot $tempRoot -W365SetupScriptPath $failingW365Path -ViewerBootstrapScriptPath $mockViewerPath
+        & $scriptPath -RepositoryRoot $tempRoot -W365SetupScriptPath $failingW365Path -ViewerBootstrapScriptPath $mockViewerPath -ViewerSecretsScriptPath $mockViewerSecretsPath
     }
     catch {
         $failed = $true

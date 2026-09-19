@@ -10,7 +10,7 @@ param deployState string = 'false'
 @minLength(2)
 @maxLength(24)
 param resourcePrefix string
-param stateResourceGroupName string = '${resourcePrefix}-state-rg'
+param resourceGroupName string
 @minLength(36)
 @maxLength(36)
 param agentPrincipalId string = '00000000-0000-0000-0000-000000000000'
@@ -23,15 +23,23 @@ var tags = {
   'managed-by': 'azd'
 }
 
-resource stateResourceGroup 'Microsoft.Resources/resourceGroups@2023-07-01' = if (stateEnabled) {
-  name: stateResourceGroupName
-  location: location
-  tags: tags
+resource environmentResourceGroup 'Microsoft.Resources/resourceGroups@2023-07-01' existing = {
+  name: resourceGroupName
+}
+
+module keyVault './keyvault.bicep' = {
+  name: 'w365-credential-vault'
+  scope: environmentResourceGroup
+  params: {
+    location: location
+    resourcePrefix: resourcePrefix
+    tags: union(tags, { component: 'credentials' })
+  }
 }
 
 module storage './storage.bicep' = if (stateEnabled) {
   name: 'state-storage'
-  scope: stateResourceGroup
+  scope: environmentResourceGroup
   params: {
     name: resourcePrefix
     location: location
@@ -40,7 +48,10 @@ module storage './storage.bicep' = if (stateEnabled) {
   }
 }
 
-output STATE_RESOURCE_GROUP_NAME string = stateEnabled ? stateResourceGroup.name : ''
+output STATE_RESOURCE_GROUP_NAME string = environmentResourceGroup.name
 output STATE_STORAGE_ACCOUNT_NAME string = stateEnabled ? storage!.outputs.storageAccountName : ''
 output STATE_CONTAINER_NAME string = stateEnabled ? storage!.outputs.containerName : ''
 output SESSION_BLOB_URI string = stateEnabled ? storage!.outputs.sessionBlobUri : ''
+output W365_KEY_VAULT_NAME string = keyVault.outputs.keyVaultName
+// Compatibility alias for azd environments created before the vault moved out of the viewer layer.
+output VIEWER_KEY_VAULT_NAME string = keyVault.outputs.keyVaultName

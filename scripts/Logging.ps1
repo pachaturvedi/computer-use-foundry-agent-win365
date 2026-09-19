@@ -2,6 +2,19 @@
 
 Set-StrictMode -Version Latest
 
+function Get-SampleLogLevel {
+    $level = if ([string]::IsNullOrWhiteSpace($env:SAMPLE_LOG_LEVEL)) {
+        'summary'
+    }
+    else {
+        $env:SAMPLE_LOG_LEVEL.Trim().ToLowerInvariant()
+    }
+    if ($level -notin @('summary', 'verbose', 'debug')) {
+        throw "SAMPLE_LOG_LEVEL must be summary, verbose, or debug; received '$level'."
+    }
+    return $level
+}
+
 function ConvertTo-SampleSafeLogParameters {
     param([System.Collections.IDictionary]$Parameters)
 
@@ -52,7 +65,17 @@ function Initialize-SampleScriptLogging {
         [System.Collections.IDictionary]$Parameters = @{}
     )
 
-    Write-SampleVerbose -Component $ScriptName -Message 'Started.'
+    $level = Get-SampleLogLevel
+    if ($level -in @('verbose', 'debug')) {
+        Set-Variable -Name VerbosePreference -Value Continue -Scope 1
+        $VerbosePreference = 'Continue'
+    }
+    if ($level -eq 'debug') {
+        Set-Variable -Name DebugPreference -Value Continue -Scope 1
+        $DebugPreference = 'Continue'
+    }
+
+    Write-SampleVerbose -Component $ScriptName -Message "Started with log level '$level'."
     $safeParameters = ConvertTo-SampleSafeLogParameters -Parameters $Parameters
     Write-SampleDebug `
         -Component $ScriptName `

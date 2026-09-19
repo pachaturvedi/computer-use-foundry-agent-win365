@@ -33,7 +33,7 @@ request argument, page or user-supplied credential. Active runtime requires shar
 
 | `W365_BLUEPRINT_CREDENTIAL_MODE` | Status |
 | --- | --- |
-| `client_secret` | Default for the E2E demo and validated end to end. Requires `W365_CLIENT_SECRET`; the ACA viewer receives it from Key Vault. |
+| `client_secret` | Default for the E2E demo and validated end to end. The shared state-layer Key Vault stores the blueprint secret independently of whether the ACA viewer is enabled. |
 | `managed_identity_federation` | Optional hardening path. The tested Foundry-hosted identity could not chain its federated token into the blueprint exchange (`AADSTS700231`). |
 | `key_vault_certificate` | Reserved for the next implementation phase. Configuration fails closed until certificate retrieval and signing are implemented and validated. |
 
@@ -106,9 +106,9 @@ Configure only an approved viewer, and do not run workflows needing human
 handoff without a usable approved viewer.
 
 The viewer OIDC client secret is a separate credential for the human sign-in
-web app. In `client_secret` mode, ACA retrieves both it and the blueprint
-client secret through separate Key Vault secret references **only when
-enabled**.
+web app. The shared W365 vault exists even in agent-only deployments. When the
+viewer is enabled, ACA retrieves the OIDC and blueprint credentials through
+separate secret references in that vault.
 
 ## Browser authorization
 

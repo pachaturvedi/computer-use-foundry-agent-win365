@@ -3,7 +3,7 @@
 param(
     [string]$Environment,
     [string]$ConfigureOidcScriptPath = (Join-Path $PSScriptRoot 'Configure-ViewerOidc.ps1'),
-    [string]$RoleSetupScriptPath = (Join-Path $PSScriptRoot 'Set-ViewerKeyVaultRoles.ps1'),
+    [string]$RoleSetupScriptPath = (Join-Path $PSScriptRoot 'Set-W365KeyVaultRoles.ps1'),
     [string]$ViewerBootstrapScriptPath = (Join-Path $PSScriptRoot 'Deploy-ViewerBootstrap.ps1')
 )
 
@@ -24,7 +24,7 @@ if (![string]::IsNullOrWhiteSpace($Environment)) {
 $environmentName = Get-W365AzdValue -Azd $azd -Name 'AZURE_ENV_NAME'
 
 Write-SampleVerbose -Component 'viewer-activation' -Message 'Reconciling least-privilege Key Vault RBAC.'
-& $RoleSetupScriptPath -Environment $environmentName
+& $RoleSetupScriptPath -Environment $environmentName -IncludeViewer
 if (!$?) {
     throw 'Viewer Key Vault RBAC setup failed.'
 }

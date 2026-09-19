@@ -6,7 +6,7 @@
     "location": { "value": "${AZURE_LOCATION}" },
     "deployState": { "value": "${DEPLOY_STATE}" },
     "resourcePrefix": { "value": "${RESOURCE_PREFIX}" },
-    "stateResourceGroupName": { "value": "${STATE_RESOURCE_GROUP_NAME}" },
+    "resourceGroupName": { "value": "${AZURE_RESOURCE_GROUP}" },
     "agentPrincipalId": { "value": "${STATE_AGENT_PRINCIPAL_ID}" }
   }
 }
