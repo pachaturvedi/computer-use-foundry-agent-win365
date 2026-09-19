@@ -97,6 +97,9 @@ try {
         $stateBicep -match 'resource stateResourceGroup' -or
         $viewerBicep -match 'resource viewerResourceGroup' -or
         $viewerBicep -notmatch "resource existingManagedEnvironment 'Microsoft.App/managedEnvironments@[^']+' existing" -or
+        $viewerBicep -notmatch 'var createManagedEnvironment = empty\(viewerManagedEnvironmentResourceId\)' -or
+        $viewerBicep -notmatch 'if \(viewerEnabled && !createManagedEnvironment\)' -or
+        $viewerBicep -notmatch 'createManagedEnvironment: createManagedEnvironment' -or
         $viewerBicep -notmatch 'location: createManagedEnvironment \? location : existingManagedEnvironment!\.location' -or
         $stateParameters -notmatch '"resourceGroupName": \{ "value": "\$\{AZURE_RESOURCE_GROUP\}" \}' -or
         $viewerParameters -notmatch '"resourceGroupName": \{ "value": "\$\{AZURE_RESOURCE_GROUP\}" \}') {

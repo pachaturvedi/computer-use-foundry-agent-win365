@@ -51,7 +51,7 @@ resource environmentResourceGroup 'Microsoft.Resources/resourceGroups@2023-07-01
   name: resourceGroupName
 }
 
-resource existingManagedEnvironment 'Microsoft.App/managedEnvironments@2024-03-01' existing = if (!createManagedEnvironment) {
+resource existingManagedEnvironment 'Microsoft.App/managedEnvironments@2024-03-01' existing = if (viewerEnabled && !createManagedEnvironment) {
   name: managedEnvironmentIdSegments[8]
   scope: resourceGroup(managedEnvironmentIdSegments[2], managedEnvironmentIdSegments[4])
 }
