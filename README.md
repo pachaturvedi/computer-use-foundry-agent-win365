@@ -25,6 +25,27 @@ must support function calling and image inputs.
 | Deployment | Foundry `azure.yaml`, non-root Docker image, ACA viewer Bicep and deployment guide. |
 | Offline tests | Fake MCP/token handlers, ownership, handoff, ambiguous failures and screenshot conversion. |
 
+### Example scenario
+
+An operator asks the Foundry agent to process an invoice on an assigned Windows
+365 Cloud PC. The agent acquires a desktop from the pool already assigned to
+its agent user, opens the invoice in Edge, reads the visible fields, writes a
+plain-text summary in Notepad, saves it under Documents, verifies the result,
+and releases the desktop. The prompt supplies only the business task; the
+configured agent-user assignment determines the W365 pool. The bounded demo
+prompt is available at
+[`samples\prompts\invoice-processing.txt`](samples/prompts/invoice-processing.txt).
+
+Invoke it from PowerShell with a fresh agent session:
+
+```powershell
+$prompt = Get-Content .\samples\prompts\invoice-processing.txt -Raw
+azd ai agent invoke win365-desktop-agent --new-session $prompt
+```
+
+Add `--user-identity "<allowed-user-id>"` when the deployed endpoint requires
+the configured caller identity header.
+
 This sample supports **one operator and one fresh task at a time**. Each task
 releases its Cloud PC; subsequent requests do not inherit desktop or image
 history. `previous_response_id`, `conversation` and background execution are
