@@ -174,21 +174,39 @@ if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($hostname)) {
 
 $healthUri = "https://$hostname/health"
 $deadline = [DateTimeOffset]::UtcNow.AddMinutes(5)
+$healthAttempt = 0
+$lastHealthObservation = 'No response received.'
+Write-Host "Waiting up to five minutes for the ACA viewer to become healthy: $healthUri"
 do {
+    $healthAttempt++
     try {
-        $health = Invoke-RestMethod -Uri $healthUri -TimeoutSec 10
+        $health = Invoke-RestMethod -Uri $healthUri -TimeoutSec 10 -Verbose:$false
         if ($health.status -eq 'healthy') {
             & azd env set VIEWER_PUBLIC_URL "https://$hostname"
             if ($LASTEXITCODE -ne 0) {
                 throw 'Unable to save VIEWER_PUBLIC_URL to the azd environment.'
             }
-            Write-Host "Viewer bootstrap is healthy: $healthUri"
+            Write-Host "ACA viewer is healthy after $healthAttempt health-check attempt(s): $healthUri"
             return
         }
+        $reportedStatus = if ([string]::IsNullOrWhiteSpace([string]$health.status)) {
+            '<missing>'
+        }
+        else {
+            [string]$health.status
+        }
+        $lastHealthObservation = "The endpoint responded with status '$reportedStatus'."
     }
     catch {
+        $lastHealthObservation = $_.Exception.Message
+    }
+
+    Write-SampleVerbose `
+        -Component 'viewer-health' `
+        -Message "Attempt $healthAttempt is not healthy yet. $lastHealthObservation Retrying in 10 seconds."
+    if ([DateTimeOffset]::UtcNow -lt $deadline) {
         Start-Sleep -Seconds 10
     }
 } while ([DateTimeOffset]::UtcNow -lt $deadline)
 
-throw "Viewer did not become healthy within five minutes. Check Container Apps logs for $appName."
+throw "ACA viewer '$appName' did not return status=healthy from '$healthUri' within five minutes after $healthAttempt attempt(s). Last observation: $lastHealthObservation Check the latest Container Apps revision and console logs."

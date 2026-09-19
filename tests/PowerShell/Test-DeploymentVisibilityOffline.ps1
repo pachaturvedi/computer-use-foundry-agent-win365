@@ -115,6 +115,9 @@ try {
         $upContextScript -notmatch 'informational, not failures' -or
         $planScript -notmatch 'Assert-ViewerAzureCliPrerequisites' -or
         $viewerDeployScript -notmatch 'Assert-ViewerAzureCliPrerequisites' -or
+        $viewerDeployScript -notmatch 'Waiting up to five minutes for the ACA viewer to become healthy' -or
+        $viewerDeployScript -notmatch "Component 'viewer-health'" -or
+        $viewerDeployScript -notmatch 'Invoke-RestMethod.+-Verbose:\$false' -or
         $stateParameters -notmatch '"resourceGroupName": \{ "value": "\$\{AZURE_RESOURCE_GROUP\}" \}' -or
         $viewerParameters -notmatch '"resourceGroupName": \{ "value": "\$\{AZURE_RESOURCE_GROUP\}" \}') {
         throw 'Infrastructure layers do not consistently reuse one AZURE_RESOURCE_GROUP.'
