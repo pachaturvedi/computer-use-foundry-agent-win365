@@ -55,7 +55,8 @@ public static class DesktopRuntimePolicy
 
     /// <summary>
     /// Adds the documented W365 interaction tools that are callable after allocation but omitted from
-    /// the server's <c>tools/list</c> response.
+    /// the server's <c>tools/list</c> response. This is a live-validated compatibility requirement, not
+    /// a fallback; change it only after the service advertises equivalent schemas and live acceptance passes.
     /// </summary>
     public static IReadOnlyList<ToolSchema> AddImplicitInteractionTools(
         IReadOnlyList<ToolSchema> advertisedTools)

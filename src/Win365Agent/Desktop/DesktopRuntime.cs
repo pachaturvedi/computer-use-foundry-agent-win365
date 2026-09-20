@@ -236,6 +236,8 @@ public sealed class DesktopRuntime : IDisposable
                 ValidSessionLink(state.SessionLink);
             if (ready)
             {
+                // Keep using this allocation-bound MCP transport. Reinitializing or reconnecting here loses
+                // the Cloud PC binding in the live service and leaves only the lifecycle tools available.
                 var advertisedCatalog = await _mcp.ListAsync(ct);
                 _logSessionCatalog(
                     _logger,
