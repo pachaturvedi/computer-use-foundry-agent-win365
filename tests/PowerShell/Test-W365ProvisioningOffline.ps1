@@ -186,6 +186,152 @@ try {
     } 'W365 provisioning accepted enabled resource changes without explicit approval.'
     Assert-W365ResourceApproval -EnableW365:$true -ConfirmResourceChanges:$true
 
+    $agentIdentityId = [guid]'44444444-4444-4444-4444-444444444444'
+    $activationValues = [ordered]@{
+        DEPLOY_STATE = 'true'
+        SESSION_BLOB_URI = 'https://samplestate.blob.core.windows.net/desktop-state/slot.json'
+        STATE_AGENT_PRINCIPAL_ID = $agentIdentityId.ToString()
+        OPERATOR_TENANT_ID = '66666666-6666-6666-6666-666666666666'
+        OPERATOR_OBJECT_ID = '77777777-7777-7777-7777-777777777777'
+        HOSTED_ALLOWED_USER_ID = 'pending'
+        W365_BLUEPRINT_CREDENTIAL_MODE = 'client_secret'
+        W365_KEY_VAULT_NAME = 'sample-w365-vault'
+    }
+    $activation = Assert-W365ActivationPrerequisites `
+        -EnvironmentValues $activationValues `
+        -ExpectedAgentIdentityId $agentIdentityId
+    if ($activation.CredentialMode -ne 'client_secret' -or
+        $activation.KeyVaultName -ne 'sample-w365-vault') {
+        throw 'W365 activation prerequisite validation did not return the selected credential configuration.'
+    }
+    Assert-Throws {
+        $invalid = [ordered]@{} + $activationValues
+        $invalid.STATE_AGENT_PRINCIPAL_ID = '55555555-5555-5555-5555-555555555555'
+        Assert-W365ActivationPrerequisites `
+            -EnvironmentValues $invalid `
+            -ExpectedAgentIdentityId $agentIdentityId | Out-Null
+    } 'W365 activation accepted state provisioned for a different agent principal.'
+    Assert-Throws {
+        $invalid = [ordered]@{} + $activationValues
+        $invalid.DEPLOY_STATE = 'false'
+        Assert-W365ActivationPrerequisites `
+            -EnvironmentValues $invalid `
+            -ExpectedAgentIdentityId $agentIdentityId | Out-Null
+    } 'W365 activation accepted DEPLOY_STATE=false.'
+    Assert-Throws {
+        $invalid = [ordered]@{} + $activationValues
+        $invalid.Remove('W365_KEY_VAULT_NAME')
+        Assert-W365ActivationPrerequisites `
+            -EnvironmentValues $invalid `
+            -ExpectedAgentIdentityId $agentIdentityId | Out-Null
+    } 'W365 activation accepted client-secret mode without the shared Key Vault.'
+    $federatedValues = [ordered]@{} + $activationValues
+    $federatedValues.W365_BLUEPRINT_CREDENTIAL_MODE = 'managed_identity_federation'
+    $federatedValues.Remove('W365_KEY_VAULT_NAME')
+    Assert-Throws {
+        Assert-W365ActivationPrerequisites `
+            -EnvironmentValues $federatedValues `
+            -ExpectedAgentIdentityId $agentIdentityId | Out-Null
+    } 'W365 activation accepted managed identity without explicit federation authorization.'
+    Assert-Throws {
+        Assert-W365ActivationPrerequisites `
+            -EnvironmentValues $federatedValues `
+            -ExpectedAgentIdentityId $agentIdentityId `
+            -HostedRuntimeIdentityObjectId '55555555-5555-5555-5555-555555555555' `
+            -AuthorizeHostedRuntimeFederation:$true | Out-Null
+    } 'W365 activation accepted federation authorization for a different identity.'
+    Assert-W365ActivationPrerequisites `
+        -EnvironmentValues $federatedValues `
+        -ExpectedAgentIdentityId $agentIdentityId `
+        -HostedRuntimeIdentityObjectId $agentIdentityId `
+        -AuthorizeHostedRuntimeFederation:$true | Out-Null
+
+    $savedStateBehavior = $env:TEST_W365_STATE_BEHAVIOR
+    function az {
+        $arguments = @($args)
+        $global:LASTEXITCODE = 0
+        if ($arguments[0] -eq 'storage' -and $arguments[1] -eq 'account') {
+            if ($env:TEST_W365_STATE_BEHAVIOR -eq 'missing-account') {
+                $global:LASTEXITCODE = 1
+                return ''
+            }
+            return '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/state-rg/providers/Microsoft.Storage/storageAccounts/samplestate'
+        }
+        if ($arguments[0] -eq 'rest') {
+            if ($env:TEST_W365_STATE_BEHAVIOR -eq 'missing-container') {
+                $global:LASTEXITCODE = 1
+                return ''
+            }
+            return 'desktop-state'
+        }
+        if ($arguments[0] -eq 'role' -and $arguments[1] -eq 'assignment') {
+            if ($env:TEST_W365_STATE_BEHAVIOR -eq 'missing-role') {
+                return ''
+            }
+            if ($env:TEST_W365_STATE_BEHAVIOR -eq 'wrong-role') {
+                return '/subscriptions/11111111-1111-1111-1111-111111111111/providers/Microsoft.Authorization/roleDefinitions/acdd72a7-3385-48ef-bd42-f606fba81ae7'
+            }
+            return '/subscriptions/11111111-1111-1111-1111-111111111111/providers/Microsoft.Authorization/roleDefinitions/ba92f5b4-2d11-453d-a403-e96b0029c9fe'
+        }
+        if ($arguments[0] -eq 'keyvault' -and $arguments[1] -eq 'secret') {
+            if ($env:TEST_W365_STATE_BEHAVIOR -eq 'missing-secret') {
+                $global:LASTEXITCODE = 1
+                return ''
+            }
+            return 'https://sample-w365-vault.vault.azure.net/secrets/w365-blueprint-client-secret/version'
+        }
+        throw "Unexpected state-read Azure CLI call: $($arguments -join ' ')"
+    }
+    try {
+        $env:TEST_W365_STATE_BEHAVIOR = 'ready'
+        Assert-W365StateResourceReady `
+            -SubscriptionId '11111111-1111-1111-1111-111111111111' `
+            -SessionBlobUri 'https://samplestate.blob.core.windows.net/desktop-state/slot.json' `
+            -ExpectedAgentIdentityId $agentIdentityId | Out-Null
+        foreach ($invalidUri in @(
+            'https://user@samplestate.blob.core.windows.net/desktop-state/slot.json',
+            'https://samplestate.blob.core.windows.net:444/desktop-state/slot.json',
+            'https://samplestate.blob.core.windows.net/desktop-state/slot.json?sig=redacted',
+            'https://samplestate.blob.core.windows.net/desktop-state/slot.json#fragment',
+            'https://samplestate.blob.core.windows.net/desktop-state/%73lot.json',
+            'https://samplestate.blob.core.windows.net/desktop-state/not-slot.json',
+            'https://samplestate.blob.core.windows.net/desktop-state/slot.json/extra'
+        )) {
+            Assert-Throws {
+                Assert-W365StateResourceReady `
+                    -SubscriptionId '11111111-1111-1111-1111-111111111111' `
+                    -SessionBlobUri $invalidUri `
+                    -ExpectedAgentIdentityId $agentIdentityId | Out-Null
+            } "W365 state readiness accepted non-exact Blob URI '$invalidUri'."
+        }
+        foreach ($behavior in @('missing-account', 'missing-container', 'missing-role', 'wrong-role')) {
+            $env:TEST_W365_STATE_BEHAVIOR = $behavior
+            Assert-Throws {
+                Assert-W365StateResourceReady `
+                    -SubscriptionId '11111111-1111-1111-1111-111111111111' `
+                    -SessionBlobUri 'https://samplestate.blob.core.windows.net/desktop-state/slot.json' `
+                    -ExpectedAgentIdentityId $agentIdentityId | Out-Null
+            } "W365 state readiness accepted failure mode '$behavior'."
+        }
+        $env:TEST_W365_STATE_BEHAVIOR = 'ready'
+        Assert-W365BlueprintSecretReady `
+            -SubscriptionId '11111111-1111-1111-1111-111111111111' `
+            -KeyVaultName 'sample-w365-vault'
+        $env:TEST_W365_STATE_BEHAVIOR = 'missing-secret'
+        Assert-Throws {
+            Assert-W365BlueprintSecretReady `
+                -SubscriptionId '11111111-1111-1111-1111-111111111111' `
+                -KeyVaultName 'sample-w365-vault'
+        } 'W365 blueprint-secret readiness accepted a missing Key Vault secret.'
+    }
+    finally {
+        [Environment]::SetEnvironmentVariable(
+            'TEST_W365_STATE_BEHAVIOR',
+            $savedStateBehavior,
+            'Process')
+        Remove-Item Function:\az -ErrorAction SilentlyContinue
+    }
+
     $emptyEnvironment = [ordered]@{}
     $state = Get-W365ProvisioningState `
         -RepositoryRoot $tempRoot `

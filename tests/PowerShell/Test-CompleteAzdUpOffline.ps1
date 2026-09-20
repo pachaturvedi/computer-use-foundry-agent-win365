@@ -450,6 +450,7 @@ throw 'Simulated W365 setup failure.'
     }
     $env:TEST_AZ_BEHAVIOR = 'success'
     $env:TEST_VIEWER_PUBLIC_URL = ''
+    $env:TEST_AZ_BEHAVIOR = 'success'
 
     Reset-Calls
     Write-TestEnvironment -Complete:$true

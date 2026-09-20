@@ -49,7 +49,7 @@ try {
 
     $initializerPath = Join-Path $mockScripts 'Initialize.ps1'
     @'
-param($SubscriptionId, $TenantId, $Prefix, $Environment, $Location, [switch]$EnableW365, $AgentUserDomain)
+param($SubscriptionId, $TenantId, $Prefix, $Environment, $Location, $AgentUserDomain)
 $environmentName = "$Prefix-$Environment"
 $environmentRoot = Join-Path $env:MOCK_REPOSITORY_ROOT ".azure\$environmentName"
 New-Item -ItemType Directory -Path $environmentRoot -Force | Out-Null
@@ -57,40 +57,83 @@ New-Item -ItemType Directory -Path $environmentRoot -Force | Out-Null
 AZURE_SUBSCRIPTION_ID="$SubscriptionId"
 AZURE_TENANT_ID="$TenantId"
 AZURE_LOCATION="$Location"
-ENABLE_W365="true"
-W365_ENABLED="true"
-W365_POOL_ID="44444444-4444-4444-4444-444444444444"
-W365_AGENT_USER_ID="55555555-5555-5555-5555-555555555555"
-W365_AGENT_USER_PRINCIPAL_NAME="sample-agent@YOUR-TENANT.onmicrosoft.com"
-W365_AGENT_ID="66666666-6666-6666-6666-666666666666"
-W365_AGENT_OBJECT_ID="77777777-7777-7777-7777-777777777777"
-W365_BLUEPRINT_ID="88888888-8888-8888-8888-888888888888"
+FOUNDRY_PROJECT_ENDPOINT="https://foundry.example.com"
+FOUNDRY_AGENT_NAME="win365-desktop-agent"
+ENABLE_W365="false"
+W365_ENABLED="false"
 AGENT_WIN365_DESKTOP_AGENT_VERSION="2"
 "@ | Set-Content -LiteralPath (Join-Path $environmentRoot '.env')
-@{
-    schemaVersion = 1
-    environmentName = $environmentName
-    foundry = @{ projectOwnership = 'managed' }
-    graph = @{
-        blueprint = @{ appId = '88888888-8888-8888-8888-888888888888'; objectId = 'blueprint'; principalId = 'principal' }
-        agent = @{ appId = '66666666-6666-6666-6666-666666666666'; objectId = '77777777-7777-7777-7777-777777777777' }
-    }
-    w365 = @{
-        pool = @{ id = '44444444-4444-4444-4444-444444444444'; disposition = 'created' }
-        agentUser = @{ id = '55555555-5555-5555-5555-555555555555'; userPrincipalName = 'sample-agent@YOUR-TENANT.onmicrosoft.com'; disposition = 'created' }
-        assignment = @{ id = 'assignment'; poolId = '44444444-4444-4444-4444-444444444444'; userPrincipalId = '55555555-5555-5555-5555-555555555555'; disposition = 'created' }
-    }
-} | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath (Join-Path $environmentRoot 'w365-ownership.json')
 Add-Content -LiteralPath $env:MOCK_COMMAND_LOG -Value 'initialize'
 '@ | Set-Content -LiteralPath $initializerPath
+
+    $identityPath = Join-Path $mockScripts 'Get-FoundryIdentity.ps1'
+    @'
+param($ProjectEndpoint, $AgentName, $AgentVersion, $TenantId)
+Add-Content -LiteralPath $env:MOCK_COMMAND_LOG -Value 'identity'
+[pscustomobject]@{
+    TenantId = $TenantId
+    BlueprintId = '88888888-8888-8888-8888-888888888888'
+    AgentIdentityId = '77777777-7777-7777-7777-777777777777'
+}
+'@ | Set-Content -LiteralPath $identityPath
 
     $azdPath = Join-Path $mockScripts 'azd.ps1'
     @'
 param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
 Add-Content -LiteralPath $env:MOCK_COMMAND_LOG -Value ("azd " + ($Arguments -join ' '))
 $environmentRoot = Join-Path $env:MOCK_REPOSITORY_ROOT ".azure\sample-live"
-if ($Arguments[0] -eq 'up' -and $env:MOCK_FAIL_UP -eq 'true') {
-    throw 'Expected deployment failure.'
+function Set-MockEnvironmentValue {
+    param([string]$Name, [string]$Value)
+    $environmentPath = Join-Path $environmentRoot '.env'
+    $lines = @(Get-Content -LiteralPath $environmentPath | Where-Object {
+        $_ -notmatch "^$([regex]::Escape($Name))="
+    })
+    $lines += "$Name=`"$Value`""
+    $lines | Set-Content -LiteralPath $environmentPath
+}
+function Get-MockEnvironmentValues {
+    $values = @{}
+    foreach ($line in Get-Content -LiteralPath (Join-Path $environmentRoot '.env')) {
+        if ($line -match '^([^=]+)="?(.*?)"?$') { $values[$Matches[1]] = $Matches[2].TrimEnd('"') }
+    }
+    return $values
+}
+if ($Arguments[0] -eq 'up') {
+    $values = Get-MockEnvironmentValues
+    Add-Content -LiteralPath $env:MOCK_COMMAND_LOG -Value (
+        "up-state enable=$($values['ENABLE_W365']) w365=$($values['W365_ENABLED']) state=$($values['DEPLOY_STATE']) principal=$($values['STATE_AGENT_PRINCIPAL_ID'])")
+    $upCount = [int]$env:MOCK_UP_COUNT + 1
+    $env:MOCK_UP_COUNT = [string]$upCount
+    if ($upCount -ge 2) {
+        foreach ($entry in @{
+            W365_ENABLED = 'true'
+            W365_POOL_ID = '44444444-4444-4444-4444-444444444444'
+            W365_AGENT_USER_ID = '55555555-5555-5555-5555-555555555555'
+            W365_AGENT_USER_PRINCIPAL_NAME = 'sample-agent@YOUR-TENANT.onmicrosoft.com'
+            W365_AGENT_ID = '66666666-6666-6666-6666-666666666666'
+            W365_AGENT_OBJECT_ID = '77777777-7777-7777-7777-777777777777'
+            W365_BLUEPRINT_ID = '88888888-8888-8888-8888-888888888888'
+        }.GetEnumerator()) {
+            Set-MockEnvironmentValue -Name $entry.Key -Value $entry.Value
+        }
+        @{
+            schemaVersion = 1
+            environmentName = 'sample-live'
+            foundry = @{ projectOwnership = 'managed' }
+            graph = @{
+                blueprint = @{ appId = '88888888-8888-8888-8888-888888888888'; objectId = 'blueprint'; principalId = 'principal' }
+                agent = @{ appId = '66666666-6666-6666-6666-666666666666'; objectId = '77777777-7777-7777-7777-777777777777' }
+            }
+            w365 = @{
+                pool = @{ id = '44444444-4444-4444-4444-444444444444'; disposition = 'created' }
+                agentUser = @{ id = '55555555-5555-5555-5555-555555555555'; userPrincipalName = 'sample-agent@YOUR-TENANT.onmicrosoft.com'; disposition = 'created' }
+                assignment = @{ id = 'assignment'; poolId = '44444444-4444-4444-4444-444444444444'; userPrincipalId = '55555555-5555-5555-5555-555555555555'; disposition = 'created' }
+            }
+        } | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath (Join-Path $environmentRoot 'w365-ownership.json')
+    }
+    if ($env:MOCK_FAIL_UP -eq 'true' -and $upCount -eq 2) {
+        throw 'Expected deployment failure.'
+    }
 }
 if ($Arguments[0] -eq 'down') {
     $manifestPath = Join-Path $environmentRoot 'w365-ownership.json'
@@ -98,11 +141,11 @@ if ($Arguments[0] -eq 'down') {
     $manifest.cleanup = @{ status = 'completed'; completedAtUtc = [DateTimeOffset]::UtcNow.ToString('o') }
     $manifest | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $manifestPath
 }
+if ($Arguments[0] -eq 'env' -and $Arguments[1] -eq 'set') {
+    Set-MockEnvironmentValue -Name $Arguments[2] -Value $Arguments[3]
+}
 if ($Arguments[0] -eq 'env' -and $Arguments[1] -eq 'get-value') {
-    $values = @{}
-    foreach ($line in Get-Content -LiteralPath (Join-Path $environmentRoot '.env')) {
-        if ($line -match '^([^=]+)="?(.*?)"?$') { $values[$Matches[1]] = $Matches[2].TrimEnd('"') }
-    }
+    $values = Get-MockEnvironmentValues
     $values[$Arguments[2]]
 }
 '@ | Set-Content -LiteralPath $azdPath
@@ -118,6 +161,7 @@ Add-Content -LiteralPath $env:MOCK_COMMAND_LOG -Value 'prerequisites'
     $env:MOCK_REPOSITORY_ROOT = $mockRoot
     $env:MOCK_COMMAND_LOG = $logPath
     $env:MOCK_FAIL_UP = 'false'
+    $env:MOCK_UP_COUNT = '0'
 
     & $driverPath `
         -SubscriptionId $subscriptionId `
@@ -130,13 +174,28 @@ Add-Content -LiteralPath $env:MOCK_COMMAND_LOG -Value 'prerequisites'
         -EvidenceDirectory (Join-Path $mockRoot 'artifacts') `
         -AzdPath $azdPath `
         -InitializerScriptPath $initializerPath `
+        -IdentityScriptPath $identityPath `
         -PrerequisiteScriptPath $prerequisitePath
 
     $commands = @(Get-Content -LiteralPath $logPath)
-    if (@($commands | Where-Object { $_ -like 'azd up *' }).Count -ne 2 -or
+    if (@($commands | Where-Object { $_ -like 'azd up *' }).Count -ne 3 -or
         @($commands | Where-Object { $_ -like 'azd ai agent doctor *' }).Count -ne 2 -or
         @($commands | Where-Object { $_ -like 'azd down *' }).Count -ne 1) {
         throw "Acceptance driver did not execute deploy, rerun, doctor, and cleanup exactly once: $($commands -join '; ')"
+    }
+    $bootstrapIndex = [array]::IndexOf($commands, 'up-state enable=false w365=false state= principal=')
+    $identityIndex = [array]::IndexOf($commands, 'identity')
+    $stateIndex = [array]::FindIndex($commands, [Predicate[string]]{ param($line) $line -like 'azd env set STATE_AGENT_PRINCIPAL_ID *' })
+    $enableIndex = [array]::IndexOf($commands, 'azd env set ENABLE_W365 true --environment sample-live')
+    $phaseTwoIndex = [array]::IndexOf($commands, 'up-state enable=true w365=false state=true principal=77777777-7777-7777-7777-777777777777')
+    $stableIndex = [array]::IndexOf($commands, 'up-state enable=true w365=true state=true principal=77777777-7777-7777-7777-777777777777')
+    if ($bootstrapIndex -lt 0 -or
+        $identityIndex -le $bootstrapIndex -or
+        $stateIndex -le $identityIndex -or
+        $enableIndex -le $stateIndex -or
+        $phaseTwoIndex -le $enableIndex -or
+        $stableIndex -le $phaseTwoIndex) {
+        throw "Acceptance driver did not observe the required staged transition: $($commands -join '; ')"
     }
 
     $resumeRejected = $false
@@ -153,6 +212,7 @@ Add-Content -LiteralPath $env:MOCK_COMMAND_LOG -Value 'prerequisites'
             -EvidenceDirectory (Join-Path $mockRoot 'artifacts') `
             -AzdPath $azdPath `
             -InitializerScriptPath $initializerPath `
+            -IdentityScriptPath $identityPath `
             -PrerequisiteScriptPath $prerequisitePath
     }
     catch {
@@ -180,6 +240,7 @@ Add-Content -LiteralPath $env:MOCK_COMMAND_LOG -Value 'prerequisites'
             -EvidenceDirectory (Join-Path $profileRoot 'artifacts') `
             -AzdPath $azdPath `
             -InitializerScriptPath $initializerPath `
+            -IdentityScriptPath $identityPath `
             -PrerequisiteScriptPath $prerequisitePath
     }
     catch {
@@ -203,6 +264,7 @@ Add-Content -LiteralPath $env:MOCK_COMMAND_LOG -Value 'prerequisites'
     $env:MOCK_REPOSITORY_ROOT = $secondRoot
     $env:MOCK_COMMAND_LOG = Join-Path $tempRoot 'failure.log'
     $env:MOCK_FAIL_UP = 'true'
+    $env:MOCK_UP_COUNT = '0'
     $failed = $false
     try {
         & $driverPath `
@@ -216,6 +278,7 @@ Add-Content -LiteralPath $env:MOCK_COMMAND_LOG -Value 'prerequisites'
             -EvidenceDirectory (Join-Path $secondRoot 'artifacts') `
             -AzdPath $azdPath `
             -InitializerScriptPath $initializerPath `
+            -IdentityScriptPath $identityPath `
             -PrerequisiteScriptPath $prerequisitePath
     }
     catch {
@@ -230,7 +293,7 @@ Add-Content -LiteralPath $env:MOCK_COMMAND_LOG -Value 'prerequisites'
 }
 finally {
     Remove-Module Microsoft.Graph.Authentication -ErrorAction SilentlyContinue
-    foreach ($name in @('MOCK_REPOSITORY_ROOT', 'MOCK_COMMAND_LOG', 'MOCK_FAIL_UP')) {
+    foreach ($name in @('MOCK_REPOSITORY_ROOT', 'MOCK_COMMAND_LOG', 'MOCK_FAIL_UP', 'MOCK_UP_COUNT')) {
         [Environment]::SetEnvironmentVariable($name, $null, 'Process')
     }
     if (Test-Path -LiteralPath $tempRoot) {

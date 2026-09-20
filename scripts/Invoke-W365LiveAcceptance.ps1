@@ -18,6 +18,7 @@ param(
     [string]$EvidenceDirectory = (Join-Path (Split-Path $PSScriptRoot) 'artifacts\w365-live-acceptance'),
     [string]$AzdPath,
     [string]$InitializerScriptPath = (Join-Path $PSScriptRoot 'Initialize-Greenfield.ps1'),
+    [string]$IdentityScriptPath = (Join-Path $PSScriptRoot 'Get-FoundryIdentity.ps1'),
     [string]$VerifierScriptPath = (Join-Path $PSScriptRoot 'Test-W365LiveDeployment.ps1'),
     [string]$PrerequisiteScriptPath = (Join-Path (Split-Path $PSScriptRoot) 'tests\PowerShell\Test-AzdPrerequisites.ps1')
 )
@@ -156,7 +157,7 @@ function Confirm-W365Acceptance {
     }
 }
 
-foreach ($path in @($RepositoryRoot, $InitializerScriptPath, $VerifierScriptPath, $PrerequisiteScriptPath)) {
+foreach ($path in @($RepositoryRoot, $InitializerScriptPath, $IdentityScriptPath, $VerifierScriptPath, $PrerequisiteScriptPath)) {
     if (!(Test-Path -LiteralPath $path)) {
         throw "Required live acceptance path '$path' was not found."
     }
@@ -213,7 +214,6 @@ try {
             Prefix = $Prefix
             Environment = 'live'
             Location = $Location
-            EnableW365 = $true
         }
         if (![string]::IsNullOrWhiteSpace($AgentUserDomain)) {
             $initializerArguments.AgentUserDomain = $AgentUserDomain
@@ -260,6 +260,28 @@ try {
     $previousResourceApproval = $env:W365_RESOURCE_CHANGES_CONFIRMED
     $env:W365_RESOURCE_CHANGES_CONFIRMED = 'true'
     try {
+        if (!$Resume) {
+            Invoke-AcceptanceAzd @('up', '--environment', $environmentName, '--no-prompt')
+            $projectEndpoint = Get-AcceptanceAzdValue -EnvironmentName $environmentName -Name 'FOUNDRY_PROJECT_ENDPOINT'
+            $agentName = Get-AcceptanceAzdValue -EnvironmentName $environmentName -Name 'FOUNDRY_AGENT_NAME'
+            $agentVersion = Get-AcceptanceAzdValue -EnvironmentName $environmentName -Name 'AGENT_WIN365_DESKTOP_AGENT_VERSION'
+            $identityResult = @(& $IdentityScriptPath `
+                -ProjectEndpoint $projectEndpoint `
+                -AgentName $agentName `
+                -AgentVersion $agentVersion `
+                -TenantId $TenantId)
+            $identity = $identityResult | Select-Object -Last 1
+            $agentIdentityId = [guid]::Empty
+            if ($null -eq $identity -or
+                ![guid]::TryParse([string]$identity.AgentIdentityId, [ref]$agentIdentityId) -or
+                $agentIdentityId -eq [guid]::Empty) {
+                throw 'Phase-1 Foundry identity discovery did not return a valid agent principal.'
+            }
+            Invoke-AcceptanceAzd @('env', 'set', 'DEPLOY_STATE', 'true', '--environment', $environmentName)
+            Invoke-AcceptanceAzd @('env', 'set', 'STATE_AGENT_PRINCIPAL_ID', $agentIdentityId.ToString(), '--environment', $environmentName)
+            Invoke-AcceptanceAzd @('env', 'set', 'ENABLE_W365', 'true', '--environment', $environmentName)
+        }
+
         Invoke-AcceptanceAzd @('up', '--environment', $environmentName, '--no-prompt')
         $first = & $VerifierScriptPath `
             -EnvironmentName $environmentName `

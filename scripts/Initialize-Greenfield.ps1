@@ -23,6 +23,9 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+if ($EnableW365) {
+    throw 'Fresh greenfield initialization cannot enable W365. Deploy the disabled bootstrap first, provision shared Blob state for its discovered principal, and then run Invoke-W365SetupFlow.ps1.'
+}
 if (!$IsWindows) {
     throw 'This greenfield initializer is Windows-only.'
 }
@@ -131,7 +134,7 @@ $values = [ordered]@{
     SCREENSHARE_APP_URL = $screenShareAppUrl
     W365_BLUEPRINT_CREDENTIAL_MODE = $blueprintCredentialMode
     SAMPLE_LOG_LEVEL = $sampleLogLevel
-    ENABLE_W365 = $EnableW365.IsPresent.ToString().ToLowerInvariant()
+    ENABLE_W365 = 'false'
     W365_ENABLED = 'false'
 }
 if (![string]::IsNullOrWhiteSpace($AgentUserPrincipalName)) {
@@ -173,7 +176,7 @@ try {
     Write-Host "  Model name/version:     $($values.FOUNDRY_MODEL_NAME) / $($values.FOUNDRY_MODEL_VERSION)"
     Write-Host "  Model SKU:              $($values.FOUNDRY_MODEL_SKU_NAME) x $($values.FOUNDRY_MODEL_SKU_CAPACITY)"
     Write-Host "  W365 bootstrap mode:    $($values.W365_ENABLED)"
-    Write-Host "  Complete W365 in azd up: $($values.ENABLE_W365)"
+    Write-Host "  W365 setup requested:   $($values.ENABLE_W365)"
     Write-Host "  Deployment log level:   $($values.SAMPLE_LOG_LEVEL)"
     if (![string]::IsNullOrWhiteSpace($values.FOUNDRY_PROJECT_ENDPOINT)) {
         Write-Host "  Existing project:       $($values.FOUNDRY_PROJECT_ENDPOINT)"
@@ -201,8 +204,12 @@ try {
     }
 
     Write-Host ''
-    Write-Host 'Review the preview, then deploy everything with:'
-    Write-Host '  azd up --no-prompt'
+    Write-Host 'Review the preview, then deploy the disabled Foundry bootstrap in stages:'
+    Write-Host "  pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 -Environment '$environmentName' -Mode Validate"
+    Write-Host "  pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 -Environment '$environmentName' -Mode ProvisionFoundry -ConfirmResourceChanges"
+    Write-Host "  pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 -Environment '$environmentName' -Mode DeployAgent -ConfirmResourceChanges"
+    Write-Host "  azd ai agent doctor --environment '$environmentName'"
+    Write-Host 'Do not enable W365 until the deployed agent principal has shared Blob state and the phase-2 prerequisites are complete.'
     Write-Host ''
     Write-Host 'Override defaults with either:'
     Write-Host '  1. config\deployment.local.json'

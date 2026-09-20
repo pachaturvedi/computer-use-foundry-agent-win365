@@ -35,6 +35,21 @@ foreach ($name in $tracked) {
 }
 
 try {
+    $greenfieldRejected = $false
+    try {
+        & (Join-Path $root 'scripts\Initialize-Greenfield.ps1') `
+            -SubscriptionId '11111111-1111-1111-1111-111111111111' `
+            -Prefix 'sample' `
+            -EnableW365 `
+            -SkipPreview
+    }
+    catch {
+        $greenfieldRejected = $_.Exception.Message -match 'cannot enable W365'
+    }
+    if (!$greenfieldRejected) {
+        throw 'Greenfield initialization accepted unsafe one-shot W365 enablement.'
+    }
+
     $env:AZURE_ENV_NAME = $environmentName
     $env:AZURE_SUBSCRIPTION_ID = '11111111-1111-1111-1111-111111111111'
     $env:AZURE_LOCATION = 'eastus'
@@ -84,7 +99,7 @@ try {
         $summary -notmatch 'samplestorage' -or
         $summary -notmatch 'ACA viewer.+Skipped' -or
         $summary -notmatch 'fresh hosted-agent session pinned to active version 42' -or
-        $summary -notmatch 'azd ai agent invoke win365-desktop-agent --version 42 --new-session' -or
+        $summary -notmatch 'azd ai agent invoke win365-desktop-agent --environment sample-dev --version 42 --new-session' -or
         $summary -match '(?i)secret-value|access-token') {
         throw "Deployment summary was incomplete or unsafe: $summary"
     }
@@ -98,6 +113,9 @@ try {
     $upContextScript = Get-Content -LiteralPath (Join-Path $root 'scripts\Show-AzdUpContext.ps1') -Raw
     $planScript = Get-Content -LiteralPath (Join-Path $root 'scripts\Show-DeploymentPlan.ps1') -Raw
     $viewerDeployScript = Get-Content -LiteralPath (Join-Path $root 'scripts\Deploy-ViewerBootstrap.ps1') -Raw
+    $deploymentScriptPath = Join-Path $root 'scripts\Invoke-AzdDeployment.ps1'
+    $deploymentScript = Get-Content -LiteralPath $deploymentScriptPath -Raw
+    $w365SetupFlow = Get-Content -LiteralPath (Join-Path $root 'scripts\Invoke-W365SetupFlow.ps1') -Raw
     $stateParameters = Get-Content -LiteralPath (Join-Path $root 'infra\state\main.parameters.json') -Raw
     $viewerParameters = Get-Content -LiteralPath (Join-Path $root 'infra\viewer\main.parameters.json') -Raw
     if ($foundryBicep -notmatch "resource environmentResourceGroup 'Microsoft.Resources/resourceGroups@" -or
@@ -126,10 +144,80 @@ try {
         $viewerDeployScript -notmatch 'Reusing unchanged viewer image' -or
         $viewerDeployScript -notmatch 'base-image-refresh' -or
         $viewerDeployScript -notmatch 'build-\$\(\$buildHash\.Substring\(0, 12\)\)' -or
+        $deploymentScript -notmatch '(?ms)^function Get-W365KeyVaultName \{.*?^function Assert-LiveViewerConfiguration' -or
         $stateParameters -notmatch '"resourceGroupName": \{ "value": "\$\{AZURE_RESOURCE_GROUP\}" \}' -or
         $viewerParameters -notmatch '"resourceGroupName": \{ "value": "\$\{AZURE_RESOURCE_GROUP\}" \}') {
         throw 'Infrastructure layers do not consistently reuse one AZURE_RESOURCE_GROUP.'
     }
+    $statePreflightIndex = $w365SetupFlow.IndexOf('Assert-W365StateResourceReady')
+    $secretPreflightIndex = $w365SetupFlow.IndexOf('Assert-W365BlueprintSecretReady')
+    $setupMutationIndex = $w365SetupFlow.IndexOf("& (Join-Path `$PSScriptRoot 'Setup-W365.ps1') @setupArguments")
+    if ($statePreflightIndex -lt 0 -or
+        $secretPreflightIndex -lt 0 -or
+        $setupMutationIndex -lt 0 -or
+        $statePreflightIndex -gt $setupMutationIndex -or
+        $secretPreflightIndex -gt $setupMutationIndex -or
+        $w365SetupFlow -notmatch 'AuthorizeHostedRuntimeFederation:\$AuthorizeHostedRuntimeFederation') {
+        throw 'W365 setup flow does not complete state and federation preflight before setup mutation.'
+    }
+
+    $tokens = $null
+    $parseErrors = $null
+    $deploymentAst = [Management.Automation.Language.Parser]::ParseFile(
+        $deploymentScriptPath,
+        [ref]$tokens,
+        [ref]$parseErrors)
+    if (@($parseErrors).Count -gt 0) {
+        throw "Invoke-AzdDeployment.ps1 did not parse: $($parseErrors -join '; ')"
+    }
+    $functions = @($deploymentAst.FindAll({
+        param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst]
+    }, $true))
+    $keyVaultFunction = $functions | Where-Object Name -eq 'Get-W365KeyVaultName' | Select-Object -First 1
+    $secretFunction = $functions | Where-Object Name -eq 'Set-W365ClientSecretForDeployment' | Select-Object -First 1
+    if ($null -eq $keyVaultFunction -or $null -eq $secretFunction) {
+        throw 'Blueprint-secret deployment helpers are missing or scoped inside another function.'
+    }
+    $ancestor = $keyVaultFunction.Parent
+    while ($null -ne $ancestor) {
+        if ($ancestor -is [Management.Automation.Language.FunctionDefinitionAst]) {
+            throw 'Get-W365KeyVaultName is scoped inside another function.'
+        }
+        $ancestor = $ancestor.Parent
+    }
+    $secretRegression = [scriptblock]::Create(@"
+function Get-AzdOptionalValue {
+    param([string]`$Name)
+    switch (`$Name) {
+        'W365_ENABLED' { 'true' }
+        'W365_BLUEPRINT_CREDENTIAL_MODE' { 'client_secret' }
+        'W365_KEY_VAULT_NAME' { 'sample-w365-vault' }
+        default { '' }
+    }
+}
+function Get-AzdValue { param([string]`$Name) '11111111-1111-1111-1111-111111111111' }
+function Write-DeploymentEvent { param([string]`$Kind, [string]`$Message) }
+function az {
+    `$global:LASTEXITCODE = 0
+    'offline-blueprint-secret'
+}
+function azd {
+    `$global:LASTEXITCODE = 0
+}
+`$azd = [pscustomobject]@{ Path = 'azd' }
+`$environmentName = 'sample-dev'
+$($keyVaultFunction.Extent.Text)
+$($secretFunction.Extent.Text)
+`$env:W365_CLIENT_SECRET = ''
+Set-W365ClientSecretForDeployment
+if (`$env:W365_CLIENT_SECRET -ne 'offline-blueprint-secret') {
+    throw 'Client-secret deployment did not load the blueprint secret through the script-scoped Key Vault helper.'
+}
+Remove-Item Env:\W365_CLIENT_SECRET -ErrorAction SilentlyContinue
+"@)
+    & $secretRegression
+
 }
 finally {
     foreach ($name in $tracked) {

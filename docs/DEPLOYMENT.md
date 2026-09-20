@@ -22,14 +22,15 @@ you need the full staged deployment, rollback, or live-acceptance detail.
 
 | Stage | Operation | Current status |
 | --- | --- | --- |
-| Phase 1 | Deploy `win365-desktop-agent` with `W365_ENABLED=false` | Completed; active version `1` |
-| Binding | Discover version `1`, run W365 setup, create/reuse the agent user, and create or update the W365 agent pool | Scripted; live pool creation still requires tenant-specific billing and image inputs |
-| Phase 2 | Apply returned IDs and state/operator values, keep `W365_ENABLED=true`, and redeploy the same service | Scripted through the W365 flow wrapper or by rerunning `DeployAgent` |
+| Phase 1 | Deploy `win365-desktop-agent` with `W365_ENABLED=false` | Greenfield bootstrap validated as version `1` in the separate `fawsep18-dev` evidence environment |
+| Binding | Discover the deployed version, run W365 setup, create/reuse the agent user, and create or update the W365 agent pool | Scripted; live pool creation still requires tenant-specific billing and image inputs |
+| Phase 2 | Provision state, apply returned IDs and operator values, enable W365, and redeploy the same service | Staged after the phase-1 agent principal is known |
 
-Ordinary Responses hosting still must be validated for blueprint-selected
-managed identity after phase 2; the public reference helper is from an
-activity/autopilot sample, not evidence that this host supports it. No autopilot
-publication or hiring workflow is required here. See
+The complete W365 lifecycle is validated with explicit `client_secret` mode.
+Blueprint-selected managed identity remains blocked on the tested Responses
+host by Entra `AADSTS700231`; the public reference helper is from an
+activity/autopilot sample, not proof that this host supports chained
+federation. No autopilot publication or hiring workflow is required. See
 [authentication](AUTHENTICATION.md#sdk-and-hosting-boundary).
 
 ## Phase 1: deploy bootstrap
@@ -139,8 +140,6 @@ pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
    -Environment "fawin365-dev" `
    -ConfirmResourceChanges
 
-azd ai agent doctor --environment fawin365-dev
-
 pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
    -Mode DeployAgent `
    -Environment "fawin365-dev" `
@@ -157,42 +156,13 @@ for the deploying principal, and `Foundry User` for the project managed
 identity. `DeployAgent` publishes the first immutable hosted-agent version only
 after the project endpoint and role checks are green.
 
-To opt into the stitched W365 path, supply the agent-user UPN while initializing
-the environment, confirm the W365 pool profile in the ignored
-`config\deployment.local.json`, and then run one `azd up`:
-
-```powershell
-pwsh -NoProfile -File .\scripts\Initialize-Greenfield.ps1 `
-   -SubscriptionId "<subscription-id>" `
-   -Prefix "fawin365" `
-   -Environment "dev" `
-   -EnableW365
-
-azd up
-```
-
-The normal deployment publishes the bootstrap version with
-`W365_ENABLED=false`. The Windows `postup` hook then requests explicit W365
-resource approval, uses device-code Graph authentication, creates or validates
-the environment-owned pool and agent user, persists the ownership manifest,
-and deploys the same agent name again with `W365_ENABLED=true`. That phase-two
-deployment also runs a fresh-session smoke invocation, so azd updates its saved
-session to the active W365-enabled version. A failed W365 step leaves the
-bootstrap agent disabled and prints the manifest path needed for recovery or
-teardown. The agent-user UPN is derived from the tenant's verified default
-user-creation domain; it does not assume an
-`onmicrosoft.com` suffix. `-AgentUserPrincipalName` and `-AgentUserDomain`
-remain optional overrides.
-
-After this phase transition, begin the first task with a **fresh hosted-agent
-session pinned to the active immutable version**. Hosted sessions are pinned to
-the version that created them; reusing a bootstrap session can therefore return
-`w365_not_configured` even though a newer active version is W365-ready.
-
-```powershell
-$version = azd env get-value AGENT_WIN365_DESKTOP_AGENT_VERSION
-azd ai agent invoke win365-desktop-agent --version $version --new-session "<task>"
-```
+Do not pass `-EnableW365` on the initial greenfield deployment. The first
+hosted-agent version must exist before its principal can be granted access to
+the shared Blob state required by enabled W365 execution. Complete the staged
+bootstrap above, discover the exact agent principal, and continue with
+[phase 2](#phase-2-bind-and-enable). Do not use a one-shot `azd up` for a fresh
+W365-enabled environment until the state principal and all phase-2 values have
+been explicitly configured and reviewed.
 
 Keep `W365_ENABLED=false`, `DEPLOY_STATE=false`, and `DEPLOY_VIEWER=false` for
 this bootstrap pass unless the later phases are explicitly approved. Existing-
@@ -313,22 +283,11 @@ role rather than infer one from the other. If discovery does not return the requ
 or the actual host cannot provide a matching blueprint identity endpoint, stop
 and investigate the preview hosting contract; do not create a substitute identity.
 
-The stitched azd flow wraps this discovery automatically. After bootstrap
-deployment, `Invoke-W365SetupFlow.ps1` reads the selected azd environment,
-discovers the deployed blueprint and agent identity from the current hosted
-agent version, runs `Setup-W365.ps1`, persists the returned `W365_*` values,
-writes a non-secret ownership manifest used for teardown, and redeploys the
-same agent name:
-
-```powershell
-pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
-   -Environment "<azd-environment-name>" `
-   -AgentUserPrincipalName "foundry-w365-agent@YOUR-TENANT.onmicrosoft.com" `
-   -PoolIdOrUrl "<existing-pool-guid-or-intune-url>" `
-   -BillingConfirmed `
-   -ConfirmResourceChanges `
-   -UseDeviceCode
-```
+`Invoke-W365SetupFlow.ps1` can repeat discovery automatically, run setup,
+persist the returned `W365_*` values and ownership manifest, and redeploy the
+same agent name. Do not invoke it yet: it fails before W365 or Entra mutation
+unless the phase-2 Blob state, operator binding, and selected credential are
+already configured as described below.
 
 If `W365_POOL_ID` is already persisted in the azd environment, reruns update
 that pool instead of creating another one. If no pool ID is present, the setup
@@ -468,12 +427,11 @@ ID** is the optional setup FIC subject; the **client ID** selects the UAMI as
 
 ## Phase 2: bind and enable
 
-Complete [W365 setup](W365-SETUP.md) with the discovered tenant, blueprint
-client ID and agent object ID. Confirm Intune pool, licensing and billing
-prerequisites; setup does not purchase capacity. Review the effects of inherited
-blueprint grants on sibling agents. For an optional viewer FIC, obtain explicit
-administrator approval for **blueprint impersonation**, not merely ARI access.
-Do not enable or configure an unapproved viewer.
+Confirm Intune pool, licensing and billing prerequisites; setup does not
+purchase capacity. Prepare state, operator binding, and the selected credential
+before running [W365 setup](W365-SETUP.md). Review inherited blueprint grants
+on sibling agents. For an optional viewer FIC, obtain explicit administrator
+approval for **blueprint impersonation**, not merely ARI access.
 
 Prepare private shared Blob state before enabling; live runtime requires Blob.
 `FileSessionStore` is an offline-test helper, not a local live backend.
@@ -487,14 +445,25 @@ for model/state access rather than substituting an app/client ID in RBAC.
 Role assignments need appropriately scoped authorization (for example Role
 Based Access Control Administrator); do not blindly grant Owner.
 
+The default `client_secret` E2E path is not self-contained. An authorized Entra
+administrator must create and approve a short-lived credential for the existing
+Foundry blueprint under tenant policy. The repository does not create that
+credential. Transfer it outside source control, logs, command history, JSON,
+and `.azure`; store it only through the secure
+`Set-ViewerSecrets.ps1 -BlueprintOnly` prompt, record its owner and expiry,
+rotate it under tenant policy, and revoke it after validation. Explicitly set
+`W365_BLUEPRINT_CREDENTIAL_MODE`; never fall back between credential modes.
+
 For the existing-project two-phase workflow, enable the dedicated azd state
 layer after phase-1 identity discovery:
 
 ```powershell
-azd env set DEPLOY_STATE true
-azd env set STATE_AGENT_PRINCIPAL_ID "<Foundry-agent-object-principal-GUID>"
-azd provision state --preview --no-prompt
-azd provision state --no-prompt
+$environment = "<azd-environment-name>"
+azd env set DEPLOY_STATE true --environment $environment
+azd env set STATE_AGENT_PRINCIPAL_ID "<Foundry-agent-object-principal-GUID>" `
+    --environment $environment
+azd provision state --environment $environment --preview --no-prompt
+azd provision state --environment $environment --no-prompt
 ```
 
 The core layer creates the sample-owned environment resource group once. The
@@ -525,6 +494,65 @@ The earlier validated development deployment created:
 
 The application creates `slot.json` atomically on first enabled use; the
 infrastructure deployment intentionally does not seed the Blob.
+
+Configure the hosted operator and credential before W365 mutation:
+
+```powershell
+$environment = "<azd-environment-name>"
+azd env set OPERATOR_TENANT_ID "<operator-tenant-guid>" --environment $environment
+azd env set OPERATOR_OBJECT_ID "<operator-object-guid>" --environment $environment
+azd env set HOSTED_ALLOWED_USER_ID pending --environment $environment
+azd env set W365_BLUEPRINT_CREDENTIAL_MODE client_secret --environment $environment
+pwsh -NoProfile -File .\scripts\Set-ViewerSecrets.ps1 `
+    -Environment $environment `
+    -BlueprintOnly
+```
+
+`HOSTED_ALLOWED_USER_ID=pending` denies W365 access while exposing only a
+correlatable hash for the first intended caller; finish the binding below.
+For `managed_identity_federation`, omit the secret command and complete the
+explicit hosted-runtime federation approval, understanding that this mode is
+blocked on the tested host by `AADSTS700231`.
+
+After all prerequisites above are present, client-secret mode uses:
+
+```powershell
+azd env set W365_BLUEPRINT_CREDENTIAL_MODE client_secret `
+    --environment "<azd-environment-name>"
+pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
+   -Environment "<azd-environment-name>" `
+   -TenantId "<Foundry-and-W365-tenant-guid>" `
+   -PoolIdOrUrl "<existing-pool-guid-or-intune-url>" `
+   -BillingConfirmed `
+   -ConfirmResourceChanges `
+   -UseDeviceCode
+```
+
+Managed-identity mode requires explicit authorization for the exact discovered
+agent principal and remains blocked on the tested host:
+
+```powershell
+azd env set W365_BLUEPRINT_CREDENTIAL_MODE managed_identity_federation `
+    --environment "<azd-environment-name>"
+pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
+   -Environment "<azd-environment-name>" `
+   -TenantId "<Foundry-and-W365-tenant-guid>" `
+   -HostedRuntimeIdentityObjectId "<Foundry-agent-object-principal-guid>" `
+   -AuthorizeHostedRuntimeFederation `
+   -PoolIdOrUrl "<existing-pool-guid-or-intune-url>" `
+   -BillingConfirmed `
+   -ConfirmResourceChanges `
+   -UseDeviceCode
+```
+
+Before any W365 or Entra mutation, the wrapper verifies that Blob state exists,
+the expected `desktop-state` container exists, the discovered Foundry agent has
+container-scoped `Storage Blob Data Contributor`, operator binding values are
+present, the credential mode is explicit, and client-secret mode has the
+required Key Vault secret. Managed-identity mode additionally requires explicit
+federation authorization for the exact discovered agent principal. The wrapper
+then persists the returned IDs and ownership manifest and redeploys the same
+agent name.
 
 Set non-secret values using `azd env set KEY VALUE`:
 
@@ -561,11 +589,15 @@ Windows activation sequence is:
 ```powershell
 # Bootstrap must already have produced VIEWER_PUBLIC_URL. State provisioning
 # always produces W365_KEY_VAULT_NAME.
-pwsh -NoProfile -File .\scripts\Configure-ViewerOidc.ps1
-pwsh -NoProfile -File .\scripts\Set-ViewerSecrets.ps1 -BlueprintOnly
-azd env set W365_BLUEPRINT_CREDENTIAL_MODE client_secret
-azd env set VIEWER_LIVE_ENABLED true
+$environment = "<azd-environment-name>"
+pwsh -NoProfile -File .\scripts\Configure-ViewerOidc.ps1 -Environment $environment
+pwsh -NoProfile -File .\scripts\Set-ViewerSecrets.ps1 `
+    -Environment $environment `
+    -BlueprintOnly
+azd env set W365_BLUEPRINT_CREDENTIAL_MODE client_secret --environment $environment
+azd env set VIEWER_LIVE_ENABLED true --environment $environment
 pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
+    -Environment $environment `
     -Mode DeployAll `
     -ConfirmResourceChanges
 ```
@@ -589,12 +621,15 @@ absent, stores both in the same vault, and reprovisions the viewer.
 unless the exact viewer UAMI federation is present in the W365 ownership
 manifest.
 
-Direct `azd up` runs print a pre-provision resource plan and a final resource
-table. Set `SAMPLE_LOG_LEVEL` to `summary` (default), `verbose`, or `debug`:
+After phase 2 is complete, `azd up` can be used for routine reruns of the fully
+configured environment. It prints a pre-provision resource plan and a final
+resource table. Do not use it to bootstrap a fresh W365-enabled environment.
+Set `SAMPLE_LOG_LEVEL` to `summary` (default), `verbose`, or `debug`:
 
 ```powershell
-azd env set SAMPLE_LOG_LEVEL verbose
-azd up
+$environment = "<azd-environment-name>"
+azd env set SAMPLE_LOG_LEVEL verbose --environment $environment
+azd up --environment $environment
 ```
 
 All Windows scripts also support PowerShell's common `-Verbose` and `-Debug`
@@ -603,9 +638,12 @@ sanitized decisions, resource IDs, and parameter context; secret, token,
 password, credential, and certificate values are always redacted.
 
 ```powershell
-azd up
+azd up --environment $environment
 # For a focused rerun with detailed diagnostics:
-pwsh -NoProfile -File .\scripts\Complete-AzdUp.ps1 -Verbose -Debug
+$env:AZURE_ENV_NAME = $environment
+pwsh -NoProfile -File .\scripts\Complete-AzdUp.ps1 `
+    -Verbose `
+    -Debug
 ```
 
 Agent and enabled viewer must use **exactly the same W365 identities and state
@@ -614,8 +652,9 @@ selects its UAMI; never overwrite Foundry's credential selection.
 
 ```powershell
 # All phase-2 values above must already be set.
-azd ai agent doctor
+azd ai agent doctor --environment $environment
 pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
+    -Environment $environment `
     -Mode DeployAgent `
     -ConfirmResourceChanges
 ```
@@ -627,6 +666,21 @@ discovery for the new version and compare all IDs with phase 1.
 Reject unexpected identity replacement before permitting tasks; do not silently
 rebind users, consent or FICs to replacements. A rollback must also preserve
 the accepted identity binding.
+
+After successful phase-2 redeployment and active-version verification, begin
+the first task with a **fresh hosted-agent session pinned to that immutable
+version**. Hosted sessions stay pinned to the version that created them; reusing
+a bootstrap session can return `w365_not_configured`.
+
+```powershell
+$environment = "<azd-environment-name>"
+$version = azd env get-value AGENT_WIN365_DESKTOP_AGENT_VERSION `
+    --environment $environment
+azd ai agent invoke win365-desktop-agent `
+    --environment $environment `
+    --version $version `
+    --new-session "<task>"
+```
 
 Network policies must allow Entra exchange, Blob, the Foundry project/model
 and `agent365.svc.cloud.microsoft`; an enabled viewer additionally needs its OIDC
@@ -647,8 +701,9 @@ before W365 access. The warning includes a `sha256:` partition fingerprint and
 correlation ID in both the structured 403 response and server log, not the raw
 user identity or tokens. Have the administrator
 correlate the invocation and set
-`azd env set HOSTED_ALLOWED_USER_ID "sha256:<fingerprint>"`, then redeploy with
-the same name and check identities again. Never enroll an uncorrelated caller.
+`azd env set HOSTED_ALLOWED_USER_ID "sha256:<fingerprint>" --environment
+$environment`, then redeploy with the same name and check identities again.
+Never enroll an uncorrelated caller.
 If the header is `missing`, stop and confirm platform support; do not disable
 the gate.
 
@@ -703,38 +758,40 @@ W365 capacity through its owning service when applicable.
 ## Live acceptance
 
 Offline compilation/tests cannot prove tenant, preview SDK or service
-compatibility. Live versions through `6` have now been deployed in the
-authorized test tenant. Version `6` is active and caller binding passes, but
-desktop opening is blocked before W365 MCP because the hosted runtime cannot
-acquire the blueprint assertion. Continue these checks only after resolving
-that identity capability without adding stored credentials:
+compatibility. As recorded in the
+[validation report](VALIDATION-REPORT.md), hosted version `15` completed the
+bounded W365 lifecycle with the explicitly selected `client_secret` mode. The
+temporary secret was then revoked and removed, and a clean version `16`
+restored `managed_identity_federation`. That federation mode remains blocked on
+the tested host by Entra `AADSTS700231`; it never falls back to the validated
+secret mode.
 
 1. Deploy phase 1 without W365/operator/state/OIDC configuration. Confirm healthy
    readiness, phase-2 503 responses and no W365/model/state credential access.
 2. Discover the actual agent version's IDs. Confirm ordinary Responses hosting
-   injects the matching blueprint client ID and supports blueprint-selected
-   `ManagedIdentityCredential` for the exchange audience. If unsupported, stop;
-   do not add a certificate, secret or CLI fallback.
+   injects the matching blueprint client ID. Select only an explicitly approved
+   credential mode; do not add an automatic certificate, secret, managed
+   identity, or CLI fallback.
 3. Run setup twice against the supplied identities. Confirm parent mismatches
    and existing grant/inheritance ambiguity fail before mutations, identity IDs
    stay unchanged, unrelated scopes/grants/
    policies are preserved and pool assignment is not duplicated.
-4. If approved, confirm viewer FIC has the exact UAMI object-ID subject, tenant
-   issuer and audience, and that both deployed paths complete T1 -> T2 -> T3.
-   Review the broader blueprint/sibling trust with the administrator.
-5. Redeploy the same agent name, rediscover the new version and reject
+4. Redeploy the same agent name, rediscover the new version and reject
    unexpected identity replacement. Confirm model availability, image inputs
-   and live allowlisted tool discovery.
-6. Start a benign task: Ready, screenshot, action, explicit end. Confirm release
-   and absence of `/storage/responses` payload-size failures. Deny a second hosted
-   caller and another viewer account even when they possess an opaque link.
-7. Inspect watch permissions securely: See-only, not Control. Take control
-   during an action; verify pause ordering, explicit resume and no auto-resume
-   on disconnect/token-refresh failure.
-8. Cancel/expire tasks and inspect cleanup. Crash a test worker, verify the
+   and live allowlisted tool discovery. Confirm the selected mode completes
+   T1 -> T2 -> agent-user T3 and only T3 is sent to W365.
+5. Start a benign task: Ready, screenshot, action, explicit end. Confirm release
+   and absence of `/storage/responses` payload-size failures. Deny a second
+   hosted caller.
+6. If the optional viewer is approved, confirm its FIC has the exact UAMI
+   object-ID subject, tenant issuer and audience. Deny another viewer account
+   even when it possesses an opaque link. Inspect watch permissions: See-only,
+   not Control. Take control during an action; verify pause ordering, explicit
+   resume and no auto-resume on disconnect/token-refresh failure.
+7. Cancel/expire tasks and inspect cleanup. Crash a test worker, verify the
    slot/lease blocks takeover and perform documented recovery. Validate actual
-   ACA OIDC callback, PKCE, CSRF, no-store tokens, CSP/frame origins, refresh and
-   screenshot scaling.
+   ACA OIDC callback, PKCE, CSRF, no-store tokens, CSP/frame origins, refresh,
+   and screenshot scaling only when the viewer is enabled.
 
 [Foundry deployment reference](https://learn.microsoft.com/azure/foundry/agents/how-to/deploy-hosted-agent),
 [Foundry agent identity](https://learn.microsoft.com/azure/foundry/agents/concepts/agent-identity),
