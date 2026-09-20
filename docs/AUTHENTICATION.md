@@ -35,7 +35,7 @@ request argument, page or user-supplied credential. Active runtime requires shar
 | --- | --- |
 | `client_secret` | Default for the E2E demo and validated end to end. The shared state-layer Key Vault stores the blueprint secret independently of whether the ACA viewer is enabled. |
 | `managed_identity_federation` | Optional hardening path. The tested Foundry-hosted identity could not chain its federated token into the blueprint exchange (`AADSTS700231`). |
-| `key_vault_certificate` | Reserved for the next implementation phase. Configuration fails closed until certificate retrieval and signing are implemented and validated. |
+| `key_vault_certificate` | Self-signed, non-exportable Key Vault certificate. The agent's runtime principal signs the client assertion remotely inside Key Vault; the private key never leaves Key Vault and is never read by the agent process. Agent-only (not selectable for the viewer). |
 
 The modes are explicit and mutually exclusive. There is no fallback from one
 mode to another. In particular, a managed-identity failure never falls back to
@@ -59,9 +59,32 @@ own native Key Vault secret reference (`infra/viewer.bicep`), using its own
 UAMI's separately granted Key Vault Secrets User role. Never print, hash for
 display, serialize into documentation, or commit the resolved value.
 
-Certificate-based delivery (`key_vault_certificate`) remains a separate,
-unimplemented mode reserved for a later phase; this change does not start
-that work.
+## Blueprint certificate delivery
+
+In `key_vault_certificate` mode, the agent authenticates the blueprint using a
+signed JWT client assertion instead of a shared secret. `infra/state/keyvault.bicep`
+grants the agent's runtime principal least-privilege **Key Vault Certificate
+User** (read public certificate metadata) and **Key Vault Crypto User**
+(sign/verify only) roles on the shared vault — never the roles needed to
+retrieve the private key or the paired secret. At startup,
+`KeyVaultBlueprintCertificateAssertionProvider` reads the public bytes of the
+`w365-blueprint-certificate` certificate from `W365_KEY_VAULT_NAME` (the only
+key_vault_certificate-mode configuration the agent requires), builds a JWT
+client assertion, and signs it by calling Key Vault's `sign` REST API — the
+private key is never retrieved, exported, or held in agent process memory.
+Certificate metadata is cached in memory for the process lifetime and retried
+after a failure; rotating the certificate requires a redeploy so a fresh
+process picks up the new key. This mode is agent-only: `Settings.Validate`
+rejects it for the viewer.
+
+Provisioning is a two-step, explicitly confirmed process (see
+`docs/W365-SETUP.md`): `scripts\Initialize-W365BlueprintCertificate.ps1`
+creates or rotates the self-signed, non-exportable certificate in Key Vault,
+and `scripts\Register-W365BlueprintCertificate.ps1` registers only its public
+bytes as a `keyCredential` on the Foundry Agent ID Blueprint application via
+Microsoft Graph (`Application.ReadWrite.All`), preserving any existing
+credentials already on the blueprint. Neither script reads, exports, or
+transmits private key material.
 
 ## Three-stage agent-user tokens
 
@@ -86,7 +109,7 @@ resource/permission purpose with a five-minute refresh margin and serialized
 refresh. No token or exchange request/response body is logged.
 
 There is **no DefaultAzureCredential (DAC) or Azure CLI fallback for W365**.
-Certificate mode is not implemented yet. Client-secret mode is an explicit,
+Client-secret mode is an explicit,
 temporary validation option and is not enabled by default. Ordinary Azure model/state access uses the normal
 Azure credential path; an `az login` session is not an alternative W365 identity.
 No IdentityRM auxiliary token is sent.

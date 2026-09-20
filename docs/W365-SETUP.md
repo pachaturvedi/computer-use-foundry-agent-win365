@@ -106,6 +106,46 @@ pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
     -UseDeviceCode
 ```
 
+For `key_vault_certificate` mode (self-signed, non-exportable; the private key
+never leaves Key Vault): first create the certificate, then register only its
+public bytes with the Foundry Agent ID Blueprint application via Graph.
+
+```powershell
+$environment = "<azd-environment-name>"
+azd env set W365_BLUEPRINT_CREDENTIAL_MODE key_vault_certificate `
+    --environment $environment
+
+$certificate = .\scripts\Initialize-W365BlueprintCertificate.ps1 `
+    -Environment $environment `
+    -ConfirmResourceChanges
+
+.\scripts\Register-W365BlueprintCertificate.ps1 `
+    -TenantId "<Foundry-and-W365-tenant-guid>" `
+    -BlueprintId "<Foundry-blueprint-app-client-guid>" `
+    -PublicCertificateBase64 $certificate.PublicCertificateBase64 `
+    -ConfirmResourceChanges `
+    -UseDeviceCode
+
+pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
+    -Environment $environment `
+    -TenantId "<Foundry-and-W365-tenant-guid>" `
+    -AgentUserPrincipalName "foundry-w365-agent@YOUR-TENANT.onmicrosoft.com" `
+    -PoolIdOrUrl "<existing-pool-guid-or-intune-url>" `
+    -BillingConfirmed `
+    -ConfirmResourceChanges `
+    -UseDeviceCode
+```
+
+`Register-W365BlueprintCertificate.ps1` requires a delegated Graph sign-in
+with `Application.ReadWrite.All` and reads/writes only the blueprint
+application's `keyCredentials`; it preserves any existing credentials already
+on the blueprint (for example, a `client_secret` you may still have configured)
+and is idempotent by certificate thumbprint — re-running it after the
+certificate already exists on the blueprint is a no-op. Re-running
+`Initialize-W365BlueprintCertificate.ps1` without `-Rotate` reuses the existing
+certificate; pass `-Rotate` to issue a new one (and re-run the registration
+step so Entra trusts the new public key).
+
 `PoolIdOrUrl` accepts either a raw pool GUID or the Intune URL that contains
 `poolId/<guid>`, including links copied from the admin center.
 

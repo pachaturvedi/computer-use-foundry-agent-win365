@@ -246,6 +246,23 @@ try {
         -HostedRuntimeIdentityObjectId $agentIdentityId `
         -AuthorizeHostedRuntimeFederation:$true | Out-Null
 
+    $certificateValues = [ordered]@{} + $activationValues
+    $certificateValues.W365_BLUEPRINT_CREDENTIAL_MODE = 'key_vault_certificate'
+    $certificateActivation = Assert-W365ActivationPrerequisites `
+        -EnvironmentValues $certificateValues `
+        -ExpectedAgentIdentityId $agentIdentityId
+    if ($certificateActivation.CredentialMode -ne 'key_vault_certificate' -or
+        $certificateActivation.KeyVaultName -ne 'sample-w365-vault') {
+        throw 'W365 activation prerequisite validation did not return the certificate credential configuration.'
+    }
+    Assert-Throws {
+        $invalid = [ordered]@{} + $certificateValues
+        $invalid.Remove('W365_KEY_VAULT_NAME')
+        Assert-W365ActivationPrerequisites `
+            -EnvironmentValues $invalid `
+            -ExpectedAgentIdentityId $agentIdentityId | Out-Null
+    } 'W365 activation accepted key_vault_certificate mode without the shared Key Vault.'
+
     $savedStateBehavior = $env:TEST_W365_STATE_BEHAVIOR
     function az {
         $arguments = @($args)
@@ -279,6 +296,13 @@ try {
                 return ''
             }
             return 'https://sample-w365-vault.vault.azure.net/secrets/w365-blueprint-client-secret/version'
+        }
+        if ($arguments[0] -eq 'keyvault' -and $arguments[1] -eq 'certificate') {
+            if ($env:TEST_W365_STATE_BEHAVIOR -eq 'missing-certificate') {
+                $global:LASTEXITCODE = 1
+                return ''
+            }
+            return 'https://sample-w365-vault.vault.azure.net/certificates/w365-blueprint-certificate/version'
         }
         throw "Unexpected state-read Azure CLI call: $($arguments -join ' ')"
     }
@@ -323,6 +347,16 @@ try {
                 -SubscriptionId '11111111-1111-1111-1111-111111111111' `
                 -KeyVaultName 'sample-w365-vault'
         } 'W365 blueprint-secret readiness accepted a missing Key Vault secret.'
+        $env:TEST_W365_STATE_BEHAVIOR = 'ready'
+        Assert-W365BlueprintCertificateReady `
+            -SubscriptionId '11111111-1111-1111-1111-111111111111' `
+            -KeyVaultName 'sample-w365-vault'
+        $env:TEST_W365_STATE_BEHAVIOR = 'missing-certificate'
+        Assert-Throws {
+            Assert-W365BlueprintCertificateReady `
+                -SubscriptionId '11111111-1111-1111-1111-111111111111' `
+                -KeyVaultName 'sample-w365-vault'
+        } 'W365 blueprint-certificate readiness accepted a missing Key Vault certificate.'
     }
     finally {
         [Environment]::SetEnvironmentVariable(

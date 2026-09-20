@@ -82,15 +82,38 @@ public sealed class SettingsTests
         Config(values).Validate(viewerMode: true);
     }
 
-    [Theory]
-    [InlineData("key_vault_certificate")]
-    [InlineData("unknown")]
-    public void UnimplementedCredentialModesFailClosed(string mode)
+    [Fact]
+    public void UnknownCredentialModeFailsClosed()
     {
         var values = EnabledValues();
-        values["W365_BLUEPRINT_CREDENTIAL_MODE"] = mode;
+        values["W365_BLUEPRINT_CREDENTIAL_MODE"] = "unknown";
         var error = Assert.Throws<InvalidOperationException>(() => Config(values).Validate());
-        Assert.Contains("fails closed", error.Message);
+        Assert.Contains("must be managed_identity_federation, client_secret, or key_vault_certificate", error.Message);
+    }
+
+    [Fact]
+    public void KeyVaultCertificateModeRequiresKeyVaultNameForTheHostedAgent()
+    {
+        var values = EnabledValues();
+        values["W365_BLUEPRINT_CREDENTIAL_MODE"] = "key_vault_certificate";
+        Assert.Throws<InvalidOperationException>(() => Config(values).Validate());
+
+        values["W365_KEY_VAULT_NAME"] = "sample-w365-vault";
+        Config(values).Validate();
+    }
+
+    [Fact]
+    public void KeyVaultCertificateModeIsAgentOnly()
+    {
+        var values = EnabledValues();
+        values["W365_BLUEPRINT_CREDENTIAL_MODE"] = "key_vault_certificate";
+        values["W365_KEY_VAULT_NAME"] = "sample-w365-vault";
+        values["SCREENSHARE_APP_URL"] = "https://screenshare.example.com";
+        values["AZURE_CLIENT_ID"] = "99999999-9999-9999-9999-999999999999";
+        values["VIEWER_LIVE_ENABLED"] = "true";
+
+        var error = Assert.Throws<InvalidOperationException>(() => Config(values).Validate(viewerMode: true));
+        Assert.Contains("agent-only", error.Message);
     }
 
     [Fact]

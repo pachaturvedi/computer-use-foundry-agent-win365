@@ -584,11 +584,30 @@ pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
    -UseDeviceCode
 ```
 
+`key_vault_certificate` mode uses a self-signed, non-exportable Key Vault
+certificate instead of a shared secret; see
+[W365 setup](W365-SETUP.md#staged-azd-flow) for the certificate
+initialization/registration steps that must run before
+`Invoke-W365SetupFlow.ps1`:
+
+```powershell
+azd env set W365_BLUEPRINT_CREDENTIAL_MODE key_vault_certificate `
+    --environment "<azd-environment-name>"
+pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
+   -Environment "<azd-environment-name>" `
+   -TenantId "<Foundry-and-W365-tenant-guid>" `
+   -PoolIdOrUrl "<existing-pool-guid-or-intune-url>" `
+   -BillingConfirmed `
+   -ConfirmResourceChanges `
+   -UseDeviceCode
+```
+
 Before any W365 or Entra mutation, the wrapper verifies that Blob state exists,
 the expected `desktop-state` container exists, the discovered Foundry agent has
 container-scoped `Storage Blob Data Contributor`, operator binding values are
-present, the credential mode is explicit, and client-secret mode has the
-required Key Vault secret. Managed-identity mode additionally requires explicit
+present, the credential mode is explicit, and client-secret and
+key_vault_certificate modes each have their required Key Vault credential.
+Managed-identity mode additionally requires explicit
 federation authorization for the exact discovered agent principal. The wrapper
 then persists the returned IDs and ownership manifest and redeploys the same
 agent name.
@@ -600,14 +619,14 @@ Set non-secret values using `azd env set KEY VALUE`:
 | `W365_TENANT_ID`, `W365_BLUEPRINT_ID` | Setup output; Foundry/W365/viewer Azure tenant and blueprint app ID. |
 | `W365_AGENT_ID`, `W365_AGENT_OBJECT_ID`, `W365_AGENT_USER_ID` | Setup output; agent app ID, agent object ID, agent-user object ID. |
 | `SESSION_BLOB_URI` | `https://<storage>.blob.core.windows.net/desktop-state/slot.json` |
-| `W365_KEY_VAULT_NAME` | State-layer output naming the shared vault for the blueprint secret, optional viewer OIDC secret, and future certificate credential. The hosted agent uses this (plus its own RBAC-granted identity) to fetch `w365-blueprint-client-secret` directly; it never receives the raw secret as an environment variable. |
+| `W365_KEY_VAULT_NAME` | State-layer output naming the shared vault for the blueprint secret or certificate, and the optional viewer OIDC secret. The hosted agent uses this (plus its own RBAC-granted identity) to fetch `w365-blueprint-client-secret` or sign with `w365-blueprint-certificate` directly; it never receives raw secret/private-key material as an environment variable. |
 | `OPERATOR_TENANT_ID`, `OPERATOR_OBJECT_ID` | Exact human operator's tenant/object IDs. |
 | `HOSTED_ALLOWED_USER_ID` | **Foundry agent only:** platform user partition or `sha256:` fingerprint; see binding below. Not a viewer parameter. |
 | `VIEWER_PUBLIC_URL` | Optional for an agent-only deployment. When omitted, desktop execution remains available but live-view/take-control links are returned as unavailable. Required for the viewer itself. |
 | `SCREENSHARE_APP_URL` | **Viewer only:** W365-hosted view-only application origin supplied by W365 onboarding. It is required only when `VIEWER_LIVE_ENABLED=true`. |
 | `SCREENSHARE_SDK_URL`, `SCREENSHARE_FRAME_ORIGINS` | **Viewer only:** approved W365 SDK URL and exact space-separated frame origins. |
 | `VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID` | Optional full ID of the approved existing ACA managed environment. Empty means create one. |
-| `W365_BLUEPRINT_CREDENTIAL_MODE` | Explicitly `client_secret` for the proven E2E demo or `managed_identity_federation` for the separately approved FIC path. There is no fallback. |
+| `W365_BLUEPRINT_CREDENTIAL_MODE` | Explicitly `client_secret` for the proven E2E demo, `managed_identity_federation` for the separately approved FIC path, or `key_vault_certificate` for a self-signed non-exportable Key Vault certificate. There is no fallback. |
 | `VIEWER_LIVE_ENABLED` | Explicit viewer phase switch. Leave `false` for bootstrap; set `true` only after OIDC, state, W365, SDK/frame-origin values, and the Key Vault secret are ready. |
 | `VIEWER_LOG_ANALYTICS_ENABLED` | Optional for a newly created ACA environment; defaults to `false`. Ignored when an existing environment resource ID is supplied. |
 | `W365_ENABLED` | Internal phase switch. Bootstrap sets it to `false`; `Setup-W365.ps1` persists `true` only after phase-2 prerequisites are ready. |

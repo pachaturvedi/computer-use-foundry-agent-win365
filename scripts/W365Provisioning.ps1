@@ -487,13 +487,13 @@ function Assert-W365ActivationPrerequisites {
     }
 
     $credentialMode = [string]$EnvironmentValues['W365_BLUEPRINT_CREDENTIAL_MODE']
-    if ($credentialMode -notin @('client_secret', 'managed_identity_federation')) {
-        throw 'W365_BLUEPRINT_CREDENTIAL_MODE must be explicitly client_secret or managed_identity_federation before W365 setup.'
+    if ($credentialMode -notin @('client_secret', 'managed_identity_federation', 'key_vault_certificate')) {
+        throw 'W365_BLUEPRINT_CREDENTIAL_MODE must be explicitly client_secret, managed_identity_federation, or key_vault_certificate before W365 setup.'
     }
-    if ($credentialMode -eq 'client_secret' -and
+    if (($credentialMode -eq 'client_secret' -or $credentialMode -eq 'key_vault_certificate') -and
         (!$EnvironmentValues.Contains('W365_KEY_VAULT_NAME') -or
          [string]::IsNullOrWhiteSpace([string]$EnvironmentValues['W365_KEY_VAULT_NAME']))) {
-        throw 'client_secret mode requires W365_KEY_VAULT_NAME and a securely stored blueprint secret before W365 setup.'
+        throw "$credentialMode mode requires W365_KEY_VAULT_NAME and a securely stored blueprint credential before W365 setup."
     }
     if ($credentialMode -eq 'managed_identity_federation' -and
         (!$AuthorizeHostedRuntimeFederation -or
@@ -607,6 +607,24 @@ function Assert-W365BlueprintSecretReady {
         '--output', 'tsv')
     if ([string]::IsNullOrWhiteSpace($secretId)) {
         throw "Key Vault '$KeyVaultName' must contain w365-blueprint-client-secret before W365 setup mutates resources."
+    }
+}
+
+function Assert-W365BlueprintCertificateReady {
+    param(
+        [Parameter(Mandatory)][guid]$SubscriptionId,
+        [Parameter(Mandatory)][string]$KeyVaultName
+    )
+
+    $certificateId = Invoke-W365AzureCliRead -Arguments @(
+        'keyvault', 'certificate', 'show',
+        '--subscription', $SubscriptionId.ToString(),
+        '--vault-name', $KeyVaultName,
+        '--name', 'w365-blueprint-certificate',
+        '--query', 'id',
+        '--output', 'tsv')
+    if ([string]::IsNullOrWhiteSpace($certificateId)) {
+        throw "Key Vault '$KeyVaultName' must contain w365-blueprint-certificate before W365 setup mutates resources."
     }
 }
 

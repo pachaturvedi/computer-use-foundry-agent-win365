@@ -29,13 +29,25 @@ internal static class Win365ServiceCollectionExtensions
             builder.Services.AddSingleton<IBlueprintSecretResolver>(services =>
                 new KeyVaultBlueprintSecretResolver(settings, services.GetRequiredService<TokenCredential>()));
         }
+        if (!viewerMode && settings.BlueprintCredentialMode == "key_vault_certificate")
+        {
+            // key_vault_certificate mode is agent-only (see Settings.Validate); the viewer never
+            // registers this provider. The private key never leaves Key Vault: assertions are
+            // signed remotely (see KeyVaultBlueprintCertificateAssertionProvider).
+            builder.Services.AddSingleton<IBlueprintCertificateAssertionProvider>(services =>
+                new KeyVaultBlueprintCertificateAssertionProvider(
+                    settings,
+                    services.GetRequiredService<TokenCredential>(),
+                    services.GetRequiredService<HttpClient>()));
+        }
         builder.Services.AddSingleton<IBlueprintTokenProvider>(services =>
             new BlueprintTokenProvider(
                 services.GetRequiredService<HttpClient>(),
                 settings,
                 viewerMode,
                 services.GetRequiredService<ILogger<BlueprintTokenProvider>>(),
-                services.GetService<IBlueprintSecretResolver>()));
+                services.GetService<IBlueprintSecretResolver>(),
+                services.GetService<IBlueprintCertificateAssertionProvider>()));
         builder.Services.AddSingleton<IAgentUserTokenProvider, AgentUserTokenProvider>();
         builder.Services.AddSingleton<ISessionStore>(services =>
             new BlobSessionStore(
