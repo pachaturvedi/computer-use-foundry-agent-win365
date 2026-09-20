@@ -14,6 +14,7 @@ function azd {
     $global:LASTEXITCODE = 0
     if ($arguments[0] -eq 'env' -and $arguments[1] -eq 'get-value') {
         switch ($arguments[2]) {
+            'AZURE_ENV_NAME' { return 'viewer-rbac-test' }
             'AZURE_SUBSCRIPTION_ID' { return '11111111-1111-1111-1111-111111111111' }
             'W365_KEY_VAULT_NAME' { return 'single-w365-vault' }
             'VIEWER_IDENTITY_PRINCIPAL_ID' { return '22222222-2222-2222-2222-222222222222' }
@@ -44,7 +45,7 @@ function az {
             PrincipalId = $arguments[$principalIndex + 1]
             PrincipalType = $arguments[$typeIndex + 1]
         })
-        return
+        return "/subscriptions/11111111-1111-1111-1111-111111111111/providers/Microsoft.Authorization/roleAssignments/$($global:viewerRoleCreates.Count)"
     }
     throw "Unexpected az call: $($arguments -join ' ')"
 }
@@ -71,8 +72,19 @@ try {
         $global:viewerRoleCreates.Role -contains 'Contributor') {
         throw 'The viewer Key Vault flow assigned an overprivileged role.'
     }
+
+    $manifestPath = Join-Path $root '.azure\viewer-rbac-test\viewer-ownership.json'
+    if (!(Test-Path -LiteralPath $manifestPath)) {
+        throw 'The viewer Key Vault flow did not record role ownership.'
+    }
+    $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+    if ($manifest.keyVaultRoleAssignments.operatorSecretsOfficer.disposition -ne 'created' -or
+        $manifest.keyVaultRoleAssignments.viewerSecretsUser.disposition -ne 'created') {
+        throw 'The viewer Key Vault flow did not mark created RBAC assignments as owned.'
+    }
 }
 finally {
+    Remove-Item -LiteralPath (Join-Path $root '.azure\viewer-rbac-test') -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Variable -Name viewerRoleCreates -Scope Global -ErrorAction SilentlyContinue
 }
 

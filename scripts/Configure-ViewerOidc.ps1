@@ -13,6 +13,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 . (Join-Path $PSScriptRoot 'ViewerConfiguration.ps1')
+. (Join-Path $PSScriptRoot 'W365OwnershipManifest.ps1')
 Initialize-SampleScriptLogging -ScriptName $MyInvocation.MyCommand.Name -Parameters $PSBoundParameters
 
 foreach ($command in @('az', 'azd')) {
@@ -42,7 +43,23 @@ function Get-AzdValue {
     return $value
 }
 
+function Get-ManifestValue {
+    param(
+        $Object,
+        [Parameter(Mandatory)][string]$Name
+    )
+
+    if ($null -eq $Object -or !($Object -is [System.Collections.IDictionary]) -or !$Object.Contains($Name)) {
+        return $null
+    }
+
+    return $Object[$Name]
+}
+
 $environmentName = Get-AzdValue 'AZURE_ENV_NAME'
+$repositoryRoot = Split-Path $PSScriptRoot
+$manifestPath = Get-ViewerOwnershipManifestPath -RepositoryRoot $repositoryRoot -EnvironmentName $environmentName
+$viewerManifest = Read-W365OwnershipManifest -Path $manifestPath -AllowMissing
 $tenantId = [guid](Get-AzdValue 'AZURE_TENANT_ID')
 $viewerPublicUrl = Get-AzdValue 'VIEWER_PUBLIC_URL'
 $vaultName = Get-AzdValue 'W365_KEY_VAULT_NAME' -AllowMissing
@@ -105,6 +122,7 @@ function Invoke-ViewerGraph {
 
 $configuredClientId = Get-AzdValue 'VIEWER_CLIENT_ID' -AllowMissing
 $application = $null
+$applicationCreated = $false
 Write-SampleVerbose -Component 'viewer-oidc' -Message 'Resolving the viewer OIDC application.'
 Write-SampleDebug -Component 'viewer-oidc' -Message "Configured client ID exists: $(![string]::IsNullOrWhiteSpace($configuredClientId))."
 if (![string]::IsNullOrWhiteSpace($configuredClientId)) {
@@ -143,6 +161,7 @@ if ($null -eq $application) {
             }
         }
     }
+    $applicationCreated = $true
 }
 else {
     Write-SampleVerbose -Component 'viewer-oidc' -Message "Reconciling application '$($application.appId)' and its exact redirect URI."
@@ -161,12 +180,19 @@ else {
 
 $spFilter = [uri]::EscapeDataString("appId eq '$($application.appId)'")
 $servicePrincipals = @((Invoke-ViewerGraph GET "v1.0/servicePrincipals?`$filter=$spFilter&`$select=id,appId").value)
+$servicePrincipalCreated = $false
+$servicePrincipalId = ''
 if ($servicePrincipals.Count -gt 1) {
     throw "Multiple service principals exist for viewer app '$($application.appId)'."
 }
 if ($servicePrincipals.Count -eq 0) {
     Write-SampleVerbose -Component 'viewer-oidc' -Message 'Creating the application service principal.'
-    Invoke-ViewerGraph POST 'v1.0/servicePrincipals' @{ appId = $application.appId } | Out-Null
+    $servicePrincipal = Invoke-ViewerGraph POST 'v1.0/servicePrincipals' @{ appId = $application.appId }
+    $servicePrincipalId = [string]$servicePrincipal.id
+    $servicePrincipalCreated = $true
+}
+else {
+    $servicePrincipalId = [string]$servicePrincipals[0].id
 }
 
 if ($OperatorObjectId -eq [guid]::Empty) {
@@ -194,6 +220,7 @@ $rotationRequired = $null -eq $credential -or
     [DateTimeOffset]$credential.endDateTime -le [DateTimeOffset]::UtcNow.AddDays($RotateBeforeDays)
 
 $credentialKeyId = $storedKeyId
+$credentialCreated = $false
 if ($rotationRequired) {
     Write-SampleVerbose -Component 'viewer-oidc' -Message 'Creating a short-lived OIDC credential and storing it directly in Key Vault.'
     Write-SampleDebug -Component 'viewer-oidc' -Message "CredentialLifetimeDays=$CredentialLifetimeDays; RotateBeforeDays=$RotateBeforeDays."
@@ -258,6 +285,7 @@ if ($rotationRequired) {
             }
         }
         $credentialKeyId = [string]$newCredential.keyId
+        $credentialCreated = $true
     }
     catch {
         if ($null -ne $newCredential -and
@@ -297,24 +325,63 @@ foreach ($entry in $environmentValues.GetEnumerator()) {
     }
 }
 
-$manifestPath = Join-Path (Split-Path $PSScriptRoot) ".azure\$environmentName\viewer-ownership.json"
 New-Item -ItemType Directory -Path (Split-Path $manifestPath) -Force | Out-Null
-[ordered]@{
-    schemaVersion = 1
-    environmentName = $environmentName
-    application = [ordered]@{
-        objectId = [string]$application.id
-        appId = [string]$application.appId
-        displayName = [string]$application.displayName
-        redirectUri = $redirectUri
-        credentialKeyId = $credentialKeyId
+if ($null -eq $viewerManifest) {
+    $viewerManifest = [ordered]@{}
+}
+$previousApplication = Get-ManifestValue -Object $viewerManifest -Name 'application'
+$previousCredential = Get-ManifestValue -Object $previousApplication -Name 'credential'
+$previousServicePrincipal = Get-ManifestValue -Object $previousApplication -Name 'servicePrincipal'
+
+$applicationDisposition = if ($applicationCreated -or
+    ([string](Get-ManifestValue -Object $previousApplication -Name 'objectId') -eq [string]$application.id -and
+        [string](Get-ManifestValue -Object $previousApplication -Name 'disposition') -eq 'created')) {
+    'created'
+}
+else {
+    'reused'
+}
+$servicePrincipalDisposition = if ($servicePrincipalCreated -or
+    ([string](Get-ManifestValue -Object $previousServicePrincipal -Name 'objectId') -eq $servicePrincipalId -and
+        [string](Get-ManifestValue -Object $previousServicePrincipal -Name 'disposition') -eq 'created')) {
+    'created'
+}
+else {
+    'reused'
+}
+$credentialDisposition = if ($credentialCreated -or
+    ([string](Get-ManifestValue -Object $previousCredential -Name 'keyId') -eq $credentialKeyId -and
+        [string](Get-ManifestValue -Object $previousCredential -Name 'disposition') -eq 'created')) {
+    'created'
+}
+else {
+    'reused'
+}
+
+$viewerManifest['schemaVersion'] = 1
+$viewerManifest['environmentName'] = $environmentName
+$viewerManifest['application'] = [ordered]@{
+    objectId = [string]$application.id
+    appId = [string]$application.appId
+    displayName = [string]$application.displayName
+    disposition = $applicationDisposition
+    redirectUri = $redirectUri
+    credentialKeyId = $credentialKeyId
+    credential = [ordered]@{
+        keyId = $credentialKeyId
+        disposition = $credentialDisposition
     }
-    operator = [ordered]@{
-        tenantId = $tenantId.ToString()
-        objectId = $OperatorObjectId.ToString()
+    servicePrincipal = [ordered]@{
+        objectId = $servicePrincipalId
+        disposition = $servicePrincipalDisposition
     }
-    updatedAtUtc = [DateTimeOffset]::UtcNow.ToString('o')
-} | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $manifestPath
+}
+$viewerManifest['operator'] = [ordered]@{
+    tenantId = $tenantId.ToString()
+    objectId = $OperatorObjectId.ToString()
+}
+$viewerManifest['updatedAtUtc'] = [DateTimeOffset]::UtcNow.ToString('o')
+Write-W365OwnershipManifest -Path $manifestPath -Manifest $viewerManifest
 
 Write-Host "Viewer OIDC application '$($application.appId)' is configured for $redirectUri."
 Write-Host "The OIDC credential is stored as '$secretName' in Key Vault '$vaultName'."

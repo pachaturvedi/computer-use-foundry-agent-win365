@@ -816,8 +816,11 @@ deletion does not cancel W365 billing.
 assignment first, then agent user, then sample-created federated credentials,
 then created permission grants or restored reused grant scopes, then
 sample-created inheritance entries, then blueprint `requiredResourceAccess`,
-and finally a sample-created W365 pool. Only after that succeeds does `azd down`
-continue with Azure resource deletion.
+then a sample-created W365 pool, followed by any viewer OIDC credential created
+on a reused app, a sample-created viewer service principal, a sample-created
+viewer application, and finally the sample-created Key Vault RBAC assignments
+recorded during viewer live activation. Only after that succeeds does
+`azd down` continue with Azure resource deletion.
 
 The cleanup hook fails closed when it cannot prove ownership. If W365 state is
 configured but no ownership manifest exists, `azd down` is blocked. The same
@@ -826,8 +829,14 @@ stops before any mutation unless you explicitly set
 `ALLOW_EXISTING_FOUNDRY_CLEANUP=true` or pass
 `-AllowExistingProjectCleanup` to the script after confirming the target
 project resource group is disposable. Cleanup also verifies that reused shared
-grants and reused inheritance entries are still present before it deletes any
-sample-owned W365 or Entra objects.
+grants and reused inheritance entries are still
+present before it deletes any sample-owned W365 or Entra objects.
+
+Viewer-only cleanup is stricter. When `viewer-ownership.json` exists without a
+matching W365 ownership manifest, the script requires
+`W365_CLEANUP_CONFIRMED=true` before it removes viewer OIDC or Key Vault RBAC
+artifacts. `-Confirm:$false` alone is not treated as sufficient approval for
+that viewer-only path.
 
 Do not run `azd down` against an environment bound to a shared or pre-existing
 Foundry project unless you have deliberately reviewed that override. Even with
