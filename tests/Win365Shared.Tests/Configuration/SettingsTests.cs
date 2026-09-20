@@ -58,17 +58,27 @@ public sealed class SettingsTests
         Assert.Throws<InvalidOperationException>(() => Config(new() { [key] = "obsolete" }).Validate());
 
     [Fact]
-    public void ClientSecretModeRequiresAnExplicitSecret()
+    public void ClientSecretModeRequiresKeyVaultNameForTheHostedAgent()
     {
         var values = EnabledValues();
         values["W365_BLUEPRINT_CREDENTIAL_MODE"] = "client_secret";
         Assert.Throws<InvalidOperationException>(() => Config(values).Validate());
 
-        values["W365_CLIENT_SECRET"] = "temporary-secret";
+        values["W365_KEY_VAULT_NAME"] = "sample-w365-vault";
         Config(values).Validate();
+    }
+
+    [Fact]
+    public void ClientSecretModeRequiresAnExplicitSecretForTheViewer()
+    {
+        var values = EnabledValues();
+        values["W365_BLUEPRINT_CREDENTIAL_MODE"] = "client_secret";
         values["SCREENSHARE_APP_URL"] = "https://screenshare.example.com";
         values["AZURE_CLIENT_ID"] = "99999999-9999-9999-9999-999999999999";
         values["VIEWER_LIVE_ENABLED"] = "true";
+        Assert.Throws<InvalidOperationException>(() => Config(values).Validate(viewerMode: true));
+
+        values["W365_CLIENT_SECRET"] = "temporary-secret";
         Config(values).Validate(viewerMode: true);
     }
 

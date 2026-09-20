@@ -240,12 +240,14 @@ restoring).
 Generic templates often use `azd up`, but this sample deliberately uses the
 `Invoke-AzdDeployment.ps1` wrapper: the project and model must already exist,
 and phase 1 must not provision an unconfirmed model SKU or W365 capacity. In
-`client_secret` mode, do **not** call `azd deploy win365-desktop-agent`
-directly. The wrapper retrieves the blueprint credential from Key Vault,
-temporarily supplies it to azd for the immutable hosted-agent deployment, and
-clears it afterward. A direct deploy expands an empty `W365_CLIENT_SECRET` and
-can publish an active version that fails startup with `Configure
-W365_CLIENT_SECRET.` Do not run `azd provision` or `azd up` unless you have
+`client_secret` mode, the hosted agent fetches the blueprint client secret
+directly from Key Vault at startup using its own runtime identity (see
+"Blueprint client secret delivery" in `docs/AUTHENTICATION.md`), so a direct
+`azd deploy win365-desktop-agent` or `azd up` no longer risks an empty
+`W365_CLIENT_SECRET` crash. Still prefer the wrapper: it also confirms the
+`w365-blueprint-client-secret` secret and the agent's Key Vault RBAC exist
+before deployment, and runs `azd ai agent doctor` plus an optional smoke
+invocation afterward. Do not run `azd provision` or `azd up` unless you have
 intentionally added and reviewed complete infrastructure declarations for your
 own fork, or you are following the dedicated greenfield path above.
 
@@ -471,13 +473,16 @@ Prepare private shared Blob state before enabling; live runtime requires Blob.
 `FileSessionStore` is an offline-test helper, not a local live backend.
 Grant the correct deployed
 Foundry identity model/project invocation under current Foundry RBAC guidance
-and Storage Blob Data Contributor on the state container. Ordinary Azure
-model/state credentials remain separate from the W365 flow. **The agent does
-not need Key Vault certificate access.** Viewer Bicep grants roles only to its
-own UAMI, not to the Foundry principal. Verify the actual Azure principal used
-for model/state access rather than substituting an app/client ID in RBAC.
-Role assignments need appropriately scoped authorization (for example Role
-Based Access Control Administrator); do not blindly grant Owner.
+and Storage Blob Data Contributor on the state container. In `client_secret`
+mode the agent's principal is also granted Key Vault Secrets User (read-only)
+on the shared vault so it can fetch `w365-blueprint-client-secret` directly
+(see `infra/state/keyvault.bicep`); **it still does not need Key Vault
+certificate access.** Ordinary Azure model/state credentials remain separate
+from the W365 flow. Viewer Bicep grants roles only to its own UAMI, not to the
+Foundry principal. Verify the actual Azure principal used for model/state
+access rather than substituting an app/client ID in RBAC. Role assignments
+need appropriately scoped authorization (for example Role Based Access Control
+Administrator); do not blindly grant Owner.
 
 The default `client_secret` E2E path is not self-contained. An authorized Entra
 administrator must create and approve a short-lived credential for the existing
@@ -595,7 +600,7 @@ Set non-secret values using `azd env set KEY VALUE`:
 | `W365_TENANT_ID`, `W365_BLUEPRINT_ID` | Setup output; Foundry/W365/viewer Azure tenant and blueprint app ID. |
 | `W365_AGENT_ID`, `W365_AGENT_OBJECT_ID`, `W365_AGENT_USER_ID` | Setup output; agent app ID, agent object ID, agent-user object ID. |
 | `SESSION_BLOB_URI` | `https://<storage>.blob.core.windows.net/desktop-state/slot.json` |
-| `W365_KEY_VAULT_NAME` | State-layer output naming the shared vault for the blueprint secret, optional viewer OIDC secret, and future certificate credential. |
+| `W365_KEY_VAULT_NAME` | State-layer output naming the shared vault for the blueprint secret, optional viewer OIDC secret, and future certificate credential. The hosted agent uses this (plus its own RBAC-granted identity) to fetch `w365-blueprint-client-secret` directly; it never receives the raw secret as an environment variable. |
 | `OPERATOR_TENANT_ID`, `OPERATOR_OBJECT_ID` | Exact human operator's tenant/object IDs. |
 | `HOSTED_ALLOWED_USER_ID` | **Foundry agent only:** platform user partition or `sha256:` fingerprint; see binding below. Not a viewer parameter. |
 | `VIEWER_PUBLIC_URL` | Optional for an agent-only deployment. When omitted, desktop execution remains available but live-view/take-control links are returned as unavailable. Required for the viewer itself. |
@@ -750,18 +755,15 @@ container as an independent public ACA endpoint with spoofable headers.
 
 > **Always redeploy `win365-desktop-agent` through
 > `scripts/Invoke-AzdDeployment.ps1 -Mode DeployAgent -Environment <env>
-> -ConfirmResourceChanges`. Never run `azd deploy win365-desktop-agent` or
-> `azd up` directly** when `W365_BLUEPRINT_CREDENTIAL_MODE=client_secret`. Direct
-> invocations publish with an **empty `W365_CLIENT_SECRET`** — azd's local
-> environment only ever holds a placeholder for this value, since the real
-> secret lives in Key Vault — and the agent crashes immediately at startup with
-> `System.InvalidOperationException: Configure W365_CLIENT_SECRET.` The wrapper
-> script's `Set-W365ClientSecretForDeployment` step retrieves the secret from
-> Key Vault, injects it into the azd environment only for the duration of the
-> deploy, and clears it again afterward. This applies to *any* operation that
-> packages/publishes the agent, including debugging or verifying a packaging
-> fix in isolation — use `-Mode DeployAgent`, not a raw `azd` command, even for
-> a quick redeploy.
+> -ConfirmResourceChanges`.** In `client_secret` mode the hosted agent fetches
+> its own blueprint client secret directly from Key Vault at startup using its
+> runtime identity (see "Blueprint client secret delivery" in
+> `docs/AUTHENTICATION.md`), so a direct `azd deploy win365-desktop-agent` or
+> `azd up` no longer crashes with `Configure W365_CLIENT_SECRET.` Still prefer
+> the wrapper: it confirms `w365-blueprint-client-secret` exists and the
+> agent's Key Vault RBAC is in place before packaging/publishing, then runs
+> `azd ai agent doctor` and an optional smoke invocation afterward — checks a
+> raw `azd` command skips even for a quick redeploy.
 
 Keep one active revision/replica per component. Stop/drain tasks before
 deployment or identity changes. Do not clear a slot to make a deployment appear

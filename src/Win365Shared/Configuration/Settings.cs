@@ -190,7 +190,11 @@ public sealed class Settings(IConfiguration config)
         }
         if (BlueprintCredentialMode == "client_secret")
         {
-            _ = Required("W365_CLIENT_SECRET");
+            // The viewer (Container App) receives the secret through its own native Key Vault
+            // secret reference and still requires the plain W365_CLIENT_SECRET value. The hosted
+            // agent instead fetches the same secret directly from Key Vault using its own runtime
+            // identity (see KeyVaultBlueprintSecretResolver), so it only needs the vault name.
+            _ = Required(viewerMode ? "W365_CLIENT_SECRET" : "W365_KEY_VAULT_NAME");
         }
         if (viewerMode)
         {

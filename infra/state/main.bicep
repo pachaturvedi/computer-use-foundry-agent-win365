@@ -34,6 +34,7 @@ module keyVault './keyvault.bicep' = {
     location: location
     resourcePrefix: resourcePrefix
     tags: union(tags, { component: 'credentials' })
+    agentPrincipalId: agentPrincipalId
   }
 }
 

@@ -11,7 +11,7 @@ applyTo: "src/Win365Shared/Identity/**/*.cs,src/Win365Shared/Configuration/**/*.
   - `client_secret`
   - `key_vault_certificate` only after its full implementation
 - Never implement automatic fallback between modes. A failed mode returns a stage-aware error and stops.
-- `client_secret` requires `W365_CLIENT_SECRET`; never print, hash for display, serialize into documentation, or commit its value.
+- `client_secret` requires `W365_CLIENT_SECRET` (viewer) or `W365_KEY_VAULT_NAME` (hosted agent, which fetches the secret directly from Key Vault using its own identity instead of an environment variable); never print, hash for display, serialize into documentation, or commit the resolved secret value.
 - Managed identity must use the intended runtime identity. Do not use Azure CLI, developer credentials, or an interactive user as a W365 fallback.
 - Certificate mode must use Key Vault and managed identity, register only public certificate material with the blueprint, and keep private key material out of source and local files.
 - Preserve `fmi_path=W365_AGENT_ID` for blueprint exchanges.

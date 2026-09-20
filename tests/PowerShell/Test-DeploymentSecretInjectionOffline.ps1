@@ -11,14 +11,22 @@ $script = Get-Content -LiteralPath (Join-Path $root 'scripts\Invoke-AzdDeploymen
 
 foreach ($required in @(
     'function Get-W365KeyVaultName {',
-    '& $azd.Path env set W365_CLIENT_SECRET $secret',
-    '$script:w365ClientSecretInjected = $true',
-    '& $azd.Path env set W365_CLIENT_SECRET ''''',
+    'function Assert-W365AgentKeyVaultAccessConfigured {',
     "'--version', `$agentVersion",
     "'--new-session'"
 )) {
     if ($script -notmatch [regex]::Escape($required)) {
-        throw "Deployment wrapper is missing required W365 secret or version-pinning behavior '$required'."
+        throw "Deployment wrapper is missing required W365 Key Vault access or version-pinning behavior '$required'."
+    }
+}
+
+foreach ($retired in @(
+    'Set-W365ClientSecretForDeployment',
+    '$env:W365_CLIENT_SECRET =',
+    'w365ClientSecretInjected'
+)) {
+    if ($script -match [regex]::Escape($retired)) {
+        throw "Deployment wrapper must not inject W365_CLIENT_SECRET ('$retired' found); the hosted agent fetches it directly from Key Vault using its own identity."
     }
 }
 
@@ -28,4 +36,4 @@ if ($optionalValueStart -lt 0 -or $vaultHelperStart -lt 0 -or $vaultHelperStart 
     throw 'W365 Key Vault name resolution must be a top-level helper after optional azd value resolution.'
 }
 
-Write-Output 'Offline deployment secret injection: temporary azd secret handoff and version-pinned smoke invocation are present.'
+Write-Output 'Offline deployment secret injection: W365_CLIENT_SECRET is no longer injected by the wrapper, Key Vault access is confirmed pre-deploy, and version-pinned smoke invocation is present.'

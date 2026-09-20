@@ -177,8 +177,8 @@ try {
         $node -is [Management.Automation.Language.FunctionDefinitionAst]
     }, $true))
     $keyVaultFunction = $functions | Where-Object Name -eq 'Get-W365KeyVaultName' | Select-Object -First 1
-    $secretFunction = $functions | Where-Object Name -eq 'Set-W365ClientSecretForDeployment' | Select-Object -First 1
-    if ($null -eq $keyVaultFunction -or $null -eq $secretFunction) {
+    $accessCheckFunction = $functions | Where-Object Name -eq 'Assert-W365AgentKeyVaultAccessConfigured' | Select-Object -First 1
+    if ($null -eq $keyVaultFunction -or $null -eq $accessCheckFunction) {
         throw 'Blueprint-secret deployment helpers are missing or scoped inside another function.'
     }
     $ancestor = $keyVaultFunction.Parent
@@ -188,7 +188,11 @@ try {
         }
         $ancestor = $ancestor.Parent
     }
-    $secretRegression = [scriptblock]::Create(@"
+    if ($deploymentScript -match [regex]::Escape('Set-W365ClientSecretForDeployment') -or
+        $deploymentScript -match [regex]::Escape('$env:W365_CLIENT_SECRET =')) {
+        throw 'The deployment wrapper must not inject W365_CLIENT_SECRET; the hosted agent now fetches it directly from Key Vault using its own identity.'
+    }
+    $accessRegression = [scriptblock]::Create(@"
 function Get-AzdOptionalValue {
     param([string]`$Name)
     switch (`$Name) {
@@ -202,23 +206,15 @@ function Get-AzdValue { param([string]`$Name) '11111111-1111-1111-1111-111111111
 function Write-DeploymentEvent { param([string]`$Kind, [string]`$Message) }
 function az {
     `$global:LASTEXITCODE = 0
-    'offline-blueprint-secret'
-}
-function azd {
-    `$global:LASTEXITCODE = 0
+    'ok'
 }
 `$azd = [pscustomobject]@{ Path = 'azd' }
 `$environmentName = 'sample-dev'
 $($keyVaultFunction.Extent.Text)
-$($secretFunction.Extent.Text)
-`$env:W365_CLIENT_SECRET = ''
-Set-W365ClientSecretForDeployment
-if (`$env:W365_CLIENT_SECRET -ne 'offline-blueprint-secret') {
-    throw 'Client-secret deployment did not load the blueprint secret through the script-scoped Key Vault helper.'
-}
-Remove-Item Env:\W365_CLIENT_SECRET -ErrorAction SilentlyContinue
+$($accessCheckFunction.Extent.Text)
+Assert-W365AgentKeyVaultAccessConfigured
 "@)
-    & $secretRegression
+    & $accessRegression
 
 }
 finally {
