@@ -30,10 +30,12 @@ No live sign-in, certificate creation, or Graph keyCredential registration
 against a real tenant has been performed. Live validation remains an explicit
 follow-up before this mode is used in production.
 
-## September 20, 2026 offline change validation
+## September 20, 2026 offline change validation (unrelated prior branch, kept for history)
 
-The current branch adds bundled hosted-agent dependency resolution and a
-Windows invoice-demo helper. These changes have **offline validation only**:
+The branch described in this section (bundled hosted-agent dependency
+resolution and the Windows invoice-demo helper) is unrelated to the
+`key_vault_certificate` mode documented above and predates it. It is retained
+here only as a historical validation record for that separate change.
 
 - `scripts\Validate-PrePr.ps1` completed with a Release build containing
   0 warnings and 0 errors.

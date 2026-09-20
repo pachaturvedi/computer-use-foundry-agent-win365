@@ -477,7 +477,16 @@ and Storage Blob Data Contributor on the state container. In `client_secret`
 mode the agent's principal is also granted Key Vault Secrets User (read-only)
 on the shared vault so it can fetch `w365-blueprint-client-secret` directly
 (see `infra/state/keyvault.bicep`); **it still does not need Key Vault
-certificate access.** Ordinary Azure model/state credentials remain separate
+certificate access.** In `key_vault_certificate` mode the agent's principal is
+instead granted Key Vault Certificate User and Key Vault Crypto User, scoped to
+the `w365-blueprint-certificate` certificate and its backing key specifically
+(not the whole vault). Because that grant is applied at *state* provisioning
+time, switching `W365_BLUEPRINT_CREDENTIAL_MODE` to `key_vault_certificate`
+after state was already provisioned requires re-running `azd provision state`
+before the next agent deploy; `Invoke-AzdDeployment.ps1` verifies this RBAC is
+actually present before every `DeployAgent`/`DeployAll` run and fails fast with
+remediation guidance if it is missing, instead of deploying an agent that
+cannot sign with its certificate. Ordinary Azure model/state credentials remain separate
 from the W365 flow. Viewer Bicep grants roles only to its own UAMI, not to the
 Foundry principal. Verify the actual Azure principal used for model/state
 access rather than substituting an app/client ID in RBAC. Role assignments

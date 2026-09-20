@@ -12,6 +12,7 @@ $script = Get-Content -LiteralPath (Join-Path $root 'scripts\Invoke-AzdDeploymen
 foreach ($required in @(
     'function Get-W365KeyVaultName {',
     'function Assert-W365AgentKeyVaultAccessConfigured {',
+    'function Assert-W365AgentCertificateKeyVaultAccessConfigured {',
     "'--version', `$agentVersion",
     "'--new-session'"
 )) {

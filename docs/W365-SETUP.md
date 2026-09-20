@@ -126,6 +126,15 @@ $certificate = .\scripts\Initialize-W365BlueprintCertificate.ps1 `
     -ConfirmResourceChanges `
     -UseDeviceCode
 
+# infra/state/keyvault.bicep only grants the certificate/key Key Vault RBAC
+# roles to the agent principal when W365_BLUEPRINT_CREDENTIAL_MODE is
+# key_vault_certificate at *state* provisioning time. If state was already
+# provisioned in client_secret mode (the default) before you switched modes
+# above, you must re-provision state now so the agent actually receives that
+# access before the redeploy below; otherwise the next step fails fast with a
+# clear remediation message instead of deploying a broken agent.
+azd provision state --environment $environment --no-prompt
+
 pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
     -Environment $environment `
     -TenantId "<Foundry-and-W365-tenant-guid>" `
@@ -457,7 +466,7 @@ probe succeeds.
 | `AgentIdentity.Read.All` | Read existing agent identity and validate parent. |
 | `AgentIdUser.ReadWrite.All` | Create/find agent user and validate parent. |
 | `CloudPC.ReadWrite.All` | Pool validation and assignment. |
-| `AgentIdentityBlueprint.AddRemoveCreds.All` | **Optional FIC only**, with explicit hosted-runtime or viewer federation authorization. |
+| `AgentIdentityBlueprint.AddRemoveCreds.All` | Optional FIC federation (with explicit hosted-runtime or viewer authorization), and required by `Register-W365BlueprintCertificate.ps1` when using `key_vault_certificate` mode to register the certificate as a blueprint keyCredential. |
 
 No `User.Read`, blueprint, blueprint-principal or agent-identity creation scopes
 are required.
@@ -618,6 +627,44 @@ identity. Never treat reused identities as disposable script-owned resources.
 
 Retire unneeded OIDC secrets and private state according to policy. Azure
 resource-group deletion does not delete Entra identities or cancel W365 billing.
+
+### `key_vault_certificate` mode cleanup
+
+`scripts/Register-W365BlueprintCertificate.ps1` and
+`scripts/Initialize-W365BlueprintCertificate.ps1` mutate the tenant (a
+blueprint `keyCredential` and, optionally, an operator role assignment) outside
+the ownership manifest that `Remove-W365Resources.ps1` tracks. These are not
+removed automatically by `azd down` or the cleanup script above. When retiring
+an environment that used `key_vault_certificate` mode, an administrator with
+`AgentIdentityBlueprint.AddRemoveCreds.All` must also:
+
+1. Remove the registered certificate `keyCredential`(s) from the blueprint.
+   List the blueprint's current `keyCredentials`
+   (`GET /applications/{id}/microsoft.graph.agentIdentityBlueprint?$select=keyCredentials`).
+   `displayName` alone is not a safe identifier: every credential this sample
+   registers uses the same `w365-blueprint-certificate` display name, and
+   `-Rotate` intentionally adds a new one alongside the prior entry rather than
+   replacing it, so more than one entry can share that name. Instead, identify
+   entries this sample added by their `customKeyIdentifier` (base64 of the
+   certificate's SHA-1 hash — compare against
+   `[Convert]::ToBase64String($cert.GetCertHash())` for each
+   `w365-blueprint-certificate` certificate version you intend to retire, for
+   example via `az keyvault certificate list-versions --vault-name <vault>
+   --name w365-blueprint-certificate`) or `keyId` if you recorded it when
+   registering. `PATCH` the blueprint with only the confirmed entry (or
+   entries) removed from the `keyCredentials` array (a full read-modify-write,
+   matching how `Register-W365BlueprintCertificate.ps1` added it). Do not
+   remove `keyCredentials` belonging to any other integration, and do not
+   remove an entry you cannot uniquely match to a retired certificate.
+2. If `Initialize-W365BlueprintCertificate.ps1` self-granted the operator "Key
+   Vault Certificates Officer" role on the Key Vault because it was missing,
+   remove that role assignment once certificate rotation/administration is no
+   longer needed (`az role assignment delete --assignee <operator-object-id>
+   --role "Key Vault Certificates Officer" --scope <vault-resource-id>`). Skip
+   this step if the operator already held the role before setup for another
+   reason.
+3. Deleting the Key Vault (via `azd down`) removes the certificate object and
+   its backing key; no separate Key Vault cleanup is required for those.
 
 Sources: [Foundry identity](https://learn.microsoft.com/azure/foundry/agents/concepts/agent-identity),
 [agent-user OAuth](https://learn.microsoft.com/entra/agent-id/agent-user-oauth-flow),
