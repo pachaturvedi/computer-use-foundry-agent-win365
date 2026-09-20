@@ -6,12 +6,18 @@ param()
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-if (!$IsWindows) {
-    throw 'The invoice demo helper test requires Windows.'
-}
-
 $repositoryRoot = Split-Path (Split-Path $PSScriptRoot)
 $scriptPath = Join-Path $repositoryRoot 'scripts\Invoke-InvoiceProcessingDemo.ps1'
+if (!$IsWindows) {
+    $platformOutput = & pwsh -NoLogo -NoProfile -File $scriptPath 2>&1 | Out-String
+    if ($LASTEXITCODE -eq 0 -or
+        $platformOutput -notmatch 'invoice-processing demo is Windows-only') {
+        throw "Invoice demo helper did not enforce its Windows platform guard: $platformOutput"
+    }
+    Write-Output 'Invoice demo helper: Windows platform guard passed.'
+    return
+}
+
 $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("invoice-demo-{0}" -f ([guid]::NewGuid()))
 $mockAzdPath = Join-Path $tempRoot 'azd.ps1'
 $callLogPath = Join-Path $tempRoot 'calls.jsonl'
