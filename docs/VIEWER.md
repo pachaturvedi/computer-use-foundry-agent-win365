@@ -173,6 +173,12 @@ The viewer uses the public W365 API:
 `new ScreenShareViewer({container, sessionLink, mode})`, `connect(token)`,
 `takeControl()`, `releaseControl()`, `updateToken()` and `stop()`.
 
+The hosted agent stays agent-first for safe, reversible desktop work. Expect it
+to continue ordinary navigation, reading, typing, save dialogs, verification,
+and routine data entry on its own. Human control is reserved for sign-in, MFA,
+secret entry, approvals, purchases, sending messages as the user, deleting data,
+and other sensitive, privileged, identity-bound, or irreversible steps.
+
 **Watch live** requests a See-only token. **Pause and take control** waits for
 any in-flight action's shared lock, persists Paused, then issues a control token.
 **Release control and resume agent** first releases/stops the SDK viewer, then
