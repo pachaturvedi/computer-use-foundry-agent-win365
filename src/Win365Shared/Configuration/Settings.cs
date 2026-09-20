@@ -182,11 +182,15 @@ public sealed class Settings(IConfiguration config)
         }
 
         _ = Https("SESSION_BLOB_URI");
-        if (BlueprintCredentialMode is not ("managed_identity_federation" or "client_secret"))
+        if (BlueprintCredentialMode is not ("managed_identity_federation" or "client_secret" or "key_vault_certificate"))
         {
             throw new InvalidOperationException(
-                "W365_BLUEPRINT_CREDENTIAL_MODE must be managed_identity_federation or client_secret. " +
-                "key_vault_certificate is reserved for the next implementation phase and currently fails closed.");
+                "W365_BLUEPRINT_CREDENTIAL_MODE must be managed_identity_federation, client_secret, or key_vault_certificate.");
+        }
+        if (BlueprintCredentialMode == "key_vault_certificate" && viewerMode)
+        {
+            throw new InvalidOperationException(
+                "key_vault_certificate mode is agent-only. The viewer must use client_secret or managed_identity_federation.");
         }
         if (BlueprintCredentialMode == "client_secret")
         {
@@ -195,6 +199,13 @@ public sealed class Settings(IConfiguration config)
             // agent instead fetches the same secret directly from Key Vault using its own runtime
             // identity (see KeyVaultBlueprintSecretResolver), so it only needs the vault name.
             _ = Required(viewerMode ? "W365_CLIENT_SECRET" : "W365_KEY_VAULT_NAME");
+        }
+        if (BlueprintCredentialMode == "key_vault_certificate")
+        {
+            // The certificate never leaves Key Vault; the agent only needs the vault name to
+            // build a client assertion via remote signing against the canonical certificate name
+            // (see KeyVaultBlueprintCertificateAssertionProvider.CertificateName).
+            _ = Required("W365_KEY_VAULT_NAME");
         }
         if (viewerMode)
         {

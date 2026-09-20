@@ -4,6 +4,32 @@ Validated on Windows through September 18, 2026. Evidence is sanitized: no
 secret values, access tokens, assertions, raw caller identifiers, or
 environment files are included.
 
+## Key Vault certificate mode offline validation (this branch)
+
+The `feature/key-vault-certificate-auth` branch adds `key_vault_certificate` as
+a third `W365_BLUEPRINT_CREDENTIAL_MODE`. These changes have **offline
+validation only** — no live Azure/Entra tenant, Key Vault, or Foundry
+Blueprint was available in this environment:
+
+- `dotnet format --verify-no-changes`, Release build (0 warnings, 0 errors),
+  and all three .NET test projects passed (35 agent, 43 shared, 8 viewer
+  tests).
+- `az bicep build` on `infra/state/keyvault.bicep` compiled cleanly.
+- All 21 offline PowerShell tests passed, including new coverage for
+  `Initialize-W365BlueprintCertificate.ps1` and
+  `Register-W365BlueprintCertificate.ps1`.
+- Key Vault RBAC for the certificate and its backing key is scoped to those
+  specific objects, not the shared vault.
+- The Microsoft Graph registration script uses the least-privileged
+  `AgentIdentityBlueprint.AddRemoveCreds.All` delegated scope and the
+  `applications/{id}/microsoft.graph.agentIdentityBlueprint` update endpoint;
+  setup additionally verifies the certificate is registered on the blueprint
+  before mutating W365 resources.
+
+No live sign-in, certificate creation, or Graph keyCredential registration
+against a real tenant has been performed. Live validation remains an explicit
+follow-up before this mode is used in production.
+
 ## September 20, 2026 offline change validation
 
 The current branch adds bundled hosted-agent dependency resolution and a
@@ -72,7 +98,7 @@ version 16 was deployed afterward with `managed_identity_federation` restored.
 | Shared Blob state | Passed | Private state storage and container-scoped data access validated |
 | Optional viewer | Not required | Direct MCP operation remains valid without `VIEWER_PUBLIC_URL` |
 | Managed-identity federation | Blocked by platform boundary | Chained federation returns Entra `AADSTS700231` |
-| Key Vault certificate mode | Not implemented | Reserved mode fails closed until separately implemented and validated |
+| Key Vault certificate mode | Implemented, offline-validated only | Self-signed non-exportable certificate auth added; no live Entra/W365 tenant validation yet |
 
 ## Live greenfield bootstrap evidence
 
@@ -126,7 +152,7 @@ Observed results:
 | --- | --- |
 | `client_secret` | Implemented and live E2E validated |
 | `managed_identity_federation` | Implemented, but hosted chained federation is blocked by `AADSTS700231` |
-| `key_vault_certificate` | Reserved and fail-closed; implementation pending |
+| `key_vault_certificate` | Implemented; offline build/test/PowerShell validation only, not yet live-validated against a real Entra tenant or W365 |
 
 `client_secret` proves the complete W365 identity and desktop path, but it is
 not the preferred long-lived production credential. Production adoption still

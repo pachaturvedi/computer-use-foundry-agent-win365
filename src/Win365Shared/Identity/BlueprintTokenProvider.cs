@@ -10,6 +10,7 @@ namespace Win365Agent;
 public sealed class BlueprintTokenProvider : IBlueprintTokenProvider
 {
     private readonly TokenCredential _credential;
+    private readonly IBlueprintCertificateAssertionProvider? _certificateAssertionProvider;
     private readonly HttpClient _http;
     private readonly ILogger<BlueprintTokenProvider>? _logger;
     private readonly IBlueprintSecretResolver? _secretResolver;
@@ -26,12 +27,17 @@ public sealed class BlueprintTokenProvider : IBlueprintTokenProvider
     /// Resolves the <c>client_secret</c> mode blueprint secret from Key Vault using the runtime's
     /// own identity. Required only when <c>W365_BLUEPRINT_CREDENTIAL_MODE</c> is <c>client_secret</c>.
     /// </param>
+    /// <param name="certificateAssertionProvider">
+    /// Builds the <c>key_vault_certificate</c> mode client assertion using the runtime's own
+    /// identity. Required only when <c>W365_BLUEPRINT_CREDENTIAL_MODE</c> is <c>key_vault_certificate</c>.
+    /// </param>
     public BlueprintTokenProvider(
         HttpClient http,
         Settings settings,
         bool viewerMode,
         ILogger<BlueprintTokenProvider> logger,
-        IBlueprintSecretResolver? secretResolver = null)
+        IBlueprintSecretResolver? secretResolver = null,
+        IBlueprintCertificateAssertionProvider? certificateAssertionProvider = null)
         : this(
             http,
             settings,
@@ -40,7 +46,8 @@ public sealed class BlueprintTokenProvider : IBlueprintTokenProvider
                 ManagedIdentityId.FromUserAssignedClientId(
                     settings.Required(viewerMode ? "AZURE_CLIENT_ID" : "W365_AGENT_ID"))),
             logger,
-            secretResolver)
+            secretResolver,
+            certificateAssertionProvider)
     {
     }
 
@@ -50,13 +57,15 @@ public sealed class BlueprintTokenProvider : IBlueprintTokenProvider
         bool viewerMode,
         TokenCredential credential,
         ILogger<BlueprintTokenProvider>? logger = null,
-        IBlueprintSecretResolver? secretResolver = null)
+        IBlueprintSecretResolver? secretResolver = null,
+        IBlueprintCertificateAssertionProvider? certificateAssertionProvider = null)
     {
         _http = http;
         _settings = settings;
         _credential = credential;
         _logger = logger;
         _secretResolver = secretResolver;
+        _certificateAssertionProvider = certificateAssertionProvider;
     }
 
     /// <inheritdoc/>
@@ -78,6 +87,38 @@ public sealed class BlueprintTokenProvider : IBlueprintTokenProvider
                     ["grant_type"] = "client_credentials",
                     ["scope"] = AgentUserTokenProvider.Exchange,
                     ["fmi_path"] = _settings.Required("W365_AGENT_ID")
+                },
+                cancellationToken,
+                "blueprint",
+                _logger);
+        }
+
+        if (_settings.BlueprintCredentialMode == "key_vault_certificate")
+        {
+            if (_certificateAssertionProvider is null)
+            {
+                throw new InvalidOperationException(
+                    "key_vault_certificate mode requires a certificate assertion provider.");
+            }
+
+            var clientId = _settings.Required("W365_BLUEPRINT_ID");
+            var tokenEndpoint = $"https://login.microsoftonline.com/{_settings.Tenant}/oauth2/v2.0/token";
+            var clientAssertion = await _certificateAssertionProvider.GetClientAssertionAsync(
+                clientId,
+                tokenEndpoint,
+                cancellationToken);
+
+            return await AgentUserTokenProvider.ExchangeAsync(
+                _http,
+                _settings,
+                new Dictionary<string, string>
+                {
+                    ["client_id"] = clientId,
+                    ["grant_type"] = "client_credentials",
+                    ["scope"] = AgentUserTokenProvider.Exchange,
+                    ["fmi_path"] = _settings.Required("W365_AGENT_ID"),
+                    ["client_assertion_type"] = AgentUserTokenProvider.AssertionType,
+                    ["client_assertion"] = clientAssertion
                 },
                 cancellationToken,
                 "blueprint",

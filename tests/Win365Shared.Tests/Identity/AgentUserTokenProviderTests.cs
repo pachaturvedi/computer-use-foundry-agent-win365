@@ -103,6 +103,80 @@ public sealed class AgentUserTokenProviderTests
         Assert.Equal("token-2", handler.Forms[2]["user_federated_identity_credential"]);
     }
 
+    [Fact]
+    public async Task ExplicitKeyVaultCertificateModeSkipsManagedIdentityAsync()
+    {
+        var settings = new Settings(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["W365_TENANT_ID"] = "11111111-1111-1111-1111-111111111111",
+            ["W365_BLUEPRINT_ID"] = "blueprint",
+            ["W365_AGENT_ID"] = "agent",
+            ["W365_AGENT_USER_ID"] = "agent-user",
+            ["W365_BLUEPRINT_CREDENTIAL_MODE"] = "key_vault_certificate",
+            ["W365_KEY_VAULT_NAME"] = "sample-w365-vault"
+        }).Build());
+        using var handler = new TokenHandler();
+        using var http = new HttpClient(handler);
+        var credential = new FakeCredential { Fail = true };
+        var certificateAssertionProvider = new FakeCertificateAssertionProvider("certificate-assertion");
+        var blueprint = new BlueprintTokenProvider(
+            http,
+            settings,
+            false,
+            credential,
+            certificateAssertionProvider: certificateAssertionProvider);
+        using var provider = new AgentUserTokenProvider(http, settings, blueprint);
+
+        var token = await provider.GetAsync(AgentUserTokenProvider.Atg, default);
+
+        Assert.Equal("token-3", token.Token);
+        Assert.Equal(0, credential.Calls);
+        Assert.Equal(1, certificateAssertionProvider.Calls);
+        Assert.Equal("blueprint", certificateAssertionProvider.LastClientId);
+        Assert.Equal(
+            "https://login.microsoftonline.com/11111111-1111-1111-1111-111111111111/oauth2/v2.0/token",
+            certificateAssertionProvider.LastTokenEndpoint);
+        Assert.Equal("certificate-assertion", handler.Forms[0]["client_assertion"]);
+        Assert.Equal("urn:ietf:params:oauth:client-assertion-type:jwt-bearer", handler.Forms[0]["client_assertion_type"]);
+        Assert.Equal("agent", handler.Forms[0]["fmi_path"]);
+        Assert.False(handler.Forms[0].ContainsKey("client_secret"));
+    }
+
+    [Fact]
+    public async Task KeyVaultCertificateModeWithoutAProviderFailsClosedAsync()
+    {
+        var settings = new Settings(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["W365_TENANT_ID"] = "11111111-1111-1111-1111-111111111111",
+            ["W365_BLUEPRINT_ID"] = "blueprint",
+            ["W365_AGENT_ID"] = "agent",
+            ["W365_AGENT_USER_ID"] = "agent-user",
+            ["W365_BLUEPRINT_CREDENTIAL_MODE"] = "key_vault_certificate",
+            ["W365_KEY_VAULT_NAME"] = "sample-w365-vault"
+        }).Build());
+        using var handler = new TokenHandler();
+        using var http = new HttpClient(handler);
+        var blueprint = new BlueprintTokenProvider(http, settings, false, new FakeCredential { Fail = true });
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => blueprint.GetAsync(default));
+        Assert.Empty(handler.Forms);
+    }
+
+    private sealed class FakeCertificateAssertionProvider(string assertion) : IBlueprintCertificateAssertionProvider
+    {
+        public int Calls;
+        public string? LastClientId;
+        public string? LastTokenEndpoint;
+
+        public Task<string> GetClientAssertionAsync(string clientId, string tokenEndpoint, CancellationToken cancellationToken)
+        {
+            Calls++;
+            LastClientId = clientId;
+            LastTokenEndpoint = tokenEndpoint;
+            return Task.FromResult(assertion);
+        }
+    }
+
     private sealed class FakeCredential : TokenCredential
     {
         public int Calls;
