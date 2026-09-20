@@ -126,9 +126,13 @@ Before real tasks, complete the
 After acceptance, invoke the included scenario with a fresh agent session:
 
 ```powershell
+$environment = "<resource-prefix>-dev"
 $prompt = Get-Content .\samples\prompts\invoice-processing.txt -Raw
+$version = azd env get-value AGENT_WIN365_DESKTOP_AGENT_VERSION `
+    --environment $environment
 azd ai agent invoke win365-desktop-agent `
-    --environment "<resource-prefix>-dev" `
+    --environment $environment `
+    --version $version `
     --new-session $prompt
 ```
 

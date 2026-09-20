@@ -448,6 +448,7 @@ throw 'Simulated W365 setup failure.'
         $missingOperatorOutput -notmatch 'HOSTED_ALLOWED_USER_ID') {
         throw 'Postup did not warn about missing hosted-agent operator prerequisites.'
     }
+    $env:TEST_AZ_BEHAVIOR = 'success'
     $env:TEST_VIEWER_PUBLIC_URL = ''
     $env:TEST_AZ_BEHAVIOR = 'success'
 

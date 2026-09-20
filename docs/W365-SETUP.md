@@ -48,7 +48,7 @@ The exact delegated Graph scope list appears later under
 From the repository root, either substitute the IDs returned by discovery or let
 the azd wrapper discover them from the currently deployed hosted-agent version.
 
-### Direct setup with known IDs
+### Preview setup inputs with known IDs
 
 ```powershell
 Install-Module Microsoft.Graph.Authentication -Scope CurrentUser
@@ -60,10 +60,14 @@ $setup = @{
     PoolId = "<existing-agent-pool-GUID>"
 }
 .\scripts\Setup-W365.ps1 @setup -WhatIf
-.\scripts\Setup-W365.ps1 @setup -BillingConfirmed -UseDeviceCode
 ```
 
-### Stitched azd flow
+`Setup-W365.ps1 -WhatIf` is the low-level, offline input preview. Do not run
+that script directly for a staged deployment mutation: it does not prove the
+shared Blob state, exact container-scoped RBAC, operator binding, or credential
+readiness. Use the wrapper below for every real setup.
+
+### Staged azd flow
 
 Run this only after the phase-1 identity has been discovered and
 [deployment phase 2](DEPLOYMENT.md#phase-2-bind-and-enable) has provisioned
@@ -88,9 +92,11 @@ pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
 For the explicitly approved `managed_identity_federation` mode:
 
 ```powershell
-azd env set W365_BLUEPRINT_CREDENTIAL_MODE managed_identity_federation
+$environment = "<azd-environment-name>"
+azd env set W365_BLUEPRINT_CREDENTIAL_MODE managed_identity_federation `
+    --environment $environment
 pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
-    -Environment "<azd-environment-name>" `
+    -Environment $environment `
     -TenantId "<Foundry-and-W365-tenant-guid>" `
     -HostedRuntimeIdentityObjectId "<Foundry-agent-object-principal-guid>" `
     -AuthorizeHostedRuntimeFederation `
@@ -170,7 +176,7 @@ If you miss the first prompt, the helper retries device-code sign-in once by
 default and shows a fresh code. Adjust that bounded retry count with
 `-DeviceCodeMaxAttempts` when needed.
 
-The integrated `azd up` W365 setup uses the same behavior: it prints the
+`Invoke-W365SetupFlow.ps1` uses the same behavior: it prints the
 browser instructions before requesting the code, waits for completion, and
 retries once with a fresh code when the fixed 120-second window expires.
 
@@ -236,20 +242,17 @@ assigns the agent user directly using
 inheritance policies are not taken over. Incremental reruns reuse the persisted
 pool only when the selected environment's ownership manifest proves its exact
 ID and relationships. A standalone `W365_POOL_ID` or matching display name is
-not ownership proof. The environment-owned `azd up` path creates the pool from
+not ownership proof. The staged wrapper can create the pool from
 the validated local profile and derives its display name from `RESOURCE_PREFIX`
 and `AZURE_ENV_NAME`.
 
-When `ENABLE_W365=true`, the project `postup` hook drives this setup after the
-bootstrap hosted-agent version exists. It reads the tenant's verified default
-domain used for user creation and derives an environment-owned agent-user UPN.
-Custom verified tenant domains are supported; the workflow does not assume an
+`Invoke-W365SetupFlow.ps1` runs only after the bootstrap identity and phase-2
+state are ready. It reads the tenant's verified default domain used for user
+creation and derives an environment-owned agent-user UPN. Custom verified
+tenant domains are supported; the workflow does not assume an
 `onmicrosoft.com` suffix. `W365_AGENT_USER_PRINCIPAL_NAME` can override the
 full UPN, while `W365_AGENT_USER_DOMAIN` can select another verified tenant
-domain. The hook asks for W365 resource approval before mutations. Protected
-noninteractive automation may set
-`W365_RESOURCE_CHANGES_CONFIRMED=true` for that process; do not commit or
-persist this approval as a reusable default.
+domain. The wrapper requires explicit W365 resource approval before mutations.
 
 `Setup-W365.ps1` writes these non-secret outputs into the currently selected azd
 environment when `azd 1.32.0+` is available. Record them for review; they are
@@ -282,14 +285,10 @@ not make their API roles interchangeable. Both `W365_AGENT_ID` and
 viewer. The agent-user ID is not a credential.
 
 After setup persists the returned values plus your Blob/operator configuration,
-phase 2 redeploys the **same** `win365-desktop-agent` service:
-
-```powershell
-azd ai agent doctor
-pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
-    -Mode DeployAgent `
-    -ConfirmResourceChanges
-```
+`Invoke-W365SetupFlow.ps1` redeploys the **same** `win365-desktop-agent`
+service. Do not immediately repeat that deployment. Use the scoped recovery
+command in [deployment phase 2](DEPLOYMENT.md#phase-2-bind-and-enable) only if
+the wrapper reports that setup succeeded but its final agent deployment failed.
 
 The deployment creates a new immutable agent version under the existing agent
 name. Rediscover that exact version and reject unexpected blueprint or instance
@@ -349,9 +348,16 @@ First deploy the viewer in bootstrap mode to obtain its existing UAMI
 `viewerIdentityPrincipalId` output. Only after administrator approval, add:
 
 ```powershell
-$setup.ViewerManagedIdentityObjectId = "<viewerIdentityPrincipalId-GUID>"
-.\scripts\Setup-W365.ps1 @setup -AuthorizeViewerFederation -WhatIf
-.\scripts\Setup-W365.ps1 @setup -AuthorizeViewerFederation -BillingConfirmed
+$environment = "<azd-environment-name>"
+pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
+    -Environment $environment `
+    -TenantId "<Foundry-and-W365-tenant-guid>" `
+    -ViewerManagedIdentityObjectId "<viewerIdentityPrincipalId-GUID>" `
+    -AuthorizeViewerFederation `
+    -PoolIdOrUrl "<existing-pool-guid-or-intune-url>" `
+    -BillingConfirmed `
+    -ConfirmResourceChanges `
+    -UseDeviceCode
 ```
 
 This optional FIC trusts that **UAMI object/principal ID** as subject on the
@@ -375,11 +381,15 @@ direct blueprint assertion. After a live probe confirms that
 identity as a blueprint FIC:
 
 ```powershell
-$setup.HostedRuntimeIdentityObjectId = "<W365_AGENT_OBJECT_ID>"
-.\scripts\Setup-W365.ps1 @setup -AuthorizeHostedRuntimeFederation -WhatIf
-.\scripts\Setup-W365.ps1 @setup `
+$environment = "<azd-environment-name>"
+pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
+    -Environment $environment `
+    -TenantId "<Foundry-and-W365-tenant-guid>" `
+    -HostedRuntimeIdentityObjectId "<W365_AGENT_OBJECT_ID>" `
     -AuthorizeHostedRuntimeFederation `
+    -PoolIdOrUrl "<existing-pool-guid-or-intune-url>" `
     -BillingConfirmed `
+    -ConfirmResourceChanges `
     -UseDeviceCode
 ```
 

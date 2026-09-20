@@ -213,6 +213,13 @@ try {
     } 'W365 activation accepted state provisioned for a different agent principal.'
     Assert-Throws {
         $invalid = [ordered]@{} + $activationValues
+        $invalid.DEPLOY_STATE = 'false'
+        Assert-W365ActivationPrerequisites `
+            -EnvironmentValues $invalid `
+            -ExpectedAgentIdentityId $agentIdentityId | Out-Null
+    } 'W365 activation accepted DEPLOY_STATE=false.'
+    Assert-Throws {
+        $invalid = [ordered]@{} + $activationValues
         $invalid.Remove('W365_KEY_VAULT_NAME')
         Assert-W365ActivationPrerequisites `
             -EnvironmentValues $invalid `
@@ -261,6 +268,9 @@ try {
             if ($env:TEST_W365_STATE_BEHAVIOR -eq 'missing-role') {
                 return ''
             }
+            if ($env:TEST_W365_STATE_BEHAVIOR -eq 'wrong-role') {
+                return '/subscriptions/11111111-1111-1111-1111-111111111111/providers/Microsoft.Authorization/roleDefinitions/acdd72a7-3385-48ef-bd42-f606fba81ae7'
+            }
             return '/subscriptions/11111111-1111-1111-1111-111111111111/providers/Microsoft.Authorization/roleDefinitions/ba92f5b4-2d11-453d-a403-e96b0029c9fe'
         }
         if ($arguments[0] -eq 'keyvault' -and $arguments[1] -eq 'secret') {
@@ -278,7 +288,23 @@ try {
             -SubscriptionId '11111111-1111-1111-1111-111111111111' `
             -SessionBlobUri 'https://samplestate.blob.core.windows.net/desktop-state/slot.json' `
             -ExpectedAgentIdentityId $agentIdentityId | Out-Null
-        foreach ($behavior in @('missing-account', 'missing-container', 'missing-role')) {
+        foreach ($invalidUri in @(
+            'https://user@samplestate.blob.core.windows.net/desktop-state/slot.json',
+            'https://samplestate.blob.core.windows.net:444/desktop-state/slot.json',
+            'https://samplestate.blob.core.windows.net/desktop-state/slot.json?sig=redacted',
+            'https://samplestate.blob.core.windows.net/desktop-state/slot.json#fragment',
+            'https://samplestate.blob.core.windows.net/desktop-state/%73lot.json',
+            'https://samplestate.blob.core.windows.net/desktop-state/not-slot.json',
+            'https://samplestate.blob.core.windows.net/desktop-state/slot.json/extra'
+        )) {
+            Assert-Throws {
+                Assert-W365StateResourceReady `
+                    -SubscriptionId '11111111-1111-1111-1111-111111111111' `
+                    -SessionBlobUri $invalidUri `
+                    -ExpectedAgentIdentityId $agentIdentityId | Out-Null
+            } "W365 state readiness accepted non-exact Blob URI '$invalidUri'."
+        }
+        foreach ($behavior in @('missing-account', 'missing-container', 'missing-role', 'wrong-role')) {
             $env:TEST_W365_STATE_BEHAVIOR = $behavior
             Assert-Throws {
                 Assert-W365StateResourceReady `

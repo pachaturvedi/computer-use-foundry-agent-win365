@@ -32,7 +32,7 @@ public sealed class DesktopRequestMiddlewareTests
         context.Request.Headers["x-agent-user-id"] = caller;
         context.Response.Body = new MemoryStream();
 
-        await middleware.InvokeAsync(context, null!, null!, null!);
+        await middleware.InvokeAsync(context, null!, null!, null!, NullLogger<McpConnection>.Instance);
 
         Assert.Equal(StatusCodes.Status403Forbidden, context.Response.StatusCode);
         context.Response.Body.Position = 0;

@@ -186,6 +186,9 @@ try {
         Mode = 'DeployAgent'
         Environment = $environmentName
         ConfirmResourceChanges = $true
+        # Persist a fresh session against the phase-two version. Without this, azd can reuse the
+        # bootstrap version's saved session after azd up, which would still return w365_not_configured.
+        SmokeInvoke = $true
     }
     if ($SkipPackage) {
         $deployArguments.SkipPackage = $true

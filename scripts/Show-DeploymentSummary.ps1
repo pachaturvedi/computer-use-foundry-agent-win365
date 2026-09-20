@@ -35,5 +35,10 @@ $rows = @(
 Write-Host ''
 Write-Host "Deployment result: $Environment"
 $rows | Format-Table -AutoSize -Wrap | Out-String | Write-Host
+if ((Get-Value 'W365_ENABLED') -eq 'true') {
+    $agentVersion = Get-Value 'AGENT_WIN365_DESKTOP_AGENT_VERSION'
+    Write-Host "Next: start a fresh hosted-agent session pinned to active version ${agentVersion}:"
+    Write-Host "  azd ai agent invoke $(Get-Value 'FOUNDRY_AGENT_NAME') --environment $Environment --version $agentVersion --new-session '<task>'"
+}
 Write-SampleVerbose -Component 'deployment-summary' -Message 'Final values were loaded from the selected azd environment.'
 Write-SampleDebug -Component 'deployment-summary' -Message "Environment file contains $($values.Count) non-secret entries."

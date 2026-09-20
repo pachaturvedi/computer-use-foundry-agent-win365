@@ -35,6 +35,21 @@ foreach ($name in $tracked) {
 }
 
 try {
+    $greenfieldRejected = $false
+    try {
+        & (Join-Path $root 'scripts\Initialize-Greenfield.ps1') `
+            -SubscriptionId '11111111-1111-1111-1111-111111111111' `
+            -Prefix 'sample' `
+            -EnableW365 `
+            -SkipPreview
+    }
+    catch {
+        $greenfieldRejected = $_.Exception.Message -match 'cannot enable W365'
+    }
+    if (!$greenfieldRejected) {
+        throw 'Greenfield initialization accepted unsafe one-shot W365 enablement.'
+    }
+
     $env:AZURE_ENV_NAME = $environmentName
     $env:AZURE_SUBSCRIPTION_ID = '11111111-1111-1111-1111-111111111111'
     $env:AZURE_LOCATION = 'eastus'
@@ -67,6 +82,7 @@ try {
         'AZURE_AI_PROJECT_NAME="sample-project"',
         'FOUNDRY_AGENT_NAME="win365-desktop-agent"',
         'AGENT_WIN365_DESKTOP_AGENT_ENDPOINT="https://agent.example.com"',
+        'AGENT_WIN365_DESKTOP_AGENT_VERSION="42"',
         'STATE_RESOURCE_GROUP_NAME="sample-dev-rg"',
         'W365_KEY_VAULT_NAME="sample-dev-kv"',
         'DEPLOY_STATE="true"',
@@ -82,6 +98,8 @@ try {
     if ($summary -notmatch 'sample-dev-kv' -or
         $summary -notmatch 'samplestorage' -or
         $summary -notmatch 'ACA viewer.+Skipped' -or
+        $summary -notmatch 'fresh hosted-agent session pinned to active version 42' -or
+        $summary -notmatch 'azd ai agent invoke win365-desktop-agent --environment sample-dev --version 42 --new-session' -or
         $summary -match '(?i)secret-value|access-token') {
         throw "Deployment summary was incomplete or unsafe: $summary"
     }
@@ -184,6 +202,11 @@ function az {
     `$global:LASTEXITCODE = 0
     'offline-blueprint-secret'
 }
+function azd {
+    `$global:LASTEXITCODE = 0
+}
+`$azd = [pscustomobject]@{ Path = 'azd' }
+`$environmentName = 'sample-dev'
 $($keyVaultFunction.Extent.Text)
 $($secretFunction.Extent.Text)
 `$env:W365_CLIENT_SECRET = ''

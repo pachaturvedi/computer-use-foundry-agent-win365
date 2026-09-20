@@ -167,15 +167,17 @@ function Assert-LiveViewerConfiguration {
 
 function Set-W365ClientSecretForDeployment {
     if ((Get-AzdOptionalValue 'W365_ENABLED') -ne 'true' -or
-        (Get-AzdOptionalValue 'W365_BLUEPRINT_CREDENTIAL_MODE') -ne 'client_secret' -or
-        ![string]::IsNullOrWhiteSpace($env:W365_CLIENT_SECRET)) {
+        (Get-AzdOptionalValue 'W365_BLUEPRINT_CREDENTIAL_MODE') -ne 'client_secret') {
         return
     }
 
     $vaultName = Get-W365KeyVaultName
     if ([string]::IsNullOrWhiteSpace($vaultName)) {
-        throw 'Client-secret mode requires W365_CLIENT_SECRET in the current process or W365_KEY_VAULT_NAME.'
+        throw 'Client-secret mode requires W365_KEY_VAULT_NAME (or VIEWER_KEY_VAULT_NAME) to resolve the Key Vault holding w365-blueprint-client-secret.'
     }
+    # azd resolves azure.yaml substitutions from its selected environment rather than the current
+    # PowerShell process. Refresh the selected environment immediately before deployment and clear
+    # it in the outer finally block so each deploy uses the current Key Vault value.
     $secret = (& az keyvault secret show `
         --subscription (Get-AzdValue 'AZURE_SUBSCRIPTION_ID') `
         --vault-name $vaultName `
@@ -185,8 +187,15 @@ function Set-W365ClientSecretForDeployment {
     if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($secret)) {
         throw "Unable to load w365-blueprint-client-secret from Key Vault '$vaultName'."
     }
+
     $env:W365_CLIENT_SECRET = $secret
-    Write-DeploymentEvent DECISION 'Loaded the blueprint client secret from Key Vault for this deployment process only.'
+    $setOutput = & $azd.Path env set W365_CLIENT_SECRET $secret 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to inject the current blueprint client secret into azd environment '$environmentName' for deployment."
+    }
+
+    $script:w365ClientSecretInjected = $true
+    Write-DeploymentEvent DECISION 'Loaded the current blueprint client secret from Key Vault for this deployment only; it will be cleared after azd deploy.'
 }
 
 function Invoke-HostedAgentSmokeTest {
@@ -194,8 +203,17 @@ function Invoke-HostedAgentSmokeTest {
         return
     }
 
+    $agentVersion = Get-AzdOptionalValue 'AGENT_WIN365_DESKTOP_AGENT_VERSION'
+    if ([string]::IsNullOrWhiteSpace($agentVersion)) {
+        throw 'Hosted-agent smoke invoke requires AGENT_WIN365_DESKTOP_AGENT_VERSION after deployment.'
+    }
+
     Write-DeploymentEvent STEP 'Smoke-testing the hosted agent with a minimal invocation to confirm the deployed container passes readiness.'
-    $smokeArguments = @('ai', 'agent', 'invoke', 'win365-desktop-agent', '--new-session', $SmokeInvokePrompt)
+    $smokeArguments = @(
+        'ai', 'agent', 'invoke', 'win365-desktop-agent',
+        '--version', $agentVersion,
+        '--new-session', $SmokeInvokePrompt
+    )
     Write-DeploymentEvent COMMAND "azd $($smokeArguments -join ' ')"
     $smokeOutput = (& $azd.Path @smokeArguments 2>&1 | Out-String)
     $smokeOutput | Write-Host
@@ -248,6 +266,7 @@ function Provision-FoundryLayer {
 Push-Location $root
 $previousUserAgent = $env:AZURE_DEV_USER_AGENT
 $previousW365ClientSecret = $env:W365_CLIENT_SECRET
+$script:w365ClientSecretInjected = $false
 $env:AZURE_DEV_USER_AGENT = 'microsoft_foundry_skill'
 Start-Transcript -LiteralPath $logPath | Out-Null
 try {
@@ -403,6 +422,15 @@ catch {
 }
 finally {
     Stop-Transcript | Out-Null
+    if ($script:w365ClientSecretInjected) {
+        $clearOutput = & $azd.Path env set W365_CLIENT_SECRET '' 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-DeploymentEvent RESULT "Unable to clear W365_CLIENT_SECRET from azd environment '$environmentName' after deployment. Clear it manually before the next deploy."
+        }
+        else {
+            Write-DeploymentEvent DECISION 'Cleared the temporary blueprint client secret from the azd environment.'
+        }
+    }
     $env:W365_CLIENT_SECRET = $previousW365ClientSecret
     $env:AZURE_DEV_USER_AGENT = $previousUserAgent
     Pop-Location

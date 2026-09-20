@@ -15,6 +15,19 @@ public sealed class DesktopRuntime : IDisposable
             new EventId(1, nameof(_logDesktopReleased)),
             "Desktop released for request {RequestId}");
 
+    private static readonly Action<ILogger, int, int, double, Exception?> _logCapacityRetry =
+        LoggerMessage.Define<int, int, double>(
+            LogLevel.Warning,
+            new EventId(2, nameof(_logCapacityRetry)),
+            "W365 StartSession attempt {Attempt}/{MaxAttempts} found no free capacity. Retrying in {DelaySeconds}s.");
+
+    private static readonly Action<ILogger, int, int, double, Exception?> _logCapacityRetryExhausted =
+        LoggerMessage.Define<int, int, double>(
+            LogLevel.Error,
+            new EventId(3, nameof(_logCapacityRetryExhausted)),
+            "W365 StartSession capacity retry policy exhausted after attempt {Attempt}/{MaxAttempts} " +
+            "({ElapsedSeconds}s elapsed). Giving up; no free W365 sessions were found in time.");
+
     /// <summary>Gets the MCP tools permitted by the desktop automation policy.</summary>
     public static IReadOnlySet<string> AllowedTools => DesktopRuntimePolicy.AllowedTools;
 
@@ -135,15 +148,64 @@ public sealed class DesktopRuntime : IDisposable
         }
     }
 
+    /// <summary>
+    /// Calls StartSession, retrying with exponential backoff and jitter when W365 reports no free
+    /// Cloud PC capacity. Capacity exhaustion is transient (pool warm-up / regional session-manager
+    /// lag), so retrying with the same idempotency key is safe and matches the behavior validated
+    /// against live W365 pools. Retries stop at whichever policy limit is reached first: the
+    /// attempt-count limit or the total-elapsed-time budget, so a single request can never hold a
+    /// desktop slot open indefinitely against a persistently unavailable pool.
+    /// </summary>
+    private async Task<JsonElement> StartSessionWithCapacityRetryAsync(string? idempotencyKey, CancellationToken ct)
+    {
+        var maxAttempts = Math.Max(1, _options.StartSessionCapacityRetryAttempts);
+        var maxTotalWait = _options.StartSessionCapacityRetryMaxTotalWait;
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            try
+            {
+                return await _mcp.CallAsync(
+                    Require("StartSession").Name,
+                    new { idempotencyKey },
+                    ct);
+            }
+            catch (McpToolException ex) when (ex.IsCapacityExhausted)
+            {
+                var delay = NextCapacityRetryDelay(attempt);
+                if (attempt >= maxAttempts || stopwatch.Elapsed + delay >= maxTotalWait)
+                {
+                    _logCapacityRetryExhausted(_logger, attempt, maxAttempts, stopwatch.Elapsed.TotalSeconds, null);
+                    throw;
+                }
+
+                _logCapacityRetry(_logger, attempt, maxAttempts, delay.TotalSeconds, null);
+                await Task.Delay(delay, ct);
+            }
+        }
+
+        // Unreachable: the loop always returns or throws on the final attempt.
+        throw new InvalidOperationException("StartSession capacity retry loop exited unexpectedly.");
+    }
+
+    /// <summary>Computes the exponential-backoff delay (capped, with up to 20% jitter) for a capacity retry attempt.</summary>
+    private TimeSpan NextCapacityRetryDelay(int attempt)
+    {
+        var baseDelay = _options.StartSessionCapacityRetryBaseInterval;
+        var cap = _options.StartSessionCapacityRetryMaxInterval;
+        var exponential = baseDelay * Math.Pow(2, attempt - 1);
+        var bounded = exponential < cap ? exponential : cap;
+        var jitter = 1.0 + (Random.Shared.NextDouble() * 0.2 - 0.1); // +/-10% tolerance to de-synchronize retries
+        var jittered = bounded * jitter;
+        return jittered < cap ? jittered : cap;
+    }
+
     private async Task<object> CompleteAllocationAsync(
         SessionTransaction tx,
         DesktopSession state,
         CancellationToken ct)
     {
-        var start = await _mcp.CallAsync(
-            Require("StartSession").Name,
-            new { idempotencyKey = state.AllocationIdempotencyKey },
-            ct);
+        var start = await StartSessionWithCapacityRetryAsync(state.AllocationIdempotencyKey, ct);
         state.SessionId = McpConnection.Field(start, "sessionId")
                 ?? throw new InvalidOperationException("StartSession omitted sessionId. Operator recovery is required.");
         // Checkpoint the remote ID before parsing readiness fields so failures remain recoverable without reallocation.

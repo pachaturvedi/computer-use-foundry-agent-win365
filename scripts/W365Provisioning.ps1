@@ -471,6 +471,7 @@ function Assert-W365ActivationPrerequisites {
         $sessionBlobUri.Scheme -ne [Uri]::UriSchemeHttps) {
         throw 'SESSION_BLOB_URI must be a valid HTTPS URI before W365 setup.'
     }
+    Resolve-W365SessionBlobLocation -SessionBlobUri $sessionBlobUri | Out-Null
 
     $statePrincipalId = [guid]::Empty
     if (![guid]::TryParse([string]$EnvironmentValues['STATE_AGENT_PRINCIPAL_ID'], [ref]$statePrincipalId) -or
@@ -517,6 +518,26 @@ function Invoke-W365AzureCliRead {
     return ($output | Out-String).Trim()
 }
 
+function Resolve-W365SessionBlobLocation {
+    param([Parameter(Mandatory)][uri]$SessionBlobUri)
+
+    if ($SessionBlobUri.Scheme -ne [Uri]::UriSchemeHttps -or
+        $SessionBlobUri.Host -notmatch '^(?<account>[a-z0-9]{3,24})\.blob\.core\.windows\.net$' -or
+        !$SessionBlobUri.IsDefaultPort -or
+        ![string]::IsNullOrEmpty($SessionBlobUri.UserInfo) -or
+        ![string]::IsNullOrEmpty($SessionBlobUri.Query) -or
+        ![string]::IsNullOrEmpty($SessionBlobUri.Fragment) -or
+        $SessionBlobUri.AbsolutePath -ne '/desktop-state/slot.json' -or
+        $SessionBlobUri.OriginalString -cne "https://$($SessionBlobUri.Host)/desktop-state/slot.json") {
+        throw 'SESSION_BLOB_URI must be exactly https://<storage-account>.blob.core.windows.net/desktop-state/slot.json without credentials, query, or fragment.'
+    }
+
+    return [pscustomobject]@{
+        StorageAccountName = $Matches.account
+        ContainerName = 'desktop-state'
+    }
+}
+
 function Assert-W365StateResourceReady {
     param(
         [Parameter(Mandatory)][guid]$SubscriptionId,
@@ -524,19 +545,8 @@ function Assert-W365StateResourceReady {
         [Parameter(Mandatory)][guid]$ExpectedAgentIdentityId
     )
 
-    if ($SessionBlobUri.Scheme -ne [Uri]::UriSchemeHttps -or
-        $SessionBlobUri.Host -notmatch '^(?<account>[a-z0-9]{3,24})\.blob\.core\.windows\.net$') {
-        throw 'SESSION_BLOB_URI must use HTTPS on a public Azure Blob Storage account.'
-    }
-    $storageAccountName = $Matches.account
-    $segments = @($SessionBlobUri.AbsolutePath.Trim('/').Split(
-        '/',
-        [StringSplitOptions]::RemoveEmptyEntries))
-    if ($segments.Count -ne 2 -or
-        $segments[0] -ne 'desktop-state' -or
-        $segments[1] -ne 'slot.json') {
-        throw 'SESSION_BLOB_URI must identify the expected desktop-state/slot.json Blob.'
-    }
+    $blobLocation = Resolve-W365SessionBlobLocation -SessionBlobUri $SessionBlobUri
+    $storageAccountName = $blobLocation.StorageAccountName
 
     $storageAccountId = Invoke-W365AzureCliRead -Arguments @(
         'storage', 'account', 'show',
@@ -548,15 +558,15 @@ function Assert-W365StateResourceReady {
         throw "Storage account '$storageAccountName' was not found."
     }
 
-    $containerScope = "$storageAccountId/blobServices/default/containers/desktop-state"
+    $containerScope = "$storageAccountId/blobServices/default/containers/$($blobLocation.ContainerName)"
     $containerName = Invoke-W365AzureCliRead -Arguments @(
         'rest',
         '--method', 'get',
         '--url', "https://management.azure.com${containerScope}?api-version=2023-05-01",
         '--query', 'name',
         '--output', 'tsv')
-    if ($containerName -ne 'desktop-state') {
-        throw "Storage account '$storageAccountName' does not contain the expected desktop-state container."
+    if ($containerName -ne $blobLocation.ContainerName) {
+        throw "Storage account '$storageAccountName' does not contain the expected $($blobLocation.ContainerName) container."
     }
 
     $principalId = $ExpectedAgentIdentityId.ToString()

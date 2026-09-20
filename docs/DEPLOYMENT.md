@@ -458,10 +458,12 @@ For the existing-project two-phase workflow, enable the dedicated azd state
 layer after phase-1 identity discovery:
 
 ```powershell
-azd env set DEPLOY_STATE true
-azd env set STATE_AGENT_PRINCIPAL_ID "<Foundry-agent-object-principal-GUID>"
-azd provision state --preview --no-prompt
-azd provision state --no-prompt
+$environment = "<azd-environment-name>"
+azd env set DEPLOY_STATE true --environment $environment
+azd env set STATE_AGENT_PRINCIPAL_ID "<Foundry-agent-object-principal-GUID>" `
+    --environment $environment
+azd provision state --environment $environment --preview --no-prompt
+azd provision state --environment $environment --no-prompt
 ```
 
 The core layer creates the sample-owned environment resource group once. The
@@ -496,12 +498,13 @@ infrastructure deployment intentionally does not seed the Blob.
 Configure the hosted operator and credential before W365 mutation:
 
 ```powershell
-azd env set OPERATOR_TENANT_ID "<operator-tenant-guid>"
-azd env set OPERATOR_OBJECT_ID "<operator-object-guid>"
-azd env set HOSTED_ALLOWED_USER_ID pending
-azd env set W365_BLUEPRINT_CREDENTIAL_MODE client_secret
+$environment = "<azd-environment-name>"
+azd env set OPERATOR_TENANT_ID "<operator-tenant-guid>" --environment $environment
+azd env set OPERATOR_OBJECT_ID "<operator-object-guid>" --environment $environment
+azd env set HOSTED_ALLOWED_USER_ID pending --environment $environment
+azd env set W365_BLUEPRINT_CREDENTIAL_MODE client_secret --environment $environment
 pwsh -NoProfile -File .\scripts\Set-ViewerSecrets.ps1 `
-    -Environment "<azd-environment-name>" `
+    -Environment $environment `
     -BlueprintOnly
 ```
 
@@ -514,7 +517,8 @@ blocked on the tested host by `AADSTS700231`.
 After all prerequisites above are present, client-secret mode uses:
 
 ```powershell
-azd env set W365_BLUEPRINT_CREDENTIAL_MODE client_secret
+azd env set W365_BLUEPRINT_CREDENTIAL_MODE client_secret `
+    --environment "<azd-environment-name>"
 pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
    -Environment "<azd-environment-name>" `
    -TenantId "<Foundry-and-W365-tenant-guid>" `
@@ -528,7 +532,8 @@ Managed-identity mode requires explicit authorization for the exact discovered
 agent principal and remains blocked on the tested host:
 
 ```powershell
-azd env set W365_BLUEPRINT_CREDENTIAL_MODE managed_identity_federation
+azd env set W365_BLUEPRINT_CREDENTIAL_MODE managed_identity_federation `
+    --environment "<azd-environment-name>"
 pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
    -Environment "<azd-environment-name>" `
    -TenantId "<Foundry-and-W365-tenant-guid>" `
@@ -584,11 +589,15 @@ Windows activation sequence is:
 ```powershell
 # Bootstrap must already have produced VIEWER_PUBLIC_URL. State provisioning
 # always produces W365_KEY_VAULT_NAME.
-pwsh -NoProfile -File .\scripts\Configure-ViewerOidc.ps1
-pwsh -NoProfile -File .\scripts\Set-ViewerSecrets.ps1 -BlueprintOnly
-azd env set W365_BLUEPRINT_CREDENTIAL_MODE client_secret
-azd env set VIEWER_LIVE_ENABLED true
+$environment = "<azd-environment-name>"
+pwsh -NoProfile -File .\scripts\Configure-ViewerOidc.ps1 -Environment $environment
+pwsh -NoProfile -File .\scripts\Set-ViewerSecrets.ps1 `
+    -Environment $environment `
+    -BlueprintOnly
+azd env set W365_BLUEPRINT_CREDENTIAL_MODE client_secret --environment $environment
+azd env set VIEWER_LIVE_ENABLED true --environment $environment
 pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
+    -Environment $environment `
     -Mode DeployAll `
     -ConfirmResourceChanges
 ```
@@ -612,12 +621,15 @@ absent, stores both in the same vault, and reprovisions the viewer.
 unless the exact viewer UAMI federation is present in the W365 ownership
 manifest.
 
-Direct `azd up` runs print a pre-provision resource plan and a final resource
-table. Set `SAMPLE_LOG_LEVEL` to `summary` (default), `verbose`, or `debug`:
+After phase 2 is complete, `azd up` can be used for routine reruns of the fully
+configured environment. It prints a pre-provision resource plan and a final
+resource table. Do not use it to bootstrap a fresh W365-enabled environment.
+Set `SAMPLE_LOG_LEVEL` to `summary` (default), `verbose`, or `debug`:
 
 ```powershell
-azd env set SAMPLE_LOG_LEVEL verbose
-azd up
+$environment = "<azd-environment-name>"
+azd env set SAMPLE_LOG_LEVEL verbose --environment $environment
+azd up --environment $environment
 ```
 
 All Windows scripts also support PowerShell's common `-Verbose` and `-Debug`
@@ -626,9 +638,12 @@ sanitized decisions, resource IDs, and parameter context; secret, token,
 password, credential, and certificate values are always redacted.
 
 ```powershell
-azd up
+azd up --environment $environment
 # For a focused rerun with detailed diagnostics:
-pwsh -NoProfile -File .\scripts\Complete-AzdUp.ps1 -Verbose -Debug
+$env:AZURE_ENV_NAME = $environment
+pwsh -NoProfile -File .\scripts\Complete-AzdUp.ps1 `
+    -Verbose `
+    -Debug
 ```
 
 Agent and enabled viewer must use **exactly the same W365 identities and state
@@ -637,8 +652,9 @@ selects its UAMI; never overwrite Foundry's credential selection.
 
 ```powershell
 # All phase-2 values above must already be set.
-azd ai agent doctor
+azd ai agent doctor --environment $environment
 pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
+    -Environment $environment `
     -Mode DeployAgent `
     -ConfirmResourceChanges
 ```
@@ -650,6 +666,21 @@ discovery for the new version and compare all IDs with phase 1.
 Reject unexpected identity replacement before permitting tasks; do not silently
 rebind users, consent or FICs to replacements. A rollback must also preserve
 the accepted identity binding.
+
+After successful phase-2 redeployment and active-version verification, begin
+the first task with a **fresh hosted-agent session pinned to that immutable
+version**. Hosted sessions stay pinned to the version that created them; reusing
+a bootstrap session can return `w365_not_configured`.
+
+```powershell
+$environment = "<azd-environment-name>"
+$version = azd env get-value AGENT_WIN365_DESKTOP_AGENT_VERSION `
+    --environment $environment
+azd ai agent invoke win365-desktop-agent `
+    --environment $environment `
+    --version $version `
+    --new-session "<task>"
+```
 
 Network policies must allow Entra exchange, Blob, the Foundry project/model
 and `agent365.svc.cloud.microsoft`; an enabled viewer additionally needs its OIDC
@@ -670,8 +701,9 @@ before W365 access. The warning includes a `sha256:` partition fingerprint and
 correlation ID in both the structured 403 response and server log, not the raw
 user identity or tokens. Have the administrator
 correlate the invocation and set
-`azd env set HOSTED_ALLOWED_USER_ID "sha256:<fingerprint>"`, then redeploy with
-the same name and check identities again. Never enroll an uncorrelated caller.
+`azd env set HOSTED_ALLOWED_USER_ID "sha256:<fingerprint>" --environment
+$environment`, then redeploy with the same name and check identities again.
+Never enroll an uncorrelated caller.
 If the header is `missing`, stop and confirm platform support; do not disable
 the gate.
 
