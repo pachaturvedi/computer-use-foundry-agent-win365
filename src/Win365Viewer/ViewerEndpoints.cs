@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
+using Microsoft.AspNetCore.HttpOverrides;
 
 namespace Win365Agent;
 
@@ -22,6 +23,13 @@ public static class ViewerEndpoints
         });
         if (!settings.Local)
         {
+            builder.Services.Configure<ForwardedHeadersOptions>(options =>
+            {
+                options.ForwardedHeaders = ForwardedHeaders.XForwardedProto;
+                options.ForwardLimit = 1;
+                options.KnownIPNetworks.Clear();
+                options.KnownProxies.Clear();
+            });
             builder.Services.AddAuthentication(o =>
             { o.DefaultScheme = "cookie"; o.DefaultChallengeScheme = "oidc"; })
                 .AddCookie("cookie", o =>
@@ -69,6 +77,11 @@ public static class ViewerEndpoints
     /// <exception cref="InvalidOperationException">The configured screen-sharing frame origins are invalid.</exception>
     public static void Map(WebApplication app, Settings settings)
     {
+        if (!settings.Local)
+        {
+            app.UseForwardedHeaders();
+        }
+
         var sdk = settings.Https("SCREENSHARE_SDK_URL");
         var frames = settings.Required("SCREENSHARE_FRAME_ORIGINS").Split(' ', StringSplitOptions.RemoveEmptyEntries);
         // Require exact origins before interpolating them into CSP; paths or malformed values could weaken the policy.

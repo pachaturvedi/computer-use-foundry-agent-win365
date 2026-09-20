@@ -68,14 +68,12 @@ function Get-RecoveryEnvironmentValue {
 function Assert-NoRunningHostedSessions {
     param(
         [Parameter(Mandatory)][string]$EnvironmentName,
-        [Parameter(Mandatory)][string]$DeployedAgentName,
-        [Parameter(Mandatory)][string]$DeployedAgentVersion
+        [Parameter(Mandatory)][string]$DeployedAgentName
     )
 
     $json = Invoke-RecoveryAzd -Arguments @(
         'ai', 'agent', 'sessions', 'list',
         '--agent-name', $DeployedAgentName,
-        '--version', $DeployedAgentVersion,
         '--environment', $EnvironmentName,
         '--limit', '100',
         '--output', 'json'
@@ -201,8 +199,7 @@ $configurationNames = @(
     'W365_BLUEPRINT_CREDENTIAL_MODE',
     'OPERATOR_TENANT_ID',
     'OPERATOR_OBJECT_ID',
-    'FOUNDRY_AGENT_NAME',
-    'AGENT_WIN365_DESKTOP_AGENT_VERSION'
+    'FOUNDRY_AGENT_NAME'
 )
 $configuration = @{}
 foreach ($name in $configurationNames) {
@@ -229,8 +226,7 @@ else {
 Write-Host $modeMessage
 Assert-NoRunningHostedSessions `
     -EnvironmentName $environmentName `
-    -DeployedAgentName $configuration['FOUNDRY_AGENT_NAME'] `
-    -DeployedAgentVersion $configuration['AGENT_WIN365_DESKTOP_AGENT_VERSION']
+    -DeployedAgentName $configuration['FOUNDRY_AGENT_NAME']
 Write-Host 'Hosted-session check passed: no session is actively running.'
 
 $previousValues = @{}

@@ -1,4 +1,9 @@
 using System.Security.Claims;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Win365Agent;
 
 namespace Win365Viewer.Tests;
@@ -63,4 +68,30 @@ public sealed class ViewerEndpointsTests
             new Uri("https://viewer.example.com/"),
             computerUrl,
             token));
+
+    [Fact]
+    public void RemoteViewerTrustsOneForwardedProtocolHop()
+    {
+        var builder = WebApplication.CreateBuilder();
+        var settings = new Settings(
+            new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["OPERATOR_TENANT_ID"] = "11111111-1111-1111-1111-111111111111",
+                    ["OPERATOR_OBJECT_ID"] = "22222222-2222-2222-2222-222222222222",
+                    ["VIEWER_CLIENT_ID"] = "33333333-3333-3333-3333-333333333333",
+                    ["VIEWER_CLIENT_SECRET"] = "test-only",
+                    ["VIEWER_PUBLIC_URL"] = "https://viewer.example.com"
+                })
+                .Build());
+
+        ViewerEndpoints.Configure(builder, settings);
+
+        using var provider = builder.Services.BuildServiceProvider();
+        var options = provider.GetRequiredService<IOptions<ForwardedHeadersOptions>>().Value;
+        Assert.Equal(ForwardedHeaders.XForwardedProto, options.ForwardedHeaders);
+        Assert.Equal(1, options.ForwardLimit);
+        Assert.Empty(options.KnownIPNetworks);
+        Assert.Empty(options.KnownProxies);
+    }
 }
