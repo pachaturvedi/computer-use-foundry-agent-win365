@@ -9,6 +9,24 @@ namespace Win365Agent;
 /// </summary>
 public sealed class BlueprintTokenProvider : IBlueprintTokenProvider
 {
+    private static readonly Action<ILogger, string, Exception?> _logBlueprintTokenStart =
+        LoggerMessage.Define<string>(
+            LogLevel.Information,
+            new EventId(2001, nameof(_logBlueprintTokenStart)),
+            "Starting blueprint token acquisition using credential mode {CredentialMode}.");
+
+    private static readonly Action<ILogger, Exception?> _logManagedIdentityAssertionStart =
+        LoggerMessage.Define(
+            LogLevel.Information,
+            new EventId(2002, nameof(_logManagedIdentityAssertionStart)),
+            "Requesting managed-identity assertion for blueprint exchange.");
+
+    private static readonly Action<ILogger, DateTimeOffset, Exception?> _logBlueprintTokenSuccess =
+        LoggerMessage.Define<DateTimeOffset>(
+            LogLevel.Information,
+            new EventId(2003, nameof(_logBlueprintTokenSuccess)),
+            "Blueprint token acquisition succeeded; token expires at {ExpiresOnUtc}.");
+
     private readonly TokenCredential _credential;
     private readonly HttpClient _http;
     private readonly ILogger<BlueprintTokenProvider>? _logger;
@@ -62,13 +80,18 @@ public sealed class BlueprintTokenProvider : IBlueprintTokenProvider
     /// <inheritdoc/>
     public async Task<AccessToken> GetAsync(CancellationToken cancellationToken)
     {
+        if (_logger is not null)
+        {
+            _logBlueprintTokenStart(_logger, _settings.BlueprintCredentialMode, null);
+        }
+
         if (_settings.BlueprintCredentialMode == "client_secret")
         {
             var secret = _secretResolver is not null
                 ? await _secretResolver.GetSecretAsync(cancellationToken)
                 : _settings.Required("W365_CLIENT_SECRET");
 
-            return await AgentUserTokenProvider.ExchangeAsync(
+            var token = await AgentUserTokenProvider.ExchangeAsync(
                 _http,
                 _settings,
                 new Dictionary<string, string>
@@ -82,13 +105,25 @@ public sealed class BlueprintTokenProvider : IBlueprintTokenProvider
                 cancellationToken,
                 "blueprint",
                 _logger);
+
+            if (_logger is not null)
+            {
+                _logBlueprintTokenSuccess(_logger, token.ExpiresOn, null);
+            }
+
+            return token;
+        }
+
+        if (_logger is not null)
+        {
+            _logManagedIdentityAssertionStart(_logger, null);
         }
 
         var assertion = await _credential.GetTokenAsync(
             new TokenRequestContext([AgentUserTokenProvider.Exchange]),
             cancellationToken);
 
-        return await AgentUserTokenProvider.ExchangeAsync(
+        var result = await AgentUserTokenProvider.ExchangeAsync(
             _http,
             _settings,
             new Dictionary<string, string>
@@ -103,5 +138,12 @@ public sealed class BlueprintTokenProvider : IBlueprintTokenProvider
             cancellationToken,
             "blueprint",
             _logger);
+
+        if (_logger is not null)
+        {
+            _logBlueprintTokenSuccess(_logger, result.ExpiresOn, null);
+        }
+
+        return result;
     }
 }

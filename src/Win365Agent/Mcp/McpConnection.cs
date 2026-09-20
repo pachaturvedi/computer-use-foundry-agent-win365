@@ -40,17 +40,53 @@ public sealed class McpConnection(
     Settings settings,
     ILogger<McpConnection>? logger = null)
 {
-    private static readonly Action<ILogger, string, string, Exception?> _logToolError =
-        LoggerMessage.Define<string, string>(
-            LogLevel.Error,
-            new EventId(1, nameof(_logToolError)),
-            "W365 MCP tool {ToolName} reported an error. Raw result (diagnostics only, not shown to the model): {Result}");
-
-    private static readonly Action<ILogger, string, Exception?> _logRpcError =
+    private static readonly Action<ILogger, string, Exception?> _logToolError =
         LoggerMessage.Define<string>(
             LogLevel.Error,
+            new EventId(1, nameof(_logToolError)),
+            "W365 MCP tool {ToolName} reported an error. Inspect server-side diagnostics for correlation; raw remote payload is not logged.");
+
+    private static readonly Action<ILogger, Exception?> _logRpcError =
+        LoggerMessage.Define(
+            LogLevel.Error,
             new EventId(2, nameof(_logRpcError)),
-            "W365 MCP JSON-RPC call reported an error. Raw error (diagnostics only, not shown to the model): {Error}");
+            "W365 MCP JSON-RPC call reported an error. Raw remote payload is not logged.");
+
+    private static readonly Action<ILogger, string, Exception?> _logInitializeStart =
+        LoggerMessage.Define<string>(
+            LogLevel.Information,
+            new EventId(10, nameof(_logInitializeStart)),
+            "Initializing W365 MCP connection with requested protocol {ProtocolVersion}.");
+
+    private static readonly Action<ILogger, string, bool, Exception?> _logInitializeSuccess =
+        LoggerMessage.Define<string, bool>(
+            LogLevel.Information,
+            new EventId(11, nameof(_logInitializeSuccess)),
+            "Initialized W365 MCP connection with negotiated protocol {ProtocolVersion}; session established {HasSession}.");
+
+    private static readonly Action<ILogger, int, Exception?> _logCatalogLoaded =
+        LoggerMessage.Define<int>(
+            LogLevel.Information,
+            new EventId(12, nameof(_logCatalogLoaded)),
+            "Loaded {ToolCount} W365 MCP tools from the advertised catalog.");
+
+    private static readonly Action<ILogger, string, Exception?> _logToolCallStart =
+        LoggerMessage.Define<string>(
+            LogLevel.Information,
+            new EventId(13, nameof(_logToolCallStart)),
+            "Calling W365 MCP tool {ToolName}.");
+
+    private static readonly Action<ILogger, string, Exception?> _logToolCallSuccess =
+        LoggerMessage.Define<string>(
+            LogLevel.Information,
+            new EventId(14, nameof(_logToolCallSuccess)),
+            "W365 MCP tool {ToolName} completed successfully.");
+
+    private static readonly Action<ILogger, string, bool, bool, Exception?> _logRpcSend =
+        LoggerMessage.Define<string, bool, bool>(
+            LogLevel.Information,
+            new EventId(15, nameof(_logRpcSend)),
+            "Sending W365 MCP JSON-RPC method {Method}; notification {Notification}; session established {HasSession}.");
 
     private int _sequence;
     private string _version = "2025-06-18";
@@ -60,6 +96,11 @@ public sealed class McpConnection(
     /// <exception cref="InvalidOperationException">The server selects an unsupported protocol version.</exception>
     public async Task InitializeAsync(CancellationToken ct)
     {
+        if (logger is not null)
+        {
+            _logInitializeStart(logger, _version, null);
+        }
+
         var result = await SendAsync("initialize", new
         {
             protocolVersion = _version,
@@ -73,6 +114,11 @@ public sealed class McpConnection(
         }
 
         await SendAsync("notifications/initialized", new { }, true, ct);
+
+        if (logger is not null)
+        {
+            _logInitializeSuccess(logger, _version, _transportSession is not null, null);
+        }
     }
 
     /// <summary>Gets every page of the MCP tool catalog.</summary>
@@ -96,6 +142,12 @@ public sealed class McpConnection(
                 throw new InvalidOperationException("Unbounded MCP catalog.");
             }
         } while (cursor is not null);
+
+        if (logger is not null)
+        {
+            _logCatalogLoaded(logger, tools.Count, null);
+        }
+
         return tools;
     }
     /// <summary>Invokes an MCP tool without automatically replaying failed operations.</summary>
@@ -106,22 +158,37 @@ public sealed class McpConnection(
     /// <exception cref="McpToolException">The tool reports an error.</exception>
     public async Task<JsonElement> CallAsync(string name, object arguments, CancellationToken ct)
     {
+        if (logger is not null)
+        {
+            _logToolCallStart(logger, name, null);
+        }
+
         var result = await SendAsync("tools/call", new { name, arguments }, false, ct);
         if (result.TryGetProperty("isError", out var error) && error.ValueKind == JsonValueKind.True)
         {
             var rawResult = result.GetRawText();
             if (logger is not null)
             {
-                _logToolError(logger, name, Truncate(rawResult), null);
+                _logToolError(logger, name, null);
             }
 
             throw new McpToolException(name, rawResult);
+        }
+
+        if (logger is not null)
+        {
+            _logToolCallSuccess(logger, name, null);
         }
 
         return result;
     }
     private async Task<JsonElement> SendAsync(string method, object parameters, bool notification, CancellationToken ct)
     {
+        if (logger is not null)
+        {
+            _logRpcSend(logger, method, notification, _transportSession is not null, null);
+        }
+
         var id = Interlocked.Increment(ref _sequence);
         var payload = new Dictionary<string, object> { ["jsonrpc"] = "2.0", ["method"] = method, ["params"] = parameters };
         if (!notification)
@@ -223,7 +290,7 @@ public sealed class McpConnection(
         {
             if (logger is not null)
             {
-                _logRpcError(logger, Truncate(rpcError.GetRawText()), null);
+                _logRpcError(logger, null);
             }
 
             throw new InvalidOperationException("MCP returned a JSON-RPC error; operation is not replayed.");
@@ -231,8 +298,6 @@ public sealed class McpConnection(
 
         return root.GetProperty("result").Clone();
     }
-
-    private static string Truncate(string text) => text.Length <= 2048 ? text : text[..2048] + "...(truncated)";
     internal static string? Field(JsonElement node, string name)
     {
         if (node.ValueKind == JsonValueKind.Object)

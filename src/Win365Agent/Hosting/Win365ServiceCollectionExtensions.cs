@@ -40,7 +40,8 @@ internal static class Win365ServiceCollectionExtensions
         builder.Services.AddSingleton<ISessionStore>(services =>
             new BlobSessionStore(
                 settings.Https("SESSION_BLOB_URI"),
-                services.GetRequiredService<TokenCredential>()));
+                services.GetRequiredService<TokenCredential>(),
+                services.GetRequiredService<ILogger<BlobSessionStore>>()));
         builder.Services.AddHttpContextAccessor();
     }
 }

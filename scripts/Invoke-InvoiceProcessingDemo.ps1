@@ -142,6 +142,13 @@ function Protect-DemoOutput {
         '<identifier-redacted>')
 }
 
+function Get-DemoTextSha256 {
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
+
+    $bytes = [Text.Encoding]::UTF8.GetBytes($Text)
+    return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+}
+
 function Get-DemoRecoveryMessage {
     param([Parameter(Mandatory)][string]$EnvironmentName)
 
@@ -246,10 +253,15 @@ try {
     $prompt = $promptTemplate.
         Replace('{{INVOICE_URI}}', $InvoiceUri.AbsoluteUri, [StringComparison]::Ordinal).
         Replace('{{OUTPUT_FILE_NAME}}', $outputFileName, [StringComparison]::Ordinal)
+    $promptSha256 = Get-DemoTextSha256 -Text $prompt
 
     Write-Host 'Invoice demo mode: live agent invocation; no Azure or Blob infrastructure will be provisioned or migrated.'
     Write-Host "Environment: $environmentName"
     Write-Host "Agent target: $AgentName version $version (active Responses endpoint verified)"
+    Write-Host "Responses endpoint: $responsesEndpointText"
+    Write-Host "Invoice source: $($InvoiceUri.AbsoluteUri)"
+    Write-Host "Prompt template: $PromptTemplatePath"
+    Write-Host "Prompt payload: $($prompt.Length) characters; sha256=$promptSha256"
     Write-Host "Run suffix:  $runSuffix"
     Write-Host "Output file: $outputFileName"
     Write-Host 'Human handoff: disabled for this basic scenario; the viewer is observation-only.'
@@ -266,6 +278,7 @@ try {
         $arguments += @('--user-identity', $UserIdentity)
     }
     $arguments += $prompt
+    Write-Host "Invoking: azd ai agent invoke $AgentName --environment $environmentName --version $version --new-session --new-conversation --timeout $TimeoutSeconds"
 
     $viewerDetected = $false
     $browserOpened = $false

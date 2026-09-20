@@ -18,6 +18,36 @@ public sealed class AgentUserTokenProvider(
     ILogger<AgentUserTokenProvider>? logger = null)
     : IAgentUserTokenProvider, IDisposable
 {
+    private static readonly Action<ILogger, string, Exception?> _logTokenRequestStart =
+        LoggerMessage.Define<string>(
+            LogLevel.Information,
+            new EventId(1101, nameof(_logTokenRequestStart)),
+            "Requesting agent-user token for audience {Audience}.");
+
+    private static readonly Action<ILogger, string, DateTimeOffset, Exception?> _logTokenCacheHit =
+        LoggerMessage.Define<string, DateTimeOffset>(
+            LogLevel.Information,
+            new EventId(1102, nameof(_logTokenCacheHit)),
+            "Reusing cached agent-user token for audience {Audience}; token expires at {ExpiresOnUtc}.");
+
+    private static readonly Action<ILogger, string, DateTimeOffset, Exception?> _logTokenRequestSuccess =
+        LoggerMessage.Define<string, DateTimeOffset>(
+            LogLevel.Information,
+            new EventId(1103, nameof(_logTokenRequestSuccess)),
+            "Acquired agent-user token for audience {Audience}; token expires at {ExpiresOnUtc}.");
+
+    private static readonly Action<ILogger, string, string, Exception?> _logExchangeStart =
+        LoggerMessage.Define<string, string>(
+            LogLevel.Information,
+            new EventId(1104, nameof(_logExchangeStart)),
+            "Starting Entra token exchange stage {Stage} for scope {Scope}.");
+
+    private static readonly Action<ILogger, string, DateTimeOffset, Exception?> _logExchangeSuccess =
+        LoggerMessage.Define<string, DateTimeOffset>(
+            LogLevel.Information,
+            new EventId(1105, nameof(_logExchangeSuccess)),
+            "Completed Entra token exchange stage {Stage}; token expires at {ExpiresOnUtc}.");
+
     /// <summary>Identifies the audience used for Windows 365 MCP requests.</summary>
     public const string Atg = "da81128c-e5b5-4f9e-8d89-50d906f107c5";
 
@@ -48,12 +78,22 @@ public sealed class AgentUserTokenProvider(
             throw new ArgumentException("Unsupported token audience.", nameof(audience));
         }
 
+        if (logger is not null)
+        {
+            _logTokenRequestStart(logger, audience, null);
+        }
+
         await _gate.WaitAsync(cancellationToken);
         try
         {
             if (_cache.TryGetValue(audience, out var cached) &&
                 cached.ExpiresOn > DateTimeOffset.UtcNow.AddMinutes(5))
             {
+                if (logger is not null)
+                {
+                    _logTokenCacheHit(logger, audience, cached.ExpiresOn, null);
+                }
+
                 return cached;
             }
 
@@ -96,6 +136,11 @@ public sealed class AgentUserTokenProvider(
                 "agent-user",
                 logger);
             _cache[audience] = result;
+            if (logger is not null)
+            {
+                _logTokenRequestSuccess(logger, audience, result.ExpiresOn, null);
+            }
+
             return result;
         }
         finally
@@ -112,6 +157,11 @@ public sealed class AgentUserTokenProvider(
         string stage = "token",
         ILogger? logger = null)
     {
+        if (logger is not null)
+        {
+            _logExchangeStart(logger, stage, form["scope"], null);
+        }
+
         using var response = await http.PostAsync(
             $"https://login.microsoftonline.com/{settings.Tenant}/oauth2/v2.0/token",
             new FormUrlEncodedContent(form),
@@ -178,7 +228,13 @@ public sealed class AgentUserTokenProvider(
             throw new InvalidOperationException("Invalid token response.");
         }
 
-        return new AccessToken(token, DateTimeOffset.UtcNow.AddSeconds(expires));
+        var accessToken = new AccessToken(token, DateTimeOffset.UtcNow.AddSeconds(expires));
+        if (logger is not null)
+        {
+            _logExchangeSuccess(logger, stage, accessToken.ExpiresOn, null);
+        }
+
+        return accessToken;
     }
 
     /// <inheritdoc/>

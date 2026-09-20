@@ -8,6 +8,27 @@ internal sealed class DesktopRequestMiddleware(
     Settings settings,
     ILogger<DesktopRequestMiddleware> logger)
 {
+    private static readonly Action<ILogger, string, Exception?> _logDesktopRequestStart =
+        LoggerMessage.Define<string>(
+            LogLevel.Information,
+            new EventId(4, nameof(_logDesktopRequestStart)),
+            "Accepted bounded desktop request {TraceId}."
+        );
+
+    private static readonly Action<ILogger, string, Exception?> _logDesktopRequestComplete =
+        LoggerMessage.Define<string>(
+            LogLevel.Information,
+            new EventId(5, nameof(_logDesktopRequestComplete)),
+            "Completed bounded desktop request {TraceId}."
+        );
+
+    private static readonly Action<ILogger, string, Exception?> _logDesktopCleanupComplete =
+        LoggerMessage.Define<string>(
+            LogLevel.Information,
+            new EventId(6, nameof(_logDesktopCleanupComplete)),
+            "Completed desktop cleanup for request {TraceId}."
+        );
+
     private static readonly Action<ILogger, string, string, Exception?> _logAccessDenied =
         LoggerMessage.Define<string, string>(
             LogLevel.Warning,
@@ -77,11 +98,13 @@ internal sealed class DesktopRequestMiddleware(
             logger);
         context.Items[DesktopRequestContext.ItemKey] = desktop;
         context.Items[DesktopRequestContext.DeadlineItemKey] = deadline.Token;
+        _logDesktopRequestStart(logger, context.TraceIdentifier, null);
 
         try
         {
             await next(context);
             await desktop.WaitForResumeAsync(deadline.Token);
+            _logDesktopRequestComplete(logger, context.TraceIdentifier, null);
         }
         catch (OperationCanceledException) when (!clientAborted.IsCancellationRequested)
         {
@@ -109,6 +132,7 @@ internal sealed class DesktopRequestMiddleware(
             try
             {
                 await desktop.CloseAsync(cleanup.Token);
+                _logDesktopCleanupComplete(logger, context.TraceIdentifier, null);
             }
             catch (Exception exception)
             {

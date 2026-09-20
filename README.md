@@ -48,6 +48,11 @@ pwsh -NoProfile -File .\scripts\Start-Local.ps1
 
 Setup validates `.env`, restores, formats, builds, and tests. Start launches
 the prebuilt agent and viewer bootstrap processes until you press `Ctrl+C`.
+The agent and viewer now default to `Information` application logs. Override
+that in the same PowerShell session with
+`$env:Logging__LogLevel__Default = 'Warning'` or
+`$env:Logging__LogLevel__Default = 'Debug'` before starting locally or deploying
+when you need less or more runtime detail.
 
 | Endpoint | Expected result |
 | --- | --- |

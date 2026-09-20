@@ -11,7 +11,7 @@ if (settings.Local)
     builder.Configuration["AllowedHosts"] = "localhost;127.0.0.1;[::1]";
 }
 
-builder.Logging.SetMinimumLevel(LogLevel.Warning);
+builder.Logging.SetMinimumLevel(LogLevel.Information);
 builder.Logging.AddFilter("Azure", LogLevel.Warning);
 builder.Logging.AddFilter("System.Net.Http.HttpClient", LogLevel.Warning);
 
@@ -55,7 +55,8 @@ builder.Services.AddSingleton<IAgentUserTokenProvider, AgentUserTokenProvider>()
 builder.Services.AddSingleton<ISessionStore>(services =>
     new BlobSessionStore(
         settings.Https("SESSION_BLOB_URI"),
-        services.GetRequiredService<TokenCredential>()));
+    services.GetRequiredService<TokenCredential>(),
+    services.GetRequiredService<ILogger<BlobSessionStore>>()));
 builder.Services.AddHttpContextAccessor();
 
 ViewerEndpoints.Configure(builder, settings);

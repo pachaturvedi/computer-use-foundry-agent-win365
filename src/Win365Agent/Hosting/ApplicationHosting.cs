@@ -15,7 +15,7 @@ internal static class ApplicationHosting
             builder.Configuration["AllowedHosts"] = "localhost;127.0.0.1;[::1]";
         }
 
-        builder.Logging.SetMinimumLevel(LogLevel.Warning);
+        builder.Logging.SetMinimumLevel(LogLevel.Information);
         builder.Logging.AddFilter("Azure", LogLevel.Warning);
         builder.Logging.AddFilter("System.Net.Http.HttpClient", LogLevel.Warning);
         builder.Logging.AddFilter("Microsoft.Agents", LogLevel.Warning);
