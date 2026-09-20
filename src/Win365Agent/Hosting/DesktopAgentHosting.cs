@@ -20,9 +20,10 @@ internal static class DesktopAgentHosting
         DesktopRuntime Current() => DesktopRequestContext.Current(accessor);
         async Task<object> OpenDesktopAsync(CancellationToken cancellationToken)
         {
+            using var linked = DesktopRequestContext.LinkDeadline(accessor, cancellationToken);
             try
             {
-                return await Current().OpenAsync(cancellationToken);
+                return await Current().OpenAsync(linked.Token);
             }
             catch (RequestFailedException exception)
             {
@@ -60,6 +61,19 @@ internal static class DesktopAgentHosting
                     message = exception.Message
                 };
             }
+            // A bounded dependency call (identity exchange or MCP transport) can time out on its own
+            // HttpClient.Timeout well before the overall per-task deadline elapses. Left uncaught, that
+            // OperationCanceledException propagates out of the tool call while the request is still live,
+            // silently aborting the whole response instead of reporting a diagnosable failure.
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                return new
+                {
+                    status = "error",
+                    code = "w365_dependency_timeout",
+                    message = "A Windows 365 dependency call (identity exchange or MCP transport) did not respond in time."
+                };
+            }
             catch (InvalidOperationException exception)
             {
                 return new
@@ -82,25 +96,37 @@ internal static class DesktopAgentHosting
                 "list_desktop_tools",
                 "List allowed tools and their live JSON input schemas after opening the desktop."),
             AIFunctionFactory.Create(
-                (string toolName, JsonElement arguments, CancellationToken cancellationToken) =>
-                    Current().ExecuteAsync(toolName, arguments, cancellationToken),
+                async (string toolName, JsonElement arguments, CancellationToken cancellationToken) =>
+                {
+                    using var linked = DesktopRequestContext.LinkDeadline(accessor, cancellationToken);
+                    return await Current().ExecuteAsync(toolName, arguments, linked.Token);
+                },
                 "desktop_action",
                 "Call one allowed W365 tool with arguments matching its live schema. " +
                 "Screenshots are images. Never supply session identifiers."),
             AIFunctionFactory.Create(
-                (CancellationToken cancellationToken) => Current().HandoffAsync(cancellationToken),
+                async (CancellationToken cancellationToken) =>
+                {
+                    using var linked = DesktopRequestContext.LinkDeadline(accessor, cancellationToken);
+                    return await Current().HandoffAsync(linked.Token);
+                },
                 "request_human_control",
                 "Pause automation and return the authorized operator's take-control link. " +
                 "Subsequent actions wait for explicit human resume."),
             AIFunctionFactory.Create(
-                (CancellationToken cancellationToken) => Current().WaitForResumeAsync(cancellationToken),
+                async (CancellationToken cancellationToken) =>
+                {
+                    using var linked = DesktopRequestContext.LinkDeadline(accessor, cancellationToken);
+                    return await Current().WaitForResumeAsync(linked.Token);
+                },
                 "wait_for_human",
                 "After displaying the handoff link, wait until the operator explicitly resumes from the viewer. " +
                 "Do not end the task while waiting."),
             AIFunctionFactory.Create(
                 async (CancellationToken cancellationToken) =>
                 {
-                    await Current().CloseAsync(cancellationToken);
+                    using var linked = DesktopRequestContext.LinkDeadline(accessor, cancellationToken);
+                    await Current().CloseAsync(linked.Token);
                     return "Desktop session released.";
                 },
                 "close_desktop",
