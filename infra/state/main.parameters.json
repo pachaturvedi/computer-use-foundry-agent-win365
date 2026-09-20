@@ -7,6 +7,7 @@
     "deployState": { "value": "${DEPLOY_STATE}" },
     "resourcePrefix": { "value": "${RESOURCE_PREFIX}" },
     "resourceGroupName": { "value": "${AZURE_RESOURCE_GROUP}" },
-    "agentPrincipalId": { "value": "${STATE_AGENT_PRINCIPAL_ID}" }
+    "agentPrincipalId": { "value": "${STATE_AGENT_PRINCIPAL_ID}" },
+    "blueprintCredentialMode": { "value": "${W365_BLUEPRINT_CREDENTIAL_MODE}" }
   }
 }

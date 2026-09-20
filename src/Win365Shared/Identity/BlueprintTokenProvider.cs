@@ -12,6 +12,7 @@ public sealed class BlueprintTokenProvider : IBlueprintTokenProvider
     private readonly TokenCredential _credential;
     private readonly HttpClient _http;
     private readonly ILogger<BlueprintTokenProvider>? _logger;
+    private readonly IBlueprintSecretResolver? _secretResolver;
     private readonly Settings _settings;
 
     /// <summary>Initializes a blueprint token provider.</summary>
@@ -20,11 +21,17 @@ public sealed class BlueprintTokenProvider : IBlueprintTokenProvider
     /// <param name="viewerMode">
     /// <see langword="true"/> to use the viewer managed identity; otherwise, use the hosted instance identity.
     /// </param>
+    /// <param name="logger">The diagnostic logger.</param>
+    /// <param name="secretResolver">
+    /// Resolves the <c>client_secret</c> mode blueprint secret from Key Vault using the runtime's
+    /// own identity. Required only when <c>W365_BLUEPRINT_CREDENTIAL_MODE</c> is <c>client_secret</c>.
+    /// </param>
     public BlueprintTokenProvider(
         HttpClient http,
         Settings settings,
         bool viewerMode,
-        ILogger<BlueprintTokenProvider> logger)
+        ILogger<BlueprintTokenProvider> logger,
+        IBlueprintSecretResolver? secretResolver = null)
         : this(
             http,
             settings,
@@ -32,7 +39,8 @@ public sealed class BlueprintTokenProvider : IBlueprintTokenProvider
             new ManagedIdentityCredential(
                 ManagedIdentityId.FromUserAssignedClientId(
                     settings.Required(viewerMode ? "AZURE_CLIENT_ID" : "W365_AGENT_ID"))),
-            logger)
+            logger,
+            secretResolver)
     {
     }
 
@@ -41,12 +49,14 @@ public sealed class BlueprintTokenProvider : IBlueprintTokenProvider
         Settings settings,
         bool viewerMode,
         TokenCredential credential,
-        ILogger<BlueprintTokenProvider>? logger = null)
+        ILogger<BlueprintTokenProvider>? logger = null,
+        IBlueprintSecretResolver? secretResolver = null)
     {
         _http = http;
         _settings = settings;
         _credential = credential;
         _logger = logger;
+        _secretResolver = secretResolver;
     }
 
     /// <inheritdoc/>
@@ -54,13 +64,17 @@ public sealed class BlueprintTokenProvider : IBlueprintTokenProvider
     {
         if (_settings.BlueprintCredentialMode == "client_secret")
         {
+            var secret = _secretResolver is not null
+                ? await _secretResolver.GetSecretAsync(cancellationToken)
+                : _settings.Required("W365_CLIENT_SECRET");
+
             return await AgentUserTokenProvider.ExchangeAsync(
                 _http,
                 _settings,
                 new Dictionary<string, string>
                 {
                     ["client_id"] = _settings.Required("W365_BLUEPRINT_ID"),
-                    ["client_secret"] = _settings.Required("W365_CLIENT_SECRET"),
+                    ["client_secret"] = secret,
                     ["grant_type"] = "client_credentials",
                     ["scope"] = AgentUserTokenProvider.Exchange,
                     ["fmi_path"] = _settings.Required("W365_AGENT_ID")

@@ -41,6 +41,28 @@ The modes are explicit and mutually exclusive. There is no fallback from one
 mode to another. In particular, a managed-identity failure never falls back to
 a secret, certificate, Azure CLI token or local user credential.
 
+## Blueprint client secret delivery
+
+In `client_secret` mode, the hosted agent never receives the raw secret value
+as an environment variable. `infra/state/keyvault.bicep` grants the agent's
+own runtime principal (the same principal already used for shared Blob state
+access; see `STATE_AGENT_PRINCIPAL_ID`) a least-privilege **Key Vault Secrets
+User** role on the shared vault. At startup, `KeyVaultBlueprintSecretResolver`
+uses that identity to fetch `w365-blueprint-client-secret` directly from
+`W365_KEY_VAULT_NAME` (the only client-secret-mode configuration the agent
+requires) and caches it in memory for the process lifetime; rotating the
+secret requires a redeploy so a fresh process fetches the new value.
+`BlueprintTokenProvider` falls back to reading a plain `W365_CLIENT_SECRET`
+value only when no resolver is configured, which keeps the **viewer**
+(a Container App) working unchanged: it still receives the secret through its
+own native Key Vault secret reference (`infra/viewer.bicep`), using its own
+UAMI's separately granted Key Vault Secrets User role. Never print, hash for
+display, serialize into documentation, or commit the resolved value.
+
+Certificate-based delivery (`key_vault_certificate`) remains a separate,
+unimplemented mode reserved for a later phase; this change does not start
+that work.
+
 ## Three-stage agent-user tokens
 
 `AgentUserTokenProvider` uses the explicitly selected T1 path:
