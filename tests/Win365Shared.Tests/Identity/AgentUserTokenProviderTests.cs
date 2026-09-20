@@ -5,7 +5,7 @@ using Azure.Core;
 using Microsoft.Extensions.Configuration;
 using Win365Agent;
 
-namespace Win365Agent.Tests;
+namespace Win365Shared.Tests;
 
 public sealed class AgentUserTokenProviderTests
 {

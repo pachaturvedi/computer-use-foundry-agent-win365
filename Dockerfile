@@ -1,6 +1,7 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 COPY NuGet.Config .
+COPY Directory.Packages.props .
 COPY src/Win365Shared/Win365Shared.csproj src/Win365Shared/
 COPY src/Win365Viewer/Win365Viewer.csproj src/Win365Viewer/
 RUN dotnet restore src/Win365Viewer/Win365Viewer.csproj --configfile NuGet.Config

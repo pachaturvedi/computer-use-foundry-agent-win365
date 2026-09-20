@@ -3,7 +3,8 @@
 ## Purpose and architecture
 
 - This is a Windows-first .NET 10 sample in which one Microsoft Foundry hosted Responses agent calls Windows 365 Computer Use tools through Agent 365 MCP.
-- Keep the application a modular monolith under `src/Win365Agent`; mirror feature folders under `tests/Win365Agent.Tests`.
+- Keep each production project paired with its corresponding test project under
+  `tests\<Project>.Tests`; mirror feature folders within that test project.
 - Keep `Program.cs` as a composition root. Reuse existing configuration, identity, MCP, state, desktop, hosting, responses, and viewer abstractions.
 - The optional viewer is separate from direct W365 execution. Do not make `VIEWER_PUBLIC_URL` mandatory for agent-only operation.
 
@@ -69,7 +70,7 @@
 
   ```powershell
   dotnet build .\Win365FoundrySample.slnx --configuration Release
-  dotnet test .\tests\Win365Agent.Tests\Win365Agent.Tests.csproj --configuration Release --no-build
+  dotnet test .\Win365FoundrySample.slnx --configuration Release --no-build
   dotnet format .\Win365FoundrySample.slnx --verify-no-changes --no-restore --verbosity minimal
   ```
 

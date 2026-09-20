@@ -15,7 +15,8 @@ applyTo: "src/**/*.cs,tests/**/*.cs"
 - Use repository-standard typed or source-generated logging. Do not log tokens, credentials, raw identities, session IDs, state blobs, or private URLs.
 - Throw explicit exceptions for invalid configuration and unsafe state. Do not add broad catches, silent defaults, or success-shaped fallbacks.
 - Keep public APIs documented where the project already requires XML documentation.
-- Mirror production feature folders under `tests/Win365Agent.Tests`.
+- Mirror production feature folders under the corresponding
+  `tests/<Project>.Tests` project.
 - Use fake token providers and HTTP handlers for unit tests. Default tests must remain offline and deterministic.
 - Cover success, missing configuration, invalid input, ambiguous remote outcomes, cancellation, and cleanup when behavior changes.
 - Do not add production abstractions solely to make a test convenient.

@@ -1,5 +1,5 @@
 ---
-applyTo: "src/Win365Agent/Identity/**/*.cs,src/Win365Agent/Configuration/**/*.cs,tests/Win365Agent.Tests/Identity/**/*.cs,tests/Win365Agent.Tests/Configuration/**/*.cs,azure.yaml,scripts/Setup-W365.ps1,scripts/Get-FoundryIdentity.ps1,scripts/Invoke-W365SetupFlow.ps1,docs/AUTHENTICATION.md,docs/W365-SETUP.md"
+applyTo: "src/Win365Shared/Identity/**/*.cs,src/Win365Shared/Configuration/**/*.cs,tests/Win365Shared.Tests/Identity/**/*.cs,tests/Win365Shared.Tests/Configuration/**/*.cs,azure.yaml,scripts/Setup-W365.ps1,scripts/Get-FoundryIdentity.ps1,scripts/Invoke-W365SetupFlow.ps1,docs/AUTHENTICATION.md,docs/W365-SETUP.md"
 ---
 
 # Identity and authentication
