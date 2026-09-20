@@ -175,12 +175,24 @@ The normal deployment publishes the bootstrap version with
 `W365_ENABLED=false`. The Windows `postup` hook then requests explicit W365
 resource approval, uses device-code Graph authentication, creates or validates
 the environment-owned pool and agent user, persists the ownership manifest,
-and deploys the same agent name again with `W365_ENABLED=true`. A failed W365
-step leaves the bootstrap agent disabled and prints the manifest path needed
-for recovery or teardown. The agent-user UPN is derived from the tenant's
-verified default user-creation domain; it does not assume an
+and deploys the same agent name again with `W365_ENABLED=true`. That phase-two
+deployment also runs a fresh-session smoke invocation, so azd updates its saved
+session to the active W365-enabled version. A failed W365 step leaves the
+bootstrap agent disabled and prints the manifest path needed for recovery or
+teardown. The agent-user UPN is derived from the tenant's verified default
+user-creation domain; it does not assume an
 `onmicrosoft.com` suffix. `-AgentUserPrincipalName` and `-AgentUserDomain`
 remain optional overrides.
+
+After this phase transition, begin the first task with a **fresh hosted-agent
+session pinned to the active immutable version**. Hosted sessions are pinned to
+the version that created them; reusing a bootstrap session can therefore return
+`w365_not_configured` even though a newer active version is W365-ready.
+
+```powershell
+$version = azd env get-value AGENT_WIN365_DESKTOP_AGENT_VERSION
+azd ai agent invoke win365-desktop-agent --version $version --new-session "<task>"
+```
 
 Keep `W365_ENABLED=false`, `DEPLOY_STATE=false`, and `DEPLOY_VIEWER=false` for
 this bootstrap pass unless the later phases are explicitly approved. Existing-

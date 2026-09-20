@@ -24,7 +24,8 @@ internal sealed class DesktopRequestMiddleware(
         HttpContext context,
         HttpClient http,
         IAgentUserTokenProvider tokenProvider,
-        ISessionStore sessionStore)
+        ISessionStore sessionStore,
+        ILogger<McpConnection> mcpLogger)
     {
         if (!ResponseRequestValidator.IsCreate(context.Request))
         {
@@ -59,7 +60,7 @@ internal sealed class DesktopRequestMiddleware(
         deadline.CancelAfter(TimeSpan.FromMinutes(10));
         context.RequestAborted = deadline.Token;
         using var desktop = new DesktopRuntime(
-            new McpConnection(http, tokenProvider, settings),
+            new McpConnection(http, tokenProvider, settings, mcpLogger),
             sessionStore,
             settings,
             Guid.NewGuid().ToString(),

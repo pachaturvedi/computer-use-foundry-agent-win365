@@ -20,4 +20,25 @@ public sealed class DesktopRuntimeOptions
 
     /// <summary>Gets the delay between checks for an operator-requested resume.</summary>
     public TimeSpan ResumePollInterval { get; init; } = TimeSpan.FromMilliseconds(500);
+
+    /// <summary>Gets the maximum number of StartSession attempts when W365 reports no free capacity.</summary>
+    public int StartSessionCapacityRetryAttempts { get; init; } = 8;
+
+    /// <summary>Gets the base delay between StartSession retries after a capacity-exhausted error.</summary>
+    /// <remarks>
+    /// Actual delay grows exponentially per attempt (base * 2^(attempt-1)), capped at
+    /// <see cref="StartSessionCapacityRetryMaxInterval"/>, with up to 20% random jitter added to
+    /// avoid synchronized retry storms across concurrent requests.
+    /// </remarks>
+    public TimeSpan StartSessionCapacityRetryBaseInterval { get; init; } = TimeSpan.FromSeconds(20);
+
+    /// <summary>Gets the maximum delay between StartSession capacity retries, regardless of backoff growth.</summary>
+    public TimeSpan StartSessionCapacityRetryMaxInterval { get; init; } = TimeSpan.FromMinutes(2);
+
+    /// <summary>
+    /// Gets the hard policy limit on total elapsed time spent retrying StartSession for capacity
+    /// exhaustion. Retries stop once this budget is exceeded even if attempts remain, so a request
+    /// cannot be held open indefinitely by a persistently unavailable pool.
+    /// </summary>
+    public TimeSpan StartSessionCapacityRetryMaxTotalWait { get; init; } = TimeSpan.FromMinutes(6);
 }

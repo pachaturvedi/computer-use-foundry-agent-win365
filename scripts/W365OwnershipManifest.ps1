@@ -148,13 +148,13 @@ function Set-AzdEnvironmentFileValues {
 
         $name = $line.Substring(0, $separatorIndex).Trim()
         if ($remaining.Contains($name)) {
-            $lines[$i] = '{0}="{1}"' -f $name, $remaining[$name]
+            $lines[$i] = '{0}="{1}"' -f @($name, [string]$remaining[$name])
             $remaining.Remove($name)
         }
     }
 
     foreach ($entry in $remaining.GetEnumerator()) {
-        $lines.Add('{0}="{1}"' -f [string]$entry.Key, [string]$entry.Value)
+        $lines.Add('{0}="{1}"' -f @([string]$entry.Key, [string]$entry.Value))
     }
 
     Set-Content -LiteralPath $Path -Value $lines

@@ -11,13 +11,47 @@ namespace Win365Agent;
 public sealed record ToolSchema(string Name, string Description, JsonElement InputSchema);
 
 /// <summary>
+/// Reports an MCP tool-level failure (JSON-RPC <c>isError: true</c>). Carries the raw W365
+/// diagnostic text for server-side capacity/transient-error detection; never expose
+/// <see cref="RawResult"/> to the model or the caller.
+/// </summary>
+/// <param name="toolName">The tool that reported the error.</param>
+/// <param name="rawResult">The raw, untruncated JSON-RPC result text.</param>
+public sealed class McpToolException(string toolName, string rawResult)
+    : InvalidOperationException($"W365 tool {toolName} returned an error. Inspect W365 service diagnostics; operation is not replayed.")
+{
+    /// <summary>Gets the raw JSON-RPC result text for diagnostics. Server-side use only.</summary>
+    public string RawResult { get; } = rawResult;
+
+    /// <summary>Gets whether the raw result indicates transient W365 capacity exhaustion (no free sessions).</summary>
+    public bool IsCapacityExhausted =>
+        RawResult.Contains("No free W365 sessions", StringComparison.OrdinalIgnoreCase);
+}
+
+/// <summary>
 /// Implements the MCP JSON-RPC transport for Windows 365 tool discovery and invocation.
 /// </summary>
 /// <param name="http">The HTTP transport.</param>
 /// <param name="tokens">The provider for Windows 365 MCP access tokens.</param>
 /// <param name="settings">The tenant configuration.</param>
-public sealed class McpConnection(HttpClient http, IAgentUserTokenProvider tokens, Settings settings)
+public sealed class McpConnection(
+    HttpClient http,
+    IAgentUserTokenProvider tokens,
+    Settings settings,
+    ILogger<McpConnection>? logger = null)
 {
+    private static readonly Action<ILogger, string, string, Exception?> _logToolError =
+        LoggerMessage.Define<string, string>(
+            LogLevel.Error,
+            new EventId(1, nameof(_logToolError)),
+            "W365 MCP tool {ToolName} reported an error. Raw result (diagnostics only, not shown to the model): {Result}");
+
+    private static readonly Action<ILogger, string, Exception?> _logRpcError =
+        LoggerMessage.Define<string>(
+            LogLevel.Error,
+            new EventId(2, nameof(_logRpcError)),
+            "W365 MCP JSON-RPC call reported an error. Raw error (diagnostics only, not shown to the model): {Error}");
+
     private int _sequence;
     private string _version = "2025-06-18";
     private string? _transportSession;
@@ -77,13 +111,19 @@ public sealed class McpConnection(HttpClient http, IAgentUserTokenProvider token
     /// <param name="arguments">The tool argument object.</param>
     /// <param name="ct">A token that cancels the request.</param>
     /// <returns>The cloned JSON-RPC result.</returns>
-    /// <exception cref="InvalidOperationException">The tool reports an error.</exception>
+    /// <exception cref="McpToolException">The tool reports an error.</exception>
     public async Task<JsonElement> CallAsync(string name, object arguments, CancellationToken ct)
     {
         var result = await SendAsync("tools/call", new { name, arguments }, false, ct);
         if (result.TryGetProperty("isError", out var error) && error.ValueKind == JsonValueKind.True)
         {
-            throw new InvalidOperationException($"W365 tool {name} returned an error. Inspect W365 service diagnostics; operation is not replayed.");
+            var rawResult = result.GetRawText();
+            if (logger is not null)
+            {
+                _logToolError(logger, name, Truncate(rawResult), null);
+            }
+
+            throw new McpToolException(name, rawResult);
         }
 
         return result;
@@ -144,7 +184,7 @@ public sealed class McpConnection(HttpClient http, IAgentUserTokenProvider token
 
                 if (line.Length == 0)
                 {
-                    if (data.Length > 0 && Parse(data.ToString(), id) is { } result)
+                    if (data.Length > 0 && Parse(data.ToString(), id, logger) is { } result)
                     {
                         return result;
                     }
@@ -156,7 +196,7 @@ public sealed class McpConnection(HttpClient http, IAgentUserTokenProvider token
                     data.AppendLine(line[5..].TrimStart(' '));
                 }
             }
-            if (data.Length > 0 && Parse(data.ToString(), id) is { } final)
+            if (data.Length > 0 && Parse(data.ToString(), id, logger) is { } final)
             {
                 return final;
             }
@@ -175,10 +215,10 @@ public sealed class McpConnection(HttpClient http, IAgentUserTokenProvider token
 
             buffer.Write(chunk, 0, count);
         }
-        return Parse(Encoding.UTF8.GetString(buffer.ToArray()), id)
+        return Parse(Encoding.UTF8.GetString(buffer.ToArray()), id, logger)
             ?? throw new InvalidOperationException("MCP response ID did not match.");
     }
-    internal static JsonElement? Parse(string text, int id)
+    internal static JsonElement? Parse(string text, int id, ILogger? logger = null)
     {
         using var doc = JsonDocument.Parse(text);
         var root = doc.RootElement;
@@ -187,13 +227,20 @@ public sealed class McpConnection(HttpClient http, IAgentUserTokenProvider token
             return null;
         }
 
-        if (root.TryGetProperty("error", out _))
+        if (root.TryGetProperty("error", out var rpcError))
         {
+            if (logger is not null)
+            {
+                _logRpcError(logger, Truncate(rpcError.GetRawText()), null);
+            }
+
             throw new InvalidOperationException("MCP returned a JSON-RPC error; operation is not replayed.");
         }
 
         return root.GetProperty("result").Clone();
     }
+
+    private static string Truncate(string text) => text.Length <= 2048 ? text : text[..2048] + "...(truncated)";
     internal static string? Field(JsonElement node, string name)
     {
         if (node.ValueKind == JsonValueKind.Object)

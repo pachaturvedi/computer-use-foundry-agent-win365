@@ -67,6 +67,7 @@ try {
         'AZURE_AI_PROJECT_NAME="sample-project"',
         'FOUNDRY_AGENT_NAME="win365-desktop-agent"',
         'AGENT_WIN365_DESKTOP_AGENT_ENDPOINT="https://agent.example.com"',
+        'AGENT_WIN365_DESKTOP_AGENT_VERSION="42"',
         'STATE_RESOURCE_GROUP_NAME="sample-dev-rg"',
         'W365_KEY_VAULT_NAME="sample-dev-kv"',
         'DEPLOY_STATE="true"',
@@ -82,6 +83,8 @@ try {
     if ($summary -notmatch 'sample-dev-kv' -or
         $summary -notmatch 'samplestorage' -or
         $summary -notmatch 'ACA viewer.+Skipped' -or
+        $summary -notmatch 'fresh hosted-agent session pinned to active version 42' -or
+        $summary -notmatch 'azd ai agent invoke win365-desktop-agent --version 42 --new-session' -or
         $summary -match '(?i)secret-value|access-token') {
         throw "Deployment summary was incomplete or unsafe: $summary"
     }

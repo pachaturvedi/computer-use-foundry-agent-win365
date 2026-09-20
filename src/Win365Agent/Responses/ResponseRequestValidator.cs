@@ -47,12 +47,14 @@ internal static class ResponseRequestValidator
                 return await RejectAsync(context, 400, "Request must contain a valid JSON object.");
             }
 
+            // azd creates a platform conversation for every Responses request, including a first
+            // turn. FreshTaskSessionStore deliberately ignores that identifier and creates a new
+            // agent session, so accepting this transport metadata does not enable task history.
             if (root.TryGetProperty("previous_response_id", out _) ||
-                root.TryGetProperty("conversation", out _) ||
                 root.TryGetProperty("background", out var bg) && bg.ValueKind == JsonValueKind.True)
             {
                 return await RejectAsync(context, 400,
-                    "Use a fresh foreground request: previous_response_id, conversation and background execution are not supported.");
+                    "Use a fresh foreground request: previous_response_id and background execution are not supported.");
             }
         }
         context.Request.Body.Position = 0;

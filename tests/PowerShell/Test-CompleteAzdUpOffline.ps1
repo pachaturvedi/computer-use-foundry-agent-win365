@@ -49,26 +49,27 @@ $trackedEnvironmentVariables = @(
     'SCREENSHARE_SDK_URL',
     'SCREENSHARE_FRAME_ORIGINS',
     'SCREENSHARE_APP_URL',
-    'SAMPLE_LOG_LEVEL'
+    'SAMPLE_LOG_LEVEL',
+    'TEST_AZ_BEHAVIOR'
 )
 $savedEnvironment = @{}
 foreach ($name in $trackedEnvironmentVariables) {
     $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
 }
 
-$script:azBehavior = 'success'
+$env:TEST_AZ_BEHAVIOR = 'success'
 function az {
     $arguments = @($args)
     $global:LASTEXITCODE = 0
     if ($arguments[0] -eq 'account' -and $arguments[1] -eq 'show') {
-        if ($script:azBehavior -eq 'fail') {
+        if ($env:TEST_AZ_BEHAVIOR -eq 'fail') {
             $global:LASTEXITCODE = 1
             return ''
         }
         return '99999999-9999-9999-9999-999999999999'
     }
     if ($arguments[0] -eq 'ad' -and $arguments[1] -eq 'signed-in-user') {
-        if ($script:azBehavior -eq 'fail') {
+        if ($env:TEST_AZ_BEHAVIOR -eq 'fail') {
             $global:LASTEXITCODE = 1
             return ''
         }
@@ -431,6 +432,7 @@ throw 'Simulated W365 setup failure.'
     Set-Content -LiteralPath $environmentPath -Value $envLines
     $env:VIEWER_PUBLIC_URL = ''
     $env:TEST_VIEWER_PUBLIC_URL = 'https://viewer.example.com'
+    $env:TEST_AZ_BEHAVIOR = 'fail'
     $missingOperatorOutput = & $scriptPath `
         -RepositoryRoot $tempRoot `
         -W365SetupScriptPath $mockW365Path `
@@ -446,6 +448,7 @@ throw 'Simulated W365 setup failure.'
         $missingOperatorOutput -notmatch 'HOSTED_ALLOWED_USER_ID') {
         throw 'Postup did not warn about missing hosted-agent operator prerequisites.'
     }
+    $env:TEST_AZ_BEHAVIOR = 'success'
     $env:TEST_VIEWER_PUBLIC_URL = ''
 
     Reset-Calls

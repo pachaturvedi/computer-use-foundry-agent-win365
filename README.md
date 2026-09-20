@@ -40,7 +40,8 @@ Invoke it from PowerShell with a fresh agent session:
 
 ```powershell
 $prompt = Get-Content .\samples\prompts\invoice-processing.txt -Raw
-azd ai agent invoke win365-desktop-agent --new-session $prompt
+$version = azd env get-value AGENT_WIN365_DESKTOP_AGENT_VERSION
+azd ai agent invoke win365-desktop-agent --version $version --new-session $prompt
 ```
 
 Add `--user-identity "<allowed-user-id>"` when the deployed endpoint requires

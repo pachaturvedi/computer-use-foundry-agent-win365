@@ -26,13 +26,21 @@ public sealed class ResponseRequestValidatorTests
     [InlineData("[]")]
     [InlineData("null")]
     [InlineData("{\"previous_response_id\":\"old\"}")]
-    [InlineData("{\"conversation\":\"old\"}")]
     [InlineData("{\"background\":true}")]
     public async Task InvalidOrContinuingRequestsAreRejectedAsync(string json)
     {
         var context = Context(json);
         Assert.False(await ResponseRequestValidator.ValidateAsync(context));
         Assert.Equal(400, context.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task PlatformConversationMetadataIsAcceptedForFreshTasksAsync()
+    {
+        var context = Context("""{"input":"hello","conversation":"conv_123"}""");
+
+        Assert.True(await ResponseRequestValidator.ValidateAsync(context));
+        Assert.Equal(0, context.Request.Body.Position);
     }
 
     [Theory]
