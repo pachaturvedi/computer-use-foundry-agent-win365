@@ -1,8 +1,13 @@
 **
 !NuGet.Config
+!Directory.Packages.props
 !src/
 !src/Win365Agent/
 !src/Win365Agent/**
+!src/Win365Shared/
+!src/Win365Shared/**
+!src/Win365Viewer/
+!src/Win365Viewer/**
 **/bin
 **/obj
 **/.env*
