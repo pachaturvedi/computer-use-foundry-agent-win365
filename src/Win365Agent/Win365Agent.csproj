@@ -14,4 +14,7 @@
     <PackageReference Include="SkiaSharp" />
     <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" />
   </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Win365Agent.Tests" />
+  </ItemGroup>
 </Project>

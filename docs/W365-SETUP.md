@@ -338,6 +338,26 @@ The deployment creates a new immutable agent version under the existing agent
 name. Rediscover that exact version and reject unexpected blueprint or instance
 identity replacement before enabling desktop tasks.
 
+## Stale desktop-state recovery prerequisite
+
+Recovery is an exceptional operator workflow, not startup cleanup. It requires
+PowerShell 7.4 on Windows, azd 1.32.0 or later, access to the selected azd
+environment and its configured blueprint credential path, and permission for the
+deployed agent identity to access the private state Blob and W365 MCP. Stop all
+hosted sessions for the exact environment-deployed agent name/version first.
+
+Run `Recover-StaleDesktopState.ps1 -Environment <env>` without `-Apply` first.
+Use `-WhatIf` with `-Apply` to review the mutation. W365 absence is accepted only
+when `GetSessionDetails` returns one text content item exactly equal to:
+
+```text
+No W365 session found. Call mcp_W365ComputerUse_StartSession first.
+```
+
+If Apply reports an ambiguous acquire, upload, or release stage, do **not**
+automatically rerun Apply. Rerun the read-only command, review the reported state,
+and obtain fresh operator approval before any later mutation.
+
 ## Offline setup tests
 
 The canonical Windows setup runs the build, .NET tests, and both mocked

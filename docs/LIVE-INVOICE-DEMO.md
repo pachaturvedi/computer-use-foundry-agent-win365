@@ -127,7 +127,16 @@ The invocation is pinned to the verified version and uses:
 ```
 
 The helper remains attached until the request completes. It does not use
-`--long-running --no-wait`.
+`--long-running --no-wait`. It prints an elapsed-time heartbeat every 15 seconds
+while the child process is quiet, keeps output redaction in the foreground, and
+terminates the exact child process tree if the helper itself fails. The final
+result-marker and viewer validation rules are unchanged.
+
+The helper does not preflight the private Blob or request a W365 token. Doing so
+would broaden the ordinary demo operator's state, Key Vault, and W365 permissions
+and would still not prove that an expired remote session is absent. The safe design
+is the server-side bounded lease wait plus the explicit, separately authorized
+recovery inspection below.
 
 For environments that require hosted caller partitioning, add:
 
@@ -250,12 +259,29 @@ provider failure:
    the critical message `session slot remains blocked for operator recovery`.
 2. If cleanup is proven and the slot is not blocked, a fresh helper invocation
    is safe.
-3. If cleanup is absent or the slot is blocked, stop or drain the old hosted
-   worker and viewer, inspect the private state Blob, and resolve the known W365
-   session through the authorized service.
-4. Only after remote ownership is resolved, break any stale state lease and
-   clear the slot as described in
-   [fail-closed recovery](ARCHITECTURE.md#fail-closed-recovery).
+3. If cleanup is absent or `desktop_state_locked` is reported, stop all actively
+   running hosted sessions. Then run the guarded
+   read-only inspection:
+
+   ```powershell
+   pwsh -NoProfile -File .\scripts\Recover-StaleDesktopState.ps1 `
+       -Environment "<resource-prefix>-dev"
+   ```
+
+4. Continue only when it reports that state is stale and W365 returned the exact
+   no-session condition. Explicitly approve mutation:
+
+   ```powershell
+   pwsh -NoProfile -File .\scripts\Recover-StaleDesktopState.ps1 `
+       -Environment "<resource-prefix>-dev" `
+       -Apply
+   ```
+
+   This repeats all checks, breaks only the stale infinite lease, acquires the
+   lease to exclude races, verifies unchanged state, writes JSON `null`, and
+   releases the lease. Any ambiguity aborts safely. See
+   [fail-closed recovery](ARCHITECTURE.md#fail-closed-recovery) for prerequisites
+   and expected output.
 
 Never retry merely because the local command timed out.
 

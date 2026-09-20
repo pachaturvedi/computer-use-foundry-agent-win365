@@ -121,6 +121,21 @@ temporary validation option and is not enabled by default. Ordinary Azure model/
 Azure credential path; an `az login` session is not an alternative W365 identity.
 No IdentityRM auxiliary token is sent.
 
+## Stale-state recovery identity
+
+The guarded stale-state command uses the configured blueprint path to exchange
+for the deployed agent identity's `https://storage.azure.com/.default` token.
+This method is internal and fixed to that one scope. Its one-token credential
+rejects any other scope and, when the token is a parseable JWT, requires the
+`https://storage.azure.com` audience. Tokens and claims are never printed.
+
+Recovery also compares persisted `OwnerTenantId` and `OwnerObjectId` with the
+selected azd environment's `OPERATOR_TENANT_ID` and `OPERATOR_OBJECT_ID` before
+breaking a lease. This is an ownership check, not permission to adopt state from
+another environment or agent. The mutating process independently resolves the
+deployed agent name/version from the selected environment and checks its hosted
+sessions; it does not accept a caller assertion that this check already happened.
+
 On September 17, 2026, `client_secret` mode passed a complete bounded W365
 lifecycle: blueprint T1, agent-identity T2, agent-user T3, MCP initialization,
 `StartSession`, readiness identified by the returned HTTPS `screenShareUrl`,

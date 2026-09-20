@@ -145,4 +145,31 @@ public sealed class BlueprintTokenProvider : IBlueprintTokenProvider
             "blueprint",
             _logger);
     }
+
+    internal const string StorageScope = "https://storage.azure.com/.default";
+
+    /// <summary>
+    /// Gets a Storage token for the configured agent identity for the guarded recovery path.
+    /// </summary>
+    /// <param name="cancellationToken">A token that cancels token acquisition.</param>
+    /// <returns>An access token whose subject is the configured agent identity.</returns>
+    internal async Task<AccessToken> GetAgentIdentityStorageTokenAsync(
+        CancellationToken cancellationToken)
+    {
+        var blueprintToken = await GetAsync(cancellationToken);
+        return await AgentUserTokenProvider.ExchangeAsync(
+            _http,
+            _settings,
+            new Dictionary<string, string>
+            {
+                ["client_id"] = _settings.Required("W365_AGENT_ID"),
+                ["grant_type"] = "client_credentials",
+                ["scope"] = StorageScope,
+                ["client_assertion_type"] = AgentUserTokenProvider.AssertionType,
+                ["client_assertion"] = blueprintToken.Token
+            },
+            cancellationToken,
+            "agent-identity-resource",
+            _logger);
+    }
 }

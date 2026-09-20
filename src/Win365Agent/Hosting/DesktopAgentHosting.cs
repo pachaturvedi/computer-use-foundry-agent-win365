@@ -9,6 +9,11 @@ namespace Win365Agent;
 
 internal static class DesktopAgentHosting
 {
+    internal sealed record DesktopToolError(string Status, string Code, string Message);
+
+    internal static DesktopToolError MapLockedState(SessionLeaseUnavailableException exception) =>
+        new("error", SessionLeaseUnavailableException.ErrorCode, exception.Message);
+
     internal static void AddDesktopAgent(
         this WebApplicationBuilder builder,
         Settings settings)
@@ -18,12 +23,28 @@ internal static class DesktopAgentHosting
 
         // Resolve the runtime when each tool executes so concurrent requests cannot share desktop ownership state.
         DesktopRuntime Current() => DesktopRequestContext.Current(accessor);
+        async Task<object> MapLeaseFailureAsync(Func<Task<object>> operation)
+        {
+            try
+            {
+                return await operation();
+            }
+            catch (SessionLeaseUnavailableException exception)
+            {
+                return MapLockedState(exception);
+            }
+        }
+
         async Task<object> OpenDesktopAsync(CancellationToken cancellationToken)
         {
             using var linked = DesktopRequestContext.LinkDeadline(accessor, cancellationToken);
             try
             {
                 return await Current().OpenAsync(linked.Token);
+            }
+            catch (SessionLeaseUnavailableException exception)
+            {
+                return MapLockedState(exception);
             }
             catch (RequestFailedException exception)
             {
@@ -99,7 +120,8 @@ internal static class DesktopAgentHosting
                 async (string toolName, JsonElement arguments, CancellationToken cancellationToken) =>
                 {
                     using var linked = DesktopRequestContext.LinkDeadline(accessor, cancellationToken);
-                    return await Current().ExecuteAsync(toolName, arguments, linked.Token);
+                    return await MapLeaseFailureAsync(async () =>
+                        await Current().ExecuteAsync(toolName, arguments, linked.Token));
                 },
                 "desktop_action",
                 "Call one allowed W365 tool with arguments matching its live schema. " +
@@ -108,7 +130,8 @@ internal static class DesktopAgentHosting
                 async (CancellationToken cancellationToken) =>
                 {
                     using var linked = DesktopRequestContext.LinkDeadline(accessor, cancellationToken);
-                    return await Current().HandoffAsync(linked.Token);
+                    return await MapLeaseFailureAsync(async () =>
+                        await Current().HandoffAsync(linked.Token));
                 },
                 "request_human_control",
                 "Pause automation and return the authorized operator's take-control link. " +
@@ -117,7 +140,8 @@ internal static class DesktopAgentHosting
                 async (CancellationToken cancellationToken) =>
                 {
                     using var linked = DesktopRequestContext.LinkDeadline(accessor, cancellationToken);
-                    return await Current().WaitForResumeAsync(linked.Token);
+                    return await MapLeaseFailureAsync(async () =>
+                        await Current().WaitForResumeAsync(linked.Token));
                 },
                 "wait_for_human",
                 "After displaying the handoff link, wait until the operator explicitly resumes from the viewer. " +
@@ -126,8 +150,11 @@ internal static class DesktopAgentHosting
                 async (CancellationToken cancellationToken) =>
                 {
                     using var linked = DesktopRequestContext.LinkDeadline(accessor, cancellationToken);
-                    await Current().CloseAsync(linked.Token);
-                    return "Desktop session released.";
+                    return await MapLeaseFailureAsync(async () =>
+                    {
+                        await Current().CloseAsync(linked.Token);
+                        return "Desktop session released.";
+                    });
                 },
                 "close_desktop",
                 "End this task's desktop session.")

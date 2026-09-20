@@ -1,6 +1,12 @@
 using Microsoft.Agents.AI.Foundry.Hosting;
 using Win365Agent;
 
+if (args is [StaleStateRecoveryCommand.CommandName, ..])
+{
+    Environment.ExitCode = await StaleStateRecoveryCommand.RunAsync(args[1..]);
+    return;
+}
+
 var builder = WebApplication.CreateBuilder(args);
 var settings = new Settings(builder.Configuration);
 

@@ -96,10 +96,10 @@ public sealed class DesktopRuntime : IDisposable
             {
                 if (existing.ExpiresAt <= DateTimeOffset.UtcNow)
                 {
-                    tx.State = null;
-                    await tx.SaveAsync(ct);
+                    throw new InvalidOperationException(
+                        "Desktop state has expired and requires guarded operator recovery.");
                 }
-                else if (existing.RequestId != _requestId &&
+                if (existing.RequestId != _requestId &&
                     existing.Phase == DesktopSessionPhase.Starting &&
                     existing.OperationInFlight &&
                     !string.IsNullOrWhiteSpace(existing.AllocationIdempotencyKey) &&
