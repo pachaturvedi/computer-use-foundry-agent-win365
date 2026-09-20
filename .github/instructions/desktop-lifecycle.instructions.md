@@ -1,5 +1,5 @@
 ---
-applyTo: "src/Win365Agent/Desktop/**/*.cs,src/Win365Agent/Mcp/**/*.cs,src/Win365Agent/State/**/*.cs,src/Win365Agent/Hosting/Desktop*.cs,tests/Win365Agent.Tests/Desktop/**/*.cs,tests/Win365Agent.Tests/Mcp/**/*.cs,tests/Win365Agent.Tests/State/**/*.cs"
+applyTo: "src/Win365Agent/Desktop/**/*.cs,src/Win365Agent/Mcp/**/*.cs,src/Win365Shared/State/**/*.cs,src/Win365Agent/Hosting/Desktop*.cs,tests/Win365Agent.Tests/Desktop/**/*.cs,tests/Win365Agent.Tests/Mcp/**/*.cs,tests/Win365Shared.Tests/State/**/*.cs"
 ---
 
 # Desktop, MCP, and state lifecycle

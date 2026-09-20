@@ -1,7 +1,7 @@
 using System.Security.Claims;
 using Win365Agent;
 
-namespace Win365Agent.Tests;
+namespace Win365Viewer.Tests;
 
 public sealed class ViewerEndpointsTests
 {

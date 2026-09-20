@@ -279,7 +279,7 @@ allowing a dedicated sample environment to be fully torn down in reverse order.
 | Phase-1 identity is needed before phase-2 configuration | The blueprint and agent identity do not exist until Foundry deploys an agent version. | Two-phase gate in [`Program.cs`](../src/Win365Agent/Program.cs), deployment declaration in [`azure.yaml`](../azure.yaml), and exact-version discovery in [`Get-FoundryIdentity.ps1`](../scripts/Get-FoundryIdentity.ps1). |
 | App IDs, object IDs, users, callers, and sessions are easy to confuse | Entra and Foundry expose several GUIDs with different authority and API roles. Substitution can bind the wrong principal or pool user. | Parent/type checks in [`Setup-W365.ps1`](../scripts/Setup-W365.ps1), startup checks in [`Settings.cs`](../src/Win365Agent/Configuration/Settings.cs), and the terminology table above. |
 | Hosted identity cannot automatically impersonate the blueprint | Current Responses hosting exposed the agent instance identity but live validation could not obtain a blueprint assertion directly. | Optional, explicit hosted-runtime FIC in [`Setup-W365.ps1`](../scripts/Setup-W365.ps1); current evidence in [`VALIDATION-REPORT.md`](VALIDATION-REPORT.md). This is broad blueprint trust and needs administrator approval. |
-| The final OAuth protocol is preview-sensitive | `client_credentials`, `fmi_path`, and `user_fic` must use exact subjects, scopes, and token roles; the hosting SDK does not abstract this complete path here. | Narrow form construction and allowlisted audiences in [`AgentUserTokenProvider.cs`](../src/Win365Agent/Identity/AgentUserTokenProvider.cs); regression coverage in [`AgentUserTokenProviderTests.cs`](../tests/Win365Agent.Tests/Identity/AgentUserTokenProviderTests.cs). |
+| The final OAuth protocol is preview-sensitive | `client_credentials`, `fmi_path`, and `user_fic` must use exact subjects, scopes, and token roles; the hosting SDK does not abstract this complete path here. | Narrow form construction and allowlisted audiences in [`AgentUserTokenProvider.cs`](../src/Win365Shared/Identity/AgentUserTokenProvider.cs); regression coverage in [`AgentUserTokenProviderTests.cs`](../tests/Win365Shared.Tests/Identity/AgentUserTokenProviderTests.cs). |
 | Foundry caller identity is not the W365 agent user | `x-agent-user-id` is an opaque ingress partition; `W365_AGENT_USER_ID` is an Entra agent-user object assigned to a pool. | Caller gate in [`DesktopRequestMiddleware.cs`](../src/Win365Agent/Hosting/DesktopRequestMiddleware.cs); agent-user creation and assignment in [`Setup-W365.ps1`](../scripts/Setup-W365.ps1). |
 | W365 setup crosses Entra and Intune control planes | Consent/inheritance and agent-user parentage live in Entra/Graph, while capacity and assignment live in the W365 pool. Pool creation, image, geography, and billing remain manual. | Reconciliation in [`Setup-W365.ps1`](../scripts/Setup-W365.ps1) and administrator prerequisites in [`W365-SETUP.md`](W365-SETUP.md). |
 | A remote desktop action cannot be safely replayed after an unknown result | HTTP failure does not prove that StartSession, a click, or EndSession did not occur. | In-flight durable state in [`DesktopRuntime.cs`](../src/Win365Agent/Desktop/DesktopRuntime.cs), exclusive Blob lease in [`BlobSessionStore.cs`](../src/Win365Agent/State/BlobSessionStore.cs), and fail-closed recovery below. |
@@ -342,8 +342,12 @@ route.
 | `src\Win365Agent\Responses` | Fresh Agent Framework sessions and bounded fresh-request validation. |
 | `src\Win365Viewer` | Independent ACA entry point, OIDC authorization, CSRF/CSP, viewer endpoints, and static assets; references only `Win365Shared`. |
 
-Tests mirror these folders under `tests/Win365Agent.Tests`; reusable fakes and
-temporary state helpers live only in `TestInfrastructure`.
+Each production project has a corresponding test project:
+`tests/Win365Agent.Tests`, `tests/Win365Shared.Tests`, and
+`tests/Win365Viewer.Tests`. Tests mirror their owning feature folders, and
+reusable fakes and temporary state helpers stay within that project's
+`TestInfrastructure`. NuGet versions are managed centrally in
+`Directory.Packages.props`.
 
 | Script | Responsibility |
 | --- | --- |

@@ -6,5 +6,7 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Win365Agent.Tests/Win365Agent.Tests.csproj" />
+    <Project Path="tests/Win365Shared.Tests/Win365Shared.Tests.csproj" />
+    <Project Path="tests/Win365Viewer.Tests/Win365Viewer.Tests.csproj" />
   </Folder>
 </Solution>

@@ -6,7 +6,10 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Win365Shared\Win365Shared.csproj" />
-    <PackageReference Include="Azure.Identity" Version="1.21.0" />
-    <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="10.0.12" />
+    <PackageReference Include="Azure.Identity" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Win365Viewer.Tests" />
   </ItemGroup>
 </Project>

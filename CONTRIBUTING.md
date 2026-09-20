@@ -34,9 +34,11 @@ The independently deployed ACA viewer has its own executable under
 `src\Win365Viewer` and references the agent's shared identity/state contracts;
 do not add viewer startup routing back to the hosted-agent `Program.cs`.
 Prefer one primary public type per file, keep each `Program.cs` limited to
-composition, and mirror behavior under `tests\Win365Agent.Tests`. Shared
-test-only handlers and fixtures belong in `TestInfrastructure`; do not add
-production abstractions solely for tests. See the
+composition, and mirror behavior under the corresponding
+`tests\<Project>.Tests` project. Shared test-only handlers and fixtures belong
+in that project's `TestInfrastructure`; do not add production abstractions
+solely for tests. Keep NuGet versions in `Directory.Packages.props`, not in
+individual project files. See the
 [architecture code map](docs/ARCHITECTURE.md#source-layout).
 
 Add fake-handler tests for behavior changes; tests must never acquire tokens
