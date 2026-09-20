@@ -23,11 +23,11 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-if (!$IsWindows) {
-    throw 'This greenfield initializer is Windows-only.'
-}
 if ($EnableW365) {
     throw 'Fresh greenfield initialization cannot enable W365. Deploy the disabled bootstrap first, provision shared Blob state for its discovered principal, and then run Invoke-W365SetupFlow.ps1.'
+}
+if (!$IsWindows) {
+    throw 'This greenfield initializer is Windows-only.'
 }
 if (![string]::IsNullOrWhiteSpace($AgentUserDomain)) {
     $normalizedAgentUserDomain = $AgentUserDomain.Trim().TrimEnd('.').ToLowerInvariant()
