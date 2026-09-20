@@ -12,12 +12,9 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
-      - run: dotnet restore Win365FoundrySample.slnx
-      - run: dotnet format Win365FoundrySample.slnx --verify-no-changes --no-restore --verbosity minimal
-      - run: dotnet test Win365FoundrySample.slnx -c Release --no-restore
-      - name: Run offline PowerShell validation
+      - name: Run the shared pre-PR validation gate
         shell: pwsh
-        run: ./tests/PowerShell/Invoke-PowerShellTests.ps1
+        run: ./scripts/Validate-PrePr.ps1
   windows-quickstart:
     runs-on: windows-latest
     steps:

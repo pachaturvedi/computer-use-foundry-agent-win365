@@ -68,6 +68,30 @@ public sealed class DesktopRuntimeTests
     }
 
     [Fact]
+    public async Task SessionToolsAreRediscoveredWithoutReplacingTheAllocationTransportAsync()
+    {
+        using var temporaryStore = new TemporarySessionStore();
+        using var handler = new McpHandler { SessionScopedCatalog = true };
+        using var http = new HttpClient(handler);
+        using var runtime = Runtime(http, handler, temporaryStore.Create());
+
+        await runtime.OpenAsync(default);
+
+        var tools = JsonSerializer.SerializeToElement(runtime.Tools());
+        Assert.Contains(tools.EnumerateArray(), tool => tool.GetProperty("name").GetString() == "click");
+        Assert.DoesNotContain(
+            tools.EnumerateArray(),
+            tool => tool.GetProperty("inputSchema").GetRawText().Contains("sessionId", StringComparison.Ordinal));
+        Assert.Equal(1, handler.Methods.Count(method => method == "initialize"));
+        await runtime.ExecuteAsync(
+            "click",
+            TestSettings.Json("""{"x":100,"y":200,"button":"Left","clickCount":1}"""),
+            default);
+        Assert.Equal(1, handler.ClickCount);
+        await runtime.CloseAsync(default);
+    }
+
+    [Fact]
     public async Task AmbiguousActionIsNotReplayedAndBlocksFurtherActionsAsync()
     {
         using var temporaryStore = new TemporarySessionStore();

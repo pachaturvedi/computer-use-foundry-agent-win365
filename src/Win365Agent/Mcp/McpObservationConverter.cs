@@ -10,11 +10,12 @@ public static class McpObservationConverter
     /// <summary>Converts MCP content blocks while enforcing per-observation and per-task limits.</summary>
     /// <param name="result">The MCP tool result containing a <c>content</c> array.</param>
     /// <param name="images">The task-wide screenshot count, incremented for each image block encountered.</param>
+    /// <param name="maxImages">The maximum number of screenshot observations allowed for the task.</param>
     /// <returns>Text content and normalized JPEG image content.</returns>
     /// <exception cref="InvalidOperationException">
-    /// Content is missing, unsupported, oversized, undecodable, or exceeds the four-screenshot task budget.
+    /// Content is missing, unsupported, oversized, undecodable, or exceeds the screenshot task budget.
     /// </exception>
-    public static IList<AIContent> Convert(JsonElement result, ref int images)
+    public static IList<AIContent> Convert(JsonElement result, ref int images, int maxImages = 4)
     {
         var contents = new List<AIContent>();
         if (!result.TryGetProperty("content", out var blocks))
@@ -36,9 +37,10 @@ public static class McpObservationConverter
                     contents.Add(new TextContent(text));
                     break;
                 case "image":
-                    if (++images > 4)
+                    if (++images > maxImages)
                     {
-                        throw new InvalidOperationException("Four-screenshot task budget exhausted. Use accessibility observations or start a new task.");
+                        throw new InvalidOperationException(
+                            $"{maxImages}-screenshot task budget exhausted. Complete the task with existing observations or start a new task.");
                     }
 
                     var bytes = System.Convert.FromBase64String(block.GetProperty("data").GetString()!);

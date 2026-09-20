@@ -17,6 +17,7 @@ $root = Split-Path $PSScriptRoot
 $solution = Join-Path $root 'Win365FoundrySample.slnx'
 $envExample = Join-Path $root '.env.example'
 $envFile = Join-Path $root '.env'
+$prePrValidationScript = Join-Path $PSScriptRoot 'Validate-PrePr.ps1'
 
 function Invoke-DotNet {
     param([Parameter(Mandatory)][string[]]$Arguments)
@@ -69,19 +70,21 @@ if ($localSettings['SAMPLE_LOCAL_MODE'] -ne 'true' -or $localSettings['W365_ENAB
 
 Push-Location $root
 try {
-    Write-Host 'Restoring packages...'
-    Invoke-DotNet @('restore', $solution)
+    if ($SkipTests) {
+        Write-Host 'Restoring packages...'
+        Invoke-DotNet @('restore', $solution)
 
-    Write-Host 'Verifying C# formatting...'
-    Invoke-DotNet @('format', $solution, '--verify-no-changes', '--no-restore', '--verbosity', 'minimal')
+        Write-Host 'Verifying C# formatting...'
+        Invoke-DotNet @('format', $solution, '--verify-no-changes', '--no-restore', '--verbosity', 'minimal')
 
-    Write-Host 'Building the solution...'
-    Invoke-DotNet @('build', $solution, '--configuration', 'Release', '--no-restore')
-
-    if (!$SkipTests) {
-        Write-Host 'Running offline tests...'
-        Invoke-DotNet @('test', $solution, '--configuration', 'Release', '--no-build', '--no-restore')
-        & (Join-Path (Split-Path $PSScriptRoot) 'tests\PowerShell\Invoke-PowerShellTests.ps1')
+        Write-Host 'Building the solution...'
+        Invoke-DotNet @('build', $solution, '--configuration', 'Release', '--no-restore')
+    }
+    else {
+        & $prePrValidationScript
+        if ($LASTEXITCODE -ne 0) {
+            throw "Pre-PR validation failed with exit code $LASTEXITCODE."
+        }
     }
 }
 finally {

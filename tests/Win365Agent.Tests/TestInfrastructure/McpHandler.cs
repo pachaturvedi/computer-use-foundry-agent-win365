@@ -12,6 +12,7 @@ internal sealed class McpHandler : HttpMessageHandler
     public bool FailClick { get; set; }
     public bool FailStart { get; set; }
     public int AmbiguousStartsRemaining { get; set; }
+    public bool SessionScopedCatalog { get; set; }
     public bool SawTransportSession { get; private set; }
     public bool Sse { get; set; }
     public int AuthorizationCount { get; private set; }
@@ -19,6 +20,7 @@ internal sealed class McpHandler : HttpMessageHandler
     public List<string> Methods { get; } = [];
     public List<string> StartIdempotencyKeys { get; } = [];
     public int StartCount { get; private set; }
+    private bool _desktopBound;
 
     protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request,
@@ -41,13 +43,17 @@ internal sealed class McpHandler : HttpMessageHandler
         switch (method)
         {
             case "initialize":
+                _desktopBound = false;
                 result = new { protocolVersion = "2025-06-18" };
                 break;
             case "tools/list":
                 SawTransportSession = request.Headers.Contains("Mcp-Session-Id");
+                var advertisedTools = SessionScopedCatalog && !_desktopBound
+                    ? _toolNames.Take(3)
+                    : _toolNames;
                 result = new
                 {
-                    tools = _toolNames.Select(name => new
+                    tools = advertisedTools.Select(name => new
                     {
                         name,
                         description = name,
@@ -72,6 +78,7 @@ internal sealed class McpHandler : HttpMessageHandler
                 if (name == "StartSession")
                 {
                     StartCount++;
+                    _desktopBound = true;
                     StartIdempotencyKeys.Add(body.RootElement
                         .GetProperty("params")
                         .GetProperty("arguments")
@@ -89,6 +96,11 @@ internal sealed class McpHandler : HttpMessageHandler
                     if (FailClick)
                     {
                         throw new HttpRequestException("ambiguous action");
+                    }
+
+                    if (name == "EndSession")
+                    {
+                        _desktopBound = false;
                     }
                 }
 

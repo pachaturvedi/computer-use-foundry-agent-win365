@@ -87,6 +87,7 @@ module viewer '../viewer.bicep' = if (viewerEnabled) {
     keyVaultName: w365KeyVaultName
     sessionBlobUri: sessionBlobUri
     w365Enabled: liveViewerEnabled
+    viewerLiveEnabled: liveViewerEnabled
     viewerPublicUrl: viewerPublicUrl
     viewerClientId: viewerClientId
     operatorTenantId: operatorTenantId

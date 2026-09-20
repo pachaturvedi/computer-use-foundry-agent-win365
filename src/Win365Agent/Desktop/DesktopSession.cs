@@ -28,7 +28,7 @@ public sealed class DesktopSession
     public string? SessionLink { get; set; }
 
     /// <summary>Gets or sets the time after which the task can no longer use the desktop.</summary>
-    public DateTimeOffset ExpiresAt { get; set; } = DateTimeOffset.UtcNow.AddMinutes(10);
+    public DateTimeOffset ExpiresAt { get; set; } = DateTimeOffset.UtcNow.AddMinutes(15);
 
     /// <summary>Gets or sets the current desktop lifecycle phase.</summary>
     public DesktopSessionPhase Phase { get; set; } = DesktopSessionPhase.Starting;

@@ -3,11 +3,18 @@
 Keep this sample small, understandable and safe for a new tenant.
 
 Use Windows, .NET 10 and PowerShell 7.4+. Run the repository's complete local
-validation from the root:
+pre-PR validation gate from the root:
 
 ```powershell
-pwsh -NoProfile -File .\scripts\Setup-Local.ps1
+pwsh -NoProfile -File .\scripts\Validate-PrePr.ps1
 ```
+
+This is the same restore, formatting, Release build, .NET test, and complete
+offline PowerShell test sequence used by CI. Run it before opening or updating
+a pull request whenever production code, deployment scripts, tests, workflows,
+or documentation changes. `Setup-Local.ps1` invokes the same gate by default
+after creating or checking the local `.env`; use `-SkipTests` only when you
+explicitly need its restore/format/build-only path.
 
 Visual Studio is optional. IDE builds targeting `net10.0` require Visual Studio
 2026 version 18.0 or newer. Do not diagnose `MSB4236`, `NETSDK1209`, or an
@@ -22,13 +29,15 @@ Code style is defined in the repository root `.editorconfig` and enforced by
 `I`-prefixed, private instance fields `_camelCase`, and asynchronous methods
 suffixed with `Async`.
 
-Keep the application as a small modular monolith. Put code in the existing
-feature folders under `src\Win365Agent`: `Configuration`, `Hosting`, `Desktop`,
-`Mcp`, `Identity`, `State`, `Responses`, and `Viewer`. Prefer one primary public
-type per file, keep `Program.cs` limited to composition, and mirror feature
-folders under `tests\Win365Agent.Tests`. Shared test-only handlers and fixtures
-belong in `TestInfrastructure`; do not add production abstractions solely for
-tests. See the [architecture code map](docs/ARCHITECTURE.md#source-layout).
+Keep the hosted agent as a small modular monolith under `src\Win365Agent`.
+The independently deployed ACA viewer has its own executable under
+`src\Win365Viewer` and references the agent's shared identity/state contracts;
+do not add viewer startup routing back to the hosted-agent `Program.cs`.
+Prefer one primary public type per file, keep each `Program.cs` limited to
+composition, and mirror behavior under `tests\Win365Agent.Tests`. Shared
+test-only handlers and fixtures belong in `TestInfrastructure`; do not add
+production abstractions solely for tests. See the
+[architecture code map](docs/ARCHITECTURE.md#source-layout).
 
 Add fake-handler tests for behavior changes; tests must never acquire tokens
 from a real tenant, allocate a Cloud PC, or call a live model by default.

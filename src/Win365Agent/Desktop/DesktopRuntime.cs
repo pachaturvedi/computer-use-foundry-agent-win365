@@ -28,6 +28,12 @@ public sealed class DesktopRuntime : IDisposable
             "W365 StartSession capacity retry policy exhausted after attempt {Attempt}/{MaxAttempts} " +
             "({ElapsedSeconds}s elapsed). Giving up; no free W365 sessions were found in time.");
 
+    private static readonly Action<ILogger, int, string, Exception?> _logSessionCatalog =
+        LoggerMessage.Define<int, string>(
+            LogLevel.Information,
+            new EventId(4, nameof(_logSessionCatalog)),
+            "W365 session catalog advertised {ToolCount} tool(s): {ToolNames}");
+
     /// <summary>Gets the MCP tools permitted by the desktop automation policy.</summary>
     public static IReadOnlySet<string> AllowedTools => DesktopRuntimePolicy.AllowedTools;
 
@@ -230,8 +236,13 @@ public sealed class DesktopRuntime : IDisposable
                 ValidSessionLink(state.SessionLink);
             if (ready)
             {
-                await _mcp.ReconnectAsync(ct);
-                _catalog = await _mcp.ListAsync(ct);
+                var advertisedCatalog = await _mcp.ListAsync(ct);
+                _logSessionCatalog(
+                    _logger,
+                    advertisedCatalog.Count,
+                    string.Join(", ", advertisedCatalog.Select(tool => tool.Name).Order(StringComparer.Ordinal).Take(100)),
+                    null);
+                _catalog = DesktopRuntimePolicy.AddImplicitInteractionTools(advertisedCatalog);
                 state.OperationInFlight = false;
                 state.Phase = DesktopSessionPhase.Active;
                 await tx.SaveAsync(ct);
@@ -354,17 +365,17 @@ public sealed class DesktopRuntime : IDisposable
                     var state = Own(tx);
                     if (state.Phase == DesktopSessionPhase.Active)
                     {
-                        if (tool.InputSchema.TryGetProperty("properties", out var props) && props.TryGetProperty("sessionId", out _))
-                        {
-                            args["sessionId"] = state.SessionId!;
-                        }
+                        args["sessionId"] = state.SessionId!;
 
                         state.OperationInFlight = true;
                         await tx.SaveAsync(ct);
                         var result = await _mcp.CallAsync(toolName, args, ct);
                         state.OperationInFlight = false;
                         await tx.SaveAsync(ct);
-                        return McpObservationConverter.Convert(result, ref _images);
+                        return McpObservationConverter.Convert(
+                            result,
+                            ref _images,
+                            _options.MaxScreenshots);
                     }
 
                     if (state.Phase != DesktopSessionPhase.Paused)

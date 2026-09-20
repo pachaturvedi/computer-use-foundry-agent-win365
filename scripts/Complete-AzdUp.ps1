@@ -252,6 +252,7 @@ if (![string]::IsNullOrWhiteSpace($env:AZURE_ENV_NAME)) {
     $w365EnabledAfter = Test-EnabledValue -Value ([string]$updatedValues['W365_ENABLED'])
     $viewerLiveEnabled = Test-EnabledValue -Value ([string]$updatedValues['VIEWER_LIVE_ENABLED'])
     $deployViewer = Test-EnabledValue -Value ([string]$updatedValues['DEPLOY_VIEWER'])
+    $viewerLiveActivated = $false
 
     if ($deployViewer -and $w365EnabledAfter -and !$viewerLiveEnabled) {
         $liveRequired = @(
@@ -276,13 +277,15 @@ if (![string]::IsNullOrWhiteSpace($env:AZURE_ENV_NAME)) {
                 throw 'Live viewer activation failed.'
             }
             $updatedValues = Import-AzdEnvironmentValues -Root $RepositoryRoot -EnvironmentName $environmentName
+            $viewerUrlAfter = [string]$updatedValues['VIEWER_PUBLIC_URL']
+            $viewerLiveActivated = Test-EnabledValue -Value ([string]$updatedValues['VIEWER_LIVE_ENABLED'])
         }
     }
 
     if ($w365EnabledAfter -and
         !$w365SetupRan -and
         ![string]::IsNullOrWhiteSpace($viewerUrlAfter) -and
-        $viewerUrlAfter -ne $viewerUrlBefore) {
+        ($viewerLiveActivated -or $viewerUrlAfter -ne $viewerUrlBefore)) {
         $agentRequired = @('OPERATOR_TENANT_ID', 'OPERATOR_OBJECT_ID', 'HOSTED_ALLOWED_USER_ID')
         $agentMissing = @($agentRequired | Where-Object {
             [string]::IsNullOrWhiteSpace([string]$updatedValues[$_])
@@ -291,7 +294,13 @@ if (![string]::IsNullOrWhiteSpace($env:AZURE_ENV_NAME)) {
             Write-Warning "Skipping hosted-agent redeploy: the running container would crash on startup without $($agentMissing -join ', '). Set these values (see 'Bind the hosted operator' in docs/DEPLOYMENT.md) and rerun azd up."
         }
         else {
-            Write-Host "Viewer URL '$viewerUrlAfter' was added; redeploying the hosted agent so live-view links are available."
+            $redeployReason = if ($viewerLiveActivated) {
+                "Viewer URL '$viewerUrlAfter' was activated"
+            }
+            else {
+                "Viewer URL '$viewerUrlAfter' was added"
+            }
+            Write-Host "$redeployReason; redeploying the hosted agent so live-view links are available."
             $previousPostUpGuard = $env:W365_POSTUP_IN_PROGRESS
             $env:W365_POSTUP_IN_PROGRESS = 'true'
             try {

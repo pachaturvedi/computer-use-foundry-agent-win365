@@ -171,12 +171,14 @@ if (![string]::IsNullOrWhiteSpace($env:TEST_VIEWER_PUBLIC_URL)) {
 param(
     [string]$Mode,
     [string]$Environment,
-    [switch]$ConfirmResourceChanges
+    [switch]$ConfirmResourceChanges,
+    [switch]$SmokeInvoke
 )
 @{
     mode = $Mode
     environment = $Environment
     confirmResourceChanges = $ConfirmResourceChanges.IsPresent
+    smokeInvoke = $SmokeInvoke.IsPresent
     viewerPublicUrl = $env:VIEWER_PUBLIC_URL
     recursionGuard = $env:W365_POSTUP_IN_PROGRESS
 } | ConvertTo-Json | Set-Content -LiteralPath $env:TEST_AGENT_DEPLOY_CALLS_PATH
@@ -417,6 +419,7 @@ throw 'Simulated W365 setup failure.'
     if ($agentDeployCall.mode -ne 'DeployAgent' -or
         $agentDeployCall.environment -ne $environmentName -or
         !$agentDeployCall.confirmResourceChanges -or
+        !$agentDeployCall.smokeInvoke -or
         $agentDeployCall.viewerPublicUrl -ne 'https://viewer.example.com' -or
         $agentDeployCall.recursionGuard -ne 'true') {
         throw 'Postup did not redeploy the hosted agent after discovering the viewer URL.'
@@ -480,6 +483,12 @@ throw 'Simulated W365 setup failure.'
     $activationCall = Get-Content -LiteralPath $viewerActivationCallsPath -Raw | ConvertFrom-Json
     if ($activationCall.environment -ne $environmentName) {
         throw 'Postup did not activate the live viewer after credentials and prerequisites were ready.'
+    }
+    $activatedAgentDeployCall = Get-Content -LiteralPath $agentDeployCallsPath -Raw | ConvertFrom-Json
+    if ($activatedAgentDeployCall.mode -ne 'DeployAgent' -or
+        !$activatedAgentDeployCall.confirmResourceChanges -or
+        !$activatedAgentDeployCall.smokeInvoke) {
+        throw 'Postup did not redeploy and smoke-test the hosted agent after activating an existing viewer URL.'
     }
     $env:TEST_VIEWER_PUBLIC_URL = ''
 

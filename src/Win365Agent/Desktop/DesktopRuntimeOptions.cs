@@ -7,7 +7,10 @@ public sealed class DesktopRuntimeOptions
     public static DesktopRuntimeOptions Default { get; } = new();
 
     /// <summary>Gets the maximum number of desktop tool calls allowed per task.</summary>
-    public int MaxToolCalls { get; init; } = 40;
+    public int MaxToolCalls { get; init; } = 60;
+
+    /// <summary>Gets the maximum number of screenshot observations allowed per task.</summary>
+    public int MaxScreenshots { get; init; } = 8;
 
     /// <summary>Gets the maximum serialized size of a tool argument object, in characters.</summary>
     public int MaxToolArgumentCharacters { get; init; } = 16_000;

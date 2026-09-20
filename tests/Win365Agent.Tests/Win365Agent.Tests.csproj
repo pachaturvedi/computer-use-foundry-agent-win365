@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Win365Agent\Win365Agent.csproj" />
+    <ProjectReference Include="..\..\src\Win365Viewer\Win365Viewer.csproj" />
   </ItemGroup>
 
 </Project>

@@ -57,7 +57,7 @@ internal sealed class DesktopRequestMiddleware(
         // Bound the complete model task, including time spent waiting for operator handoff.
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(
             context.RequestAborted);
-        deadline.CancelAfter(TimeSpan.FromMinutes(10));
+        deadline.CancelAfter(TimeSpan.FromMinutes(15));
         context.RequestAborted = deadline.Token;
         using var desktop = new DesktopRuntime(
             new McpConnection(http, tokenProvider, settings, mcpLogger),

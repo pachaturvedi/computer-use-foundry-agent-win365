@@ -68,6 +68,7 @@ public sealed class SettingsTests
         Config(values).Validate();
         values["SCREENSHARE_APP_URL"] = "https://screenshare.example.com";
         values["AZURE_CLIENT_ID"] = "99999999-9999-9999-9999-999999999999";
+        values["VIEWER_LIVE_ENABLED"] = "true";
         Config(values).Validate(viewerMode: true);
     }
 
@@ -118,6 +119,19 @@ public sealed class SettingsTests
 
         values.Remove("VIEWER_PUBLIC_URL");
         Config(values).Validate();
+    }
+
+    [Fact]
+    public void HostedViewerUrlIsAvailableOnlyAfterLiveActivation()
+    {
+        var values = EnabledValues();
+        Assert.Null(Config(values).OptionalViewerUrl);
+
+        values["VIEWER_LIVE_ENABLED"] = "true";
+        Assert.Equal("https://viewer.example.com/", Config(values).OptionalViewerUrl!.ToString());
+
+        values["VIEWER_LIVE_ENABLED"] = "invalid";
+        Assert.Throws<InvalidOperationException>(() => Config(values).OptionalViewerUrl);
     }
 
     [Fact]

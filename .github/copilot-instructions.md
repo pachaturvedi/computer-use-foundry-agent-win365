@@ -56,12 +56,15 @@
   evidence. Resolve every blocker and required finding, then rerun the gate.
 - Do not claim completion when the gate decision is `NOT_READY`. Include
   `READY_WITH_DECLARED_LIMITS` limitations explicitly in the final response.
-- Canonical full local validation:
+- Canonical local PR validation:
 
   ```powershell
-  pwsh -NoProfile -File .\scripts\Setup-Local.ps1
+  pwsh -NoProfile -File .\scripts\Validate-PrePr.ps1
   ```
 
+- `Setup-Local.ps1` creates or validates the local `.env` and invokes the same
+  gate by default. Do not replace the full gate with a focused .NET command
+  when editing PowerShell deployment, setup, cleanup, or workflow code.
 - Focused .NET validation:
 
   ```powershell
