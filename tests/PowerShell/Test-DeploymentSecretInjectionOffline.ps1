@@ -11,8 +11,8 @@ $script = Get-Content -LiteralPath (Join-Path $root 'scripts\Invoke-AzdDeploymen
 
 foreach ($required in @(
     'function Get-W365KeyVaultName {',
-    "Set-AzdSecretValue -Name 'W365_CLIENT_SECRET' -Value `$secret",
-    '$script:w365ClientSecretPersistedForDeployment = $true',
+    '& $azd.Path env set W365_CLIENT_SECRET $secret',
+    '$script:w365ClientSecretInjected = $true',
     '& $azd.Path env set W365_CLIENT_SECRET ''''',
     "'--version', `$agentVersion",
     "'--new-session'"
