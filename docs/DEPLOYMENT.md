@@ -212,6 +212,31 @@ one `azure.ai.project` service, one `azure.ai.agent` service, pinned minimum
 tool versions, code runtime/entry point, protocol, environment mapping, resource
 limits, and scenario tags.
 
+`win365-desktop-agent` sets `codeConfiguration.dependencyResolution: bundled`.
+`Win365Agent.csproj` references the sibling `Win365Shared` project and relies on
+the repo-root `Directory.Packages.props` for central package versions. Foundry's
+default `remote_build` mode zips and restores only the `project:` folder
+(`src/Win365Agent`) on the build server, so it cannot see `Win365Shared` or the
+central package-version file and fails restore with `NU1015` /
+`Win365Shared.csproj ... was not found`. `bundled` makes `azd deploy` build and
+publish locally, where the full repository/solution context is available, and
+upload only the published output.
+
+`bundled` publishes for the container's target runtime with `dotnet publish -r
+linux-x64 --self-contained false`. A RID-specific publish otherwise implicitly
+builds a native apphost, which needs the `Microsoft.NETCore.App.Host.linux-x64`
+runtime pack; if that pack isn't already cached locally and the machine's
+global NuGet sources are restricted, restore fails with `NU1101`. Because the
+agent always starts as `dotnet Win365Agent.dll` (see `entryPoint` above), no
+native apphost is required, so `Win365Agent.csproj` sets
+`<UseAppHost>false</UseAppHost>` to skip that extra restore entirely.
+
+Do not switch this back to `remote_build`
+without also giving the agent a self-contained build context (for example, a
+container deploy modeled on the viewer's `Dockerfile`, which already copies
+`Directory.Packages.props`, `NuGet.Config`, and `Win365Shared` before
+restoring).
+
 Generic templates often use `azd up`, but this sample deliberately uses the
 `Invoke-AzdDeployment.ps1` wrapper: the project and model must already exist,
 and phase 1 must not provision an unconfirmed model SKU or W365 capacity. In

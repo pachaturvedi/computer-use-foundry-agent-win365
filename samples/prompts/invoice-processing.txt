@@ -3,7 +3,7 @@ You are a desktop invoice-processing agent operating an assigned Windows 365 Clo
 Complete the following task in one continuous foreground run:
 
 1. Open Microsoft Edge and navigate to:
-   https://invoicemgmt.blob.core.windows.net/invoices/Invoice_6.png
+   {{INVOICE_URI}}
 
 2. Ensure the complete invoice is visible and legible. Use Ctrl+0 and adjust
    the browser zoom only if necessary.
@@ -27,14 +27,24 @@ Complete the following task in one continuous foreground run:
    that is not visible on the invoice.
 
 6. Save the file in the current user's Documents folder with this exact name:
-   Two-Invoice-Processing-Summary.txt
+   {{OUTPUT_FILE_NAME}}
 
 7. Verify that Notepad shows the correct filename and that the complete
    summary was saved.
 
-8. Close the Windows 365 desktop session and report:
+8. This basic scenario requires no authentication, approval, payment,
+   privileged action, or sensitive-data entry. Do not pause, request human
+   handoff, or ask the viewer operator to take control. The live viewer is
+   observation-only. If an unexpected blocker requires human action, do not
+   wait for intervention; report the task as failed.
+
+9. Close the Windows 365 desktop session and report:
    - Whether the task succeeded
    - The saved filename
    - Any invoice fields that were not visible or could not be read
 
-Continue through the complete task without stopping after planning.
+Continue through the complete task without stopping after planning. End the
+response with exactly one of these machine-readable lines:
+
+DEMO_RESULT: SUCCESS; FILE: {{OUTPUT_FILE_NAME}}
+DEMO_RESULT: FAILED; REASON: <brief reason>
