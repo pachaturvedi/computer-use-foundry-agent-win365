@@ -65,8 +65,11 @@ In `key_vault_certificate` mode, the agent authenticates the blueprint using a
 signed JWT client assertion instead of a shared secret. `infra/state/keyvault.bicep`
 grants the agent's runtime principal least-privilege **Key Vault Certificate
 User** (read public certificate metadata) and **Key Vault Crypto User**
-(sign/verify only) roles on the shared vault — never the roles needed to
-retrieve the private key or the paired secret. At startup,
+(sign/verify only) roles scoped to only the `w365-blueprint-certificate`
+certificate and its backing key objects — not the shared vault as a whole, so
+the agent's runtime identity has no standing access to unrelated secrets
+(such as the viewer OIDC client secret) also stored there, and never the
+roles needed to retrieve the private key or the paired secret. At startup,
 `KeyVaultBlueprintCertificateAssertionProvider` reads the public bytes of the
 `w365-blueprint-certificate` certificate from `W365_KEY_VAULT_NAME` (the only
 key_vault_certificate-mode configuration the agent requires), builds a JWT
@@ -82,9 +85,13 @@ Provisioning is a two-step, explicitly confirmed process (see
 creates or rotates the self-signed, non-exportable certificate in Key Vault,
 and `scripts\Register-W365BlueprintCertificate.ps1` registers only its public
 bytes as a `keyCredential` on the Foundry Agent ID Blueprint application via
-Microsoft Graph (`Application.ReadWrite.All`), preserving any existing
-credentials already on the blueprint. Neither script reads, exports, or
-transmits private key material.
+Microsoft Graph (`AgentIdentityBlueprint.AddRemoveCreds.All`, the least
+privileged credential-management scope for the blueprint — not tenant-wide
+application write), preserving any existing credentials already on the
+blueprint. `scripts\Invoke-W365SetupFlow.ps1` also verifies, via a read-only
+Graph call, that the exact same certificate is registered exactly once on the
+discovered blueprint before proceeding — Key Vault presence alone is not
+sufficient. Neither script reads, exports, or transmits private key material.
 
 ## Three-stage agent-user tokens
 

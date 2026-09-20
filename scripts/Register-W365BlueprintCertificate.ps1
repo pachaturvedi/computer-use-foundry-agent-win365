@@ -40,7 +40,9 @@ $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]:
 $customKeyIdentifier = [Convert]::ToBase64String($certificate.GetCertHash())
 
 Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
-$scopes = @('Application.ReadWrite.All')
+# Least-privileged delegated scope for blueprint credential mutation per Microsoft Graph docs
+# (agentIdentityBlueprint: update / addKey); this does not grant tenant-wide application write.
+$scopes = @('AgentIdentityBlueprint.AddRemoveCreds.All')
 
 function Test-GraphContext {
     param(
@@ -109,7 +111,10 @@ function SingleOrNone($Items, [string]$Label) {
 
 $blueprint = SingleOrNone (List "v1.0/applications/microsoft.graph.agentIdentityBlueprint?`$filter=appId eq '$BlueprintId'") 'Foundry blueprint app ID'
 if (!$blueprint) { throw 'Existing Foundry blueprint is unavailable. Complete phase 1 setup before registering a certificate.' }
-$bpPath = "v1.0/applications/$($blueprint.id)"
+# Blueprint-specific reads/updates (including keyCredentials) must target the derived-type segment
+# per Microsoft Graph's agentIdentityBlueprint contract; the base /applications/{id} path does not
+# apply blueprint-specific validation for this resource.
+$bpPath = "v1.0/applications/$($blueprint.id)/microsoft.graph.agentIdentityBlueprint"
 $blueprint = Graph GET "$bpPath`?`$select=id,appId,keyCredentials"
 if ($blueprint.appId -ne $BlueprintId.ToString()) { throw 'Resolved blueprint does not match the supplied client ID.' }
 

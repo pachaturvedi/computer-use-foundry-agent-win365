@@ -137,14 +137,18 @@ pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
 ```
 
 `Register-W365BlueprintCertificate.ps1` requires a delegated Graph sign-in
-with `Application.ReadWrite.All` and reads/writes only the blueprint
-application's `keyCredentials`; it preserves any existing credentials already
-on the blueprint (for example, a `client_secret` you may still have configured)
-and is idempotent by certificate thumbprint — re-running it after the
-certificate already exists on the blueprint is a no-op. Re-running
-`Initialize-W365BlueprintCertificate.ps1` without `-Rotate` reuses the existing
-certificate; pass `-Rotate` to issue a new one (and re-run the registration
-step so Entra trusts the new public key).
+with `AgentIdentityBlueprint.AddRemoveCreds.All` (the least-privileged Blueprint
+credential-management scope; it does not grant tenant-wide application write)
+and reads/writes only the blueprint application's `keyCredentials`; it
+preserves any existing credentials already on the blueprint (for example, a
+`client_secret` you may still have configured) and is idempotent by certificate
+thumbprint — re-running it after the certificate already exists on the
+blueprint is a no-op. Re-running `Initialize-W365BlueprintCertificate.ps1`
+without `-Rotate` reuses the existing certificate; pass `-Rotate` to issue a
+new one (and re-run the registration step so Entra trusts the new public key).
+`Invoke-W365SetupFlow.ps1` re-verifies, via a read-only Graph call, that the
+certificate is actually registered on the blueprint before mutating W365
+resources — Key Vault presence alone does not satisfy this check.
 
 `PoolIdOrUrl` accepts either a raw pool GUID or the Intune URL that contains
 `poolId/<guid>`, including links copied from the admin center.

@@ -613,7 +613,9 @@ function Assert-W365BlueprintSecretReady {
 function Assert-W365BlueprintCertificateReady {
     param(
         [Parameter(Mandatory)][guid]$SubscriptionId,
-        [Parameter(Mandatory)][string]$KeyVaultName
+        [Parameter(Mandatory)][string]$KeyVaultName,
+        [Parameter(Mandatory)][guid]$TenantId,
+        [Parameter(Mandatory)][guid]$BlueprintId
     )
 
     $certificateId = Invoke-W365AzureCliRead -Arguments @(
@@ -625,6 +627,53 @@ function Assert-W365BlueprintCertificateReady {
         '--output', 'tsv')
     if ([string]::IsNullOrWhiteSpace($certificateId)) {
         throw "Key Vault '$KeyVaultName' must contain w365-blueprint-certificate before W365 setup mutates resources."
+    }
+
+    # Presence in Key Vault alone does not prove the certificate is trusted by Foundry: verify the
+    # exact same certificate is registered exactly once as a keyCredential on the discovered
+    # blueprint before W365 setup proceeds to mutate resources against it.
+    $vaultUri = Invoke-W365AzureCliRead -Arguments @(
+        'keyvault', 'show',
+        '--subscription', $SubscriptionId.ToString(),
+        '--name', $KeyVaultName,
+        '--query', 'properties.vaultUri',
+        '--output', 'tsv')
+    $vaultAccessToken = Invoke-W365AzureCliRead -Arguments @(
+        'account', 'get-access-token',
+        '--resource', 'https://vault.azure.net',
+        '--query', 'accessToken',
+        '--output', 'tsv')
+    $certificateBundle = Invoke-RestMethod `
+        -Method Get `
+        -Uri "$($vaultUri.TrimEnd('/'))/certificates/w365-blueprint-certificate`?api-version=7.4" `
+        -Headers @{ Authorization = "Bearer $vaultAccessToken" }
+    if ([string]::IsNullOrWhiteSpace($certificateBundle.cer)) {
+        throw "Unable to read the public certificate bytes for 'w365-blueprint-certificate' from Key Vault '$KeyVaultName'."
+    }
+    # Key Vault encodes 'cer' as base64url (RFC 7515 JOSE convention); convert to standard base64.
+    $base64UrlCer = $certificateBundle.cer.Replace('-', '+').Replace('_', '/')
+    switch ($base64UrlCer.Length % 4) {
+        2 { $base64UrlCer += '==' }
+        3 { $base64UrlCer += '=' }
+    }
+    $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new([Convert]::FromBase64String($base64UrlCer))
+    $expectedKeyIdentifier = [Convert]::ToBase64String($certificate.GetCertHash())
+
+    $graphAccessToken = Invoke-W365AzureCliRead -Arguments @(
+        'account', 'get-access-token',
+        '--resource', 'https://graph.microsoft.com',
+        '--tenant', $TenantId.ToString(),
+        '--query', 'accessToken',
+        '--output', 'tsv')
+    $blueprint = Invoke-RestMethod `
+        -Method Get `
+        -Uri "https://graph.microsoft.com/v1.0/applications(appId='$BlueprintId')/microsoft.graph.agentIdentityBlueprint`?`$select=keyCredentials" `
+        -Headers @{ Authorization = "Bearer $graphAccessToken" }
+    $registeredMatches = @($blueprint.keyCredentials | Where-Object {
+        [string]$_.customKeyIdentifier -eq $expectedKeyIdentifier
+    })
+    if ($registeredMatches.Count -ne 1) {
+        throw "Certificate 'w365-blueprint-certificate' exists in Key Vault '$KeyVaultName' but is not registered exactly once as a keyCredential on blueprint '$BlueprintId'. Run Register-W365BlueprintCertificate.ps1 -ConfirmResourceChanges before continuing."
     }
 }
 

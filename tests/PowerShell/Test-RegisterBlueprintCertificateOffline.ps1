@@ -41,11 +41,11 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
             if ($path.StartsWith('v1.0/applications/microsoft.graph.agentIdentityBlueprint?')) {
                 return @{ value = @($script:ledger.Blueprint) }
             }
-            if ($path.StartsWith('v1.0/applications/blueprint-object?')) {
+            if ($path.StartsWith('v1.0/applications/blueprint-object/microsoft.graph.agentIdentityBlueprint?')) {
                 return $script:ledger.Blueprint
             }
         }
-        if ($Method -eq 'PATCH' -and $path -eq 'v1.0/applications/blueprint-object') {
+        if ($Method -eq 'PATCH' -and $path -eq 'v1.0/applications/blueprint-object/microsoft.graph.agentIdentityBlueprint') {
             if ($bodyObject.Keys.Count -ne 1 -or !$bodyObject.ContainsKey('keyCredentials')) {
                 throw 'Attempted to modify blueprint properties other than keyCredentials.'
             }
@@ -58,7 +58,8 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
     }
     function Get-PatchCount { $script:patchCount }
     function Get-LastKeyCredentials { $script:lastKeyCredentials }
-    Export-ModuleMember -Function Connect-MgGraph, Get-MgContext, Invoke-MgGraphRequest, Get-PatchCount, Get-LastKeyCredentials
+    function Get-RequestedScopes { $script:scopes }
+    Export-ModuleMember -Function Connect-MgGraph, Get-MgContext, Invoke-MgGraphRequest, Get-PatchCount, Get-LastKeyCredentials, Get-RequestedScopes
 }
 $module | Import-Module -Global
 
@@ -96,6 +97,10 @@ try {
     & $scriptPath -TenantId $tenantId -BlueprintId $blueprintId -PublicCertificateBase64 $testCertificateBase64 -ConfirmResourceChanges -Confirm:$false
     if ((Get-PatchCount) -ne 1) {
         throw 'Registration did not PATCH the blueprint exactly once.'
+    }
+    $requestedScopes = @(Get-RequestedScopes)
+    if ($requestedScopes.Count -ne 1 -or $requestedScopes[0] -ne 'AgentIdentityBlueprint.AddRemoveCreds.All') {
+        throw 'Registration did not request the least-privileged AgentIdentityBlueprint.AddRemoveCreds.All Graph scope.'
     }
     $updated = @(Get-LastKeyCredentials)
     if ($updated.Count -ne 2) {

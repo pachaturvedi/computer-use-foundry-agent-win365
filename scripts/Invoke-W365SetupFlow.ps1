@@ -149,7 +149,9 @@ try {
     if ($activation.CredentialMode -eq 'key_vault_certificate') {
         Assert-W365BlueprintCertificateReady `
             -SubscriptionId $subscriptionId `
-            -KeyVaultName $activation.KeyVaultName
+            -KeyVaultName $activation.KeyVaultName `
+            -TenantId $discoveredTenantId `
+            -BlueprintId $discoveredBlueprintId
     }
 
     Write-W365ProvisioningStep "Running W365 setup for azd environment '$environmentName'."
