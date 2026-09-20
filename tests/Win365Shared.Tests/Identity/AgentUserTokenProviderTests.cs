@@ -143,6 +143,72 @@ public sealed class AgentUserTokenProviderTests
     }
 
     [Fact]
+    public async Task BlueprintCanExchangeForAgentIdentityStorageTokenAsync()
+    {
+        var settings = new Settings(new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?>
+            {
+                ["W365_TENANT_ID"] = "11111111-1111-1111-1111-111111111111",
+                ["W365_BLUEPRINT_ID"] = "blueprint",
+                ["W365_AGENT_ID"] = "agent",
+                ["W365_BLUEPRINT_CREDENTIAL_MODE"] = "client_secret",
+                ["W365_CLIENT_SECRET"] = "temporary-secret"
+            }).Build());
+        using var handler = new TokenHandler();
+        using var http = new HttpClient(handler);
+        var blueprint = new BlueprintTokenProvider(
+            http,
+            settings,
+            false,
+            new FakeCredential { Fail = true });
+
+        var token = await blueprint.GetAgentIdentityStorageTokenAsync(default);
+
+        Assert.Equal("token-2", token.Token);
+        Assert.Equal(2, handler.Forms.Count);
+        Assert.Equal("agent", handler.Forms[1]["client_id"]);
+        Assert.Equal("https://storage.azure.com/.default", handler.Forms[1]["scope"]);
+        Assert.Equal("token-1", handler.Forms[1]["client_assertion"]);
+    }
+
+    [Fact]
+    public async Task CertificateBlueprintCanExchangeForAgentIdentityStorageTokenWithoutFallbackAsync()
+    {
+        var settings = new Settings(new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?>
+            {
+                ["W365_TENANT_ID"] = "11111111-1111-1111-1111-111111111111",
+                ["W365_BLUEPRINT_ID"] = "blueprint",
+                ["W365_AGENT_ID"] = "agent",
+                ["W365_BLUEPRINT_CREDENTIAL_MODE"] = "key_vault_certificate",
+                ["W365_KEY_VAULT_NAME"] = "sample-w365-vault"
+            }).Build());
+        using var handler = new TokenHandler();
+        using var http = new HttpClient(handler);
+        var credential = new FakeCredential { Fail = true };
+        var certificateAssertionProvider =
+            new FakeCertificateAssertionProvider("certificate-assertion");
+        var blueprint = new BlueprintTokenProvider(
+            http,
+            settings,
+            false,
+            credential,
+            certificateAssertionProvider: certificateAssertionProvider);
+
+        var token = await blueprint.GetAgentIdentityStorageTokenAsync(default);
+
+        Assert.Equal("token-2", token.Token);
+        Assert.Equal(0, credential.Calls);
+        Assert.Equal(1, certificateAssertionProvider.Calls);
+        Assert.Equal(2, handler.Forms.Count);
+        Assert.Equal("certificate-assertion", handler.Forms[0]["client_assertion"]);
+        Assert.False(handler.Forms[0].ContainsKey("client_secret"));
+        Assert.Equal("agent", handler.Forms[1]["client_id"]);
+        Assert.Equal("https://storage.azure.com/.default", handler.Forms[1]["scope"]);
+        Assert.Equal("token-1", handler.Forms[1]["client_assertion"]);
+    }
+
+    [Fact]
     public async Task KeyVaultCertificateModeWithoutAProviderFailsClosedAsync()
     {
         var settings = new Settings(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>

@@ -13,6 +13,7 @@
     <PackageReference Include="System.ClientModel" />
   </ItemGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="Win365Agent" />
     <InternalsVisibleTo Include="Win365Shared.Tests" />
   </ItemGroup>
 </Project>

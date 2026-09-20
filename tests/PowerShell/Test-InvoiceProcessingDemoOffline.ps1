@@ -74,8 +74,8 @@ if ($Arguments[0] -eq 'ai' -and $Arguments[1] -eq 'agent' -and $Arguments[2] -eq
         'missing-marker' { 'Agent completed without a marker.' }
         'mismatch-marker' { 'DEMO_RESULT: SUCCESS; FILE: wrong.txt' }
         'provider-failure' {
-            $global:LASTEXITCODE = 17
             'Provider disconnected before completion.'
+            exit 17
         }
         default { "DEMO_RESULT: SUCCESS; FILE: $($fileMatch.Value)" }
     }
@@ -127,6 +127,8 @@ throw "Unexpected azd arguments: $($Arguments -join ' ')"
         'Saved file: (?<file>Invoice-Processing-Summary-[a-f0-9]{32}\.txt)')
     if (!$savedFileMatch.Success -or
         $output -notmatch 'Human handoff: disabled' -or
+        $output -notmatch 'Progress heartbeat: elapsed' -or
+        $output -notmatch 'Invocation finished. Elapsed:' -or
         $output -notmatch 'Live viewer detected; browser launch was skipped') {
         throw "Invoice demo helper did not report the expected safe workflow: $output"
     }
@@ -223,7 +225,8 @@ throw "Unexpected azd arguments: $($Arguments -join ' ')"
         }
         if ($runtimeMode -eq 'provider-failure' -and
             (!$runtimeOutput.Contains('unknown remote outcome', [StringComparison]::Ordinal) -or
-            !$runtimeOutput.Contains('fail-closed-recovery', [StringComparison]::Ordinal))) {
+            !$runtimeOutput.Contains('Recover-StaleDesktopState.ps1', [StringComparison]::Ordinal) -or
+            !$runtimeOutput.Contains('-Apply', [StringComparison]::Ordinal))) {
             throw "Provider failure did not return actionable unknown-outcome recovery: $runtimeOutput"
         }
         if ($runtimeOutput.Contains("https://viewer.example.com/live/$viewerToken", [StringComparison]::Ordinal)) {

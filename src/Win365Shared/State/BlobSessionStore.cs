@@ -8,14 +8,32 @@ using Azure.Storage.Blobs.Specialized;
 namespace Win365Agent;
 
 /// <summary>Persists desktop session state as JSON using an Azure Blob lease for distributed exclusivity.</summary>
-/// <param name="uri">The URI of the state blob.</param>
-/// <param name="credential">The credential used to access the blob.</param>
-public sealed class BlobSessionStore(Uri uri, TokenCredential credential) : ISessionStore
+public sealed class BlobSessionStore : ISessionStore
 {
-    private readonly BlobClient _blob = new(
-        uri,
-        credential,
-        new BlobClientOptions { Retry = { MaxRetries = 0 } });
+    internal static readonly TimeSpan DefaultLeaseAcquireTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan _leaseRetryDelay = TimeSpan.FromMilliseconds(250);
+    private readonly BlobClient _blob;
+    private readonly TimeSpan _leaseAcquireTimeout;
+
+    /// <summary>Initializes a store backed by the specified state Blob.</summary>
+    /// <param name="uri">The URI of the state blob.</param>
+    /// <param name="credential">The credential used to access the blob.</param>
+    public BlobSessionStore(Uri uri, TokenCredential credential)
+        : this(
+            new BlobClient(
+                uri,
+                credential,
+                new BlobClientOptions { Retry = { MaxRetries = 0 } }),
+            DefaultLeaseAcquireTimeout)
+    {
+    }
+
+    internal BlobSessionStore(BlobClient blob, TimeSpan leaseAcquireTimeout)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(leaseAcquireTimeout, TimeSpan.Zero);
+        _blob = blob;
+        _leaseAcquireTimeout = leaseAcquireTimeout;
+    }
 
     /// <inheritdoc/>
     public async Task<SessionTransaction> OpenAsync(CancellationToken cancellationToken)
@@ -38,18 +56,14 @@ public sealed class BlobSessionStore(Uri uri, TokenCredential credential) : ISes
 
         var lease = _blob.GetBlobLeaseClient();
         // The lease serializes state transitions across agent and viewer processes.
-        while (true)
-        {
-            try
+        await AcquireLeaseAsync(
+            async token =>
             {
-                await lease.AcquireAsync(TimeSpan.FromSeconds(-1), cancellationToken: cancellationToken);
-                break;
-            }
-            catch (RequestFailedException exception) when (exception.ErrorCode == "LeaseAlreadyPresent")
-            {
-                await Task.Delay(250, cancellationToken);
-            }
-        }
+                _ = await lease.AcquireAsync(TimeSpan.FromSeconds(-1), cancellationToken: token);
+            },
+            _leaseAcquireTimeout,
+            _leaseRetryDelay,
+            cancellationToken);
 
         try
         {
@@ -64,10 +78,56 @@ public sealed class BlobSessionStore(Uri uri, TokenCredential credential) : ISes
                 State = JsonSerializer.Deserialize<DesktopSession>(download.Value.Content.ToString())
             };
         }
+
         catch
         {
             await lease.ReleaseAsync(cancellationToken: CancellationToken.None);
             throw;
+        }
+    }
+
+    internal static async Task AcquireLeaseAsync(
+        Func<CancellationToken, Task> acquire,
+        TimeSpan timeout,
+        TimeSpan retryDelay,
+        CancellationToken cancellationToken)
+    {
+        var leaseAlreadyPresentObserved = false;
+        using var timeoutSource = new CancellationTokenSource(timeout);
+        using var linkedSource = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            timeoutSource.Token);
+
+        try
+        {
+            while (true)
+            {
+                try
+                {
+                    await acquire(linkedSource.Token);
+                    return;
+                }
+                catch (RequestFailedException exception) when (
+                    exception.ErrorCode == "LeaseAlreadyPresent")
+                {
+                    leaseAlreadyPresentObserved = true;
+                    await Task.Delay(retryDelay, linkedSource.Token);
+                }
+            }
+        }
+        catch (OperationCanceledException) when (
+            timeoutSource.IsCancellationRequested &&
+            !cancellationToken.IsCancellationRequested &&
+            leaseAlreadyPresentObserved)
+        {
+            throw new SessionLeaseUnavailableException();
+        }
+        catch (OperationCanceledException exception) when (
+            timeoutSource.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException(
+                "Desktop state provider did not complete lease acquisition within the bounded wait.",
+                exception);
         }
     }
 

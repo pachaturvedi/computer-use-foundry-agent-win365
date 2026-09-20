@@ -151,8 +151,128 @@ Do not rerun the demo until the previous desktop cleanup is proven.
 1. Inspect sanitized hosted logs:
    azd ai agent monitor --environment "$EnvironmentName" --tail 100
 2. Confirm that EndSession completed and that no "session slot remains blocked for operator recovery" event is present.
-3. If cleanup is not proven, follow docs\ARCHITECTURE.md#fail-closed-recovery to drain the old worker, resolve the known W365 session, and clear state only after remote ownership is resolved.
+3. If cleanup is not proven, inspect safely:
+   pwsh -NoProfile -File .\scripts\Recover-StaleDesktopState.ps1 -Environment "$EnvironmentName"
+4. Only after inspection passes, explicitly clear unchanged stale state:
+   pwsh -NoProfile -File .\scripts\Recover-StaleDesktopState.ps1 -Environment "$EnvironmentName" -Apply
 "@
+}
+
+function Write-DemoInvocationLine {
+    param([AllowEmptyString()][string]$Line)
+
+    $trimmedLine = $Line.Trim()
+    if (![string]::IsNullOrWhiteSpace($trimmedLine)) {
+        $script:lastNonEmptyLine = $trimmedLine
+    }
+    if (!$script:viewerDetected) {
+        $liveViewerUri = Get-LiveViewerUri -Line $Line -ViewerOrigin $script:viewerOrigin
+        if ($null -ne $liveViewerUri) {
+            $script:viewerDetected = $true
+            if ($SkipOpenViewer) {
+                Write-Host 'Live viewer detected; browser launch was skipped.'
+            }
+            else {
+                try {
+                    Start-Process -FilePath $liveViewerUri.AbsoluteUri
+                    $script:browserOpened = $true
+                    Write-Host 'Live viewer opened in the default browser for observation.'
+                }
+                catch {
+                    $script:browserOpenFailed = $true
+                    Write-Warning 'The live viewer could not be opened. The agent will continue to completion.'
+                }
+            }
+        }
+    }
+
+    if ($trimmedLine.Contains('DEMO_RESULT:', [StringComparison]::Ordinal)) {
+        $script:resultMarkerLines.Add($trimmedLine)
+    }
+
+    Write-Host (Protect-DemoOutput -Line $Line -ViewerOrigin $script:viewerOrigin)
+}
+
+function Invoke-DemoProcess {
+    param(
+        [Parameter(Mandatory)][string]$Executable,
+        [Parameter(Mandatory)][string[]]$Arguments
+    )
+
+    $startInfo = [Diagnostics.ProcessStartInfo]::new()
+    if ([IO.Path]::GetExtension($Executable) -eq '.ps1') {
+        $startInfo.FileName = (Get-Process -Id $PID).Path
+        $startInfo.ArgumentList.Add('-NoLogo')
+        $startInfo.ArgumentList.Add('-NoProfile')
+        $startInfo.ArgumentList.Add('-File')
+        $startInfo.ArgumentList.Add($Executable)
+    }
+    else {
+        $startInfo.FileName = $Executable
+    }
+    foreach ($argument in $Arguments) {
+        $startInfo.ArgumentList.Add($argument)
+    }
+    $startInfo.UseShellExecute = $false
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $startInfo.CreateNoWindow = $true
+
+    $process = [Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+    $started = $false
+    try {
+        $started = $process.Start()
+        if (!$started) {
+            throw 'The hosted-agent invocation process did not start.'
+        }
+
+        $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+        $nextHeartbeat = [TimeSpan]::FromSeconds(15)
+        $standardOutput = $process.StandardOutput.ReadLineAsync()
+        $standardError = $process.StandardError.ReadLineAsync()
+        Write-Host 'Invocation started. Progress heartbeat: elapsed 00:00.'
+        while ($null -ne $standardOutput -or $null -ne $standardError -or !$process.HasExited) {
+            if ($null -ne $standardOutput -and $standardOutput.IsCompleted) {
+                $line = $standardOutput.GetAwaiter().GetResult()
+                if ($null -eq $line) {
+                    $standardOutput = $null
+                }
+                else {
+                    Write-DemoInvocationLine -Line $line
+                    $standardOutput = $process.StandardOutput.ReadLineAsync()
+                }
+            }
+            if ($null -ne $standardError -and $standardError.IsCompleted) {
+                $line = $standardError.GetAwaiter().GetResult()
+                if ($null -eq $line) {
+                    $standardError = $null
+                }
+                else {
+                    Write-DemoInvocationLine -Line $line
+                    $standardError = $process.StandardError.ReadLineAsync()
+                }
+            }
+            if ($stopwatch.Elapsed -ge $nextHeartbeat) {
+                Write-Host ("Invocation in progress. Elapsed: {0:mm\:ss}." -f $stopwatch.Elapsed)
+                $nextHeartbeat = $nextHeartbeat.Add([TimeSpan]::FromSeconds(15))
+            }
+            if (!$process.HasExited) {
+                $null = $process.WaitForExit(100)
+            }
+        }
+
+        $process.WaitForExit()
+        Write-Host ("Invocation finished. Elapsed: {0:mm\:ss}." -f $stopwatch.Elapsed)
+        return $process.ExitCode
+    }
+    finally {
+        if ($started -and !$process.HasExited) {
+            $process.Kill($true)
+            $process.WaitForExit()
+        }
+        $process.Dispose()
+    }
 }
 
 $resolvedAzd = if (![string]::IsNullOrWhiteSpace($AzdPath)) {
@@ -267,63 +387,29 @@ try {
     }
     $arguments += $prompt
 
-    $viewerDetected = $false
-    $browserOpened = $false
-    $browserOpenFailed = $false
-    $resultMarkerLines = [System.Collections.Generic.List[string]]::new()
-    $lastNonEmptyLine = ''
-    $global:LASTEXITCODE = 0
+    $script:viewerOrigin = $viewerOrigin
+    $script:viewerDetected = $false
+    $script:browserOpened = $false
+    $script:browserOpenFailed = $false
+    $script:resultMarkerLines = [System.Collections.Generic.List[string]]::new()
+    $script:lastNonEmptyLine = ''
 
-    & $AzdExecutable @arguments 2>&1 | ForEach-Object {
-        $line = [string]$_
-        $trimmedLine = $line.Trim()
-        if (![string]::IsNullOrWhiteSpace($trimmedLine)) {
-            $lastNonEmptyLine = $trimmedLine
-        }
-        if (!$viewerDetected) {
-            $liveViewerUri = Get-LiveViewerUri -Line $line -ViewerOrigin $viewerOrigin
-            if ($null -ne $liveViewerUri) {
-                $viewerDetected = $true
-                if ($SkipOpenViewer) {
-                    Write-Host 'Live viewer detected; browser launch was skipped.'
-                }
-                else {
-                    try {
-                        Start-Process -FilePath $liveViewerUri.AbsoluteUri
-                        $browserOpened = $true
-                        Write-Host 'Live viewer opened in the default browser for observation.'
-                    }
-                    catch {
-                        $browserOpenFailed = $true
-                        Write-Warning 'The live viewer could not be opened. The agent will continue to completion.'
-                    }
-                }
-            }
-        }
+    $invokeExitCode = Invoke-DemoProcess -Executable $AzdExecutable -Arguments $arguments
 
-        if ($trimmedLine.Contains('DEMO_RESULT:', [StringComparison]::Ordinal)) {
-            $resultMarkerLines.Add($trimmedLine)
-        }
-
-        Write-Host (Protect-DemoOutput -Line $line -ViewerOrigin $viewerOrigin)
-    }
-    $invokeSucceeded = $?
-    $invokeExitCode = $LASTEXITCODE
-
-    if (!$invokeSucceeded -or $invokeExitCode -ne 0) {
+    if ($invokeExitCode -ne 0) {
         throw "$(Get-DemoRecoveryMessage -EnvironmentName $environmentName)`nProvider exit code: $invokeExitCode."
     }
-    if (!$viewerDetected) {
+    if (!$script:viewerDetected) {
         throw 'The invocation completed without returning the expected authenticated live-view link.'
     }
-    if ($browserOpenFailed) {
+    if ($script:browserOpenFailed) {
         throw 'The agent completed, but the default browser could not open the redacted live-view link.'
     }
-    if ($resultMarkerLines.Count -ne 1) {
-        throw "The invocation returned $($resultMarkerLines.Count) result markers; exactly one terminal marker is required."
+    if ($script:resultMarkerLines.Count -ne 1) {
+        throw "The invocation returned $($script:resultMarkerLines.Count) result markers; exactly one terminal marker is required."
     }
-    $resultMarker = $resultMarkerLines[0]
-    if ($resultMarker -cne $lastNonEmptyLine) {
+    $resultMarker = $script:resultMarkerLines[0]
+    if ($resultMarker -cne $script:lastNonEmptyLine) {
         throw 'The result marker was not the final non-empty invocation line.'
     }
     if ($resultMarker -cmatch '^DEMO_RESULT: FAILED; REASON: .{1,200}$') {
@@ -334,7 +420,7 @@ try {
         throw "The invocation ended without confirming DEMO_RESULT: SUCCESS for '$outputFileName'."
     }
 
-    $viewerStatus = if ($SkipOpenViewer) { 'detected' } elseif ($browserOpened) { 'opened' } else { 'not opened' }
+    $viewerStatus = if ($SkipOpenViewer) { 'detected' } elseif ($script:browserOpened) { 'opened' } else { 'not opened' }
     Write-Host "Invoice processing completed. Viewer: $viewerStatus. Saved file: $outputFileName"
 }
 finally {

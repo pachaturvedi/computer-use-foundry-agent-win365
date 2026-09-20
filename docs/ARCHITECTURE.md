@@ -189,7 +189,7 @@ Graph setup IDs, MCP transport-session ID, W365 desktop-session ID, hosted user
 partition, task ID and viewer link ID are distinct identifiers.
 
 Normal runtime cleanup runs on explicit close and in request `finally`, with an
-independent 75-second cleanup timeout. A task is limited to ten minutes. A crash
+independent 75-second cleanup timeout. A task is limited to fifteen minutes. A crash
 may prevent EndSession; the system does not claim exactly-once remote effects.
 Unknown results remain blocked instead of replaying actions or allocating a
 replacement desktop.
@@ -303,16 +303,90 @@ allowing a dedicated sample environment to be fully torn down in reverse order.
 ## Fail-closed recovery
 
 A Blob transaction uses an infinite lease so a process crash cannot allow another
-worker to execute concurrently with an operation of unknown status. This is an
-intentional availability tradeoff. It needs an operator:
+worker to execute concurrently with an operation of unknown status. Runtime lease
+acquisition waits for at most ten seconds. Continued `LeaseAlreadyPresent` responses
+become the typed, model-visible `desktop_state_locked` error with an instruction not
+to retry automatically; caller cancellation remains cancellation. The lease itself
+is still infinite and is never replaced by an automatically expiring lock.
 
-1. Stop/drain the old hosted worker and viewer. Ensure neither can execute again.
-2. Inspect the private state Blob. End the known W365 session through the
-   authorized W365 service, or establish that it was reclaimed. If StartSession's
-   response was lost, inspect pool/session diagnostics with W365 support.
-3. Only after remote ownership is resolved, break the stale Blob lease (if any)
-   and clear the Blob slot to JSON `null`.
-4. Restart and submit a fresh task. Never replay an uncertain desktop action.
+This is an intentional availability tradeoff. Use the guarded workflow from the
+repository root:
+
+```powershell
+# Read-only: verifies that hosted execution is stopped, state is stale, and W365
+# reports the exact "No W365 session found" condition.
+pwsh -NoProfile -File .\scripts\Recover-StaleDesktopState.ps1 `
+    -Environment "<resource-prefix>-dev"
+
+# Mutating: repeat every check, then explicitly approve the state repair.
+pwsh -NoProfile -File .\scripts\Recover-StaleDesktopState.ps1 `
+    -Environment "<resource-prefix>-dev" `
+    -Apply
+```
+
+Before either command, stop every actively running hosted session. The wrapper
+reads `FOUNDRY_AGENT_NAME` and `AGENT_WIN365_DESKTOP_AGENT_VERSION` from the
+selected azd environment; there is no caller-selectable agent name. Both the
+wrapper and the mutating C# process use that exact binding with
+`azd ai agent sessions list` and accept only non-executing `idle`, `stopped`,
+`deleted`, or `expired` records; a running, provisioning, unknown, or paged result
+fails closed. The default command is read-only. Its expected terminal message is:
+
+```text
+Inspection passed: state is stale and W365 reports no remote session. No changes were made.
+```
+
+If the Blob is already unleased and contains JSON `null`, inspection is an
+idempotent success:
+
+```text
+Inspection passed: no persisted desktop state or lease requires recovery.
+```
+
+If state is already `null` but an interrupted release left a stale or breaking
+lease, read-only inspection reports that condition without claiming a W365 check
+occurred. A separately approved Apply reconciles that lease without calling W365.
+
+The C# recovery service reuses `Settings`, `BlueprintTokenProvider`,
+`AgentUserTokenProvider`, `McpConnection`, the live tool catalog, lifecycle policy,
+and `DesktopSession`. A non-null record must be expired, have
+`OperationInFlight=false`, contain a remote session ID, and have owner tenant/object
+IDs exactly matching the selected environment's configured operator boundary. It then
+calls the catalog-advertised `GetSessionDetails` tool and accepts only an error
+whose single designated text content item is exactly:
+
+```text
+No W365 session found. Call mcp_W365ComputerUse_StartSession first.
+```
+
+Substring, multiple-content, mixed, contradictory, and unrelated payloads fail closed.
+It does not print the ID, state, tokens, links, or secret-bearing configuration.
+
+With `-Apply`, the PowerShell wrapper also requires `ShouldProcess` approval. The
+C# service breaks a verified stale lease at most once, acquires an infinite lease itself,
+re-reads the Blob under that lease, and verifies the ETag and complete serialized
+state are unchanged before writing JSON `null` once. It reconciles an unleased
+non-null record left after break/acquire interruption and a leased-null record left
+after clear/release interruption. Known breaking/held-lease conflicts are bounded.
+After an ambiguous acquire or upload it performs a read-only conditional probe; it
+never automatically repeats break or upload. Release is attempted once. An
+unconfirmed upload or release reports its stage and directs the operator to rerun
+read-only inspection, not `-Apply`. The expected ordinary terminal message is:
+
+```text
+Recovery completed: stale state was cleared and the recovery lease was released.
+```
+
+Any active or ambiguously reported hosted session, missing/non-expired/in-flight
+state, owner mismatch, missing remote ID, changed state, unexpected lease shape, missing live tool,
+or W365 response other than the exact no-session condition aborts without clearing
+state. The command exchanges the configured blueprint credential for the existing
+agent identity's exact Storage-scope token; the fixed credential rejects every
+other requested scope and rejects a parseable JWT with a non-Storage audience.
+The operator therefore does not need a broad permanent
+Blob role. The operator still needs access to the configured blueprint credential
+path (including Key Vault secret read in `client_secret` mode) plus W365. The
+workflow does not create, rotate, print, or copy credentials.
 
 Do not automatically clear an expired slot: expiry is not evidence that the
 remote operation or screen-share connection ended. W365 idle reclamation is a

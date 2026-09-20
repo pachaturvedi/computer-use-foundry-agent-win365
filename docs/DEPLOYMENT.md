@@ -296,6 +296,16 @@ to the project endpoint. Azure CLI handles the bearer internally; the helper
 does not explicitly print or persist tokens, provision or mutate identities.
 Do not enable CLI debug dumps or paste tokens into issues.
 
+For stale desktop state, use the explicit recovery helper documented in
+[Architecture: fail-closed recovery](ARCHITECTURE.md#fail-closed-recovery).
+It is read-only unless `-Apply` is supplied and approved; `-Apply -WhatIf`
+does not mutate. The helper binds session inspection to
+`FOUNDRY_AGENT_NAME` and `AGENT_WIN365_DESKTOP_AGENT_VERSION` from the selected
+azd environment. It requires the exact W365 no-session sentence documented
+there and validates persisted operator ownership before lease break. Never
+automatically rerun `-Apply` after an ambiguous acquire, upload, or release
+outcome—run read-only inspection again first.
+
 The helper accepts only public-cloud HTTPS project URLs on
 `*.services.ai.azure.com`, with path `/api/projects/<project>`. Arbitrary hosts
 and sovereign-cloud endpoints are not supported; do not bypass endpoint

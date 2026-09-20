@@ -127,6 +127,30 @@ public sealed class DesktopRuntimeTests
     }
 
     [Fact]
+    public async Task ExpiredStateIsNotAutomaticallyClearedOrReallocatedAsync()
+    {
+        using var temporaryStore = new TemporarySessionStore();
+        using var handler = new McpHandler();
+        using var http = new HttpClient(handler);
+        var store = temporaryStore.Create();
+        await using (var transaction = await store.OpenAsync(default))
+        {
+            transaction.State = TestSettings.Session();
+            transaction.State.ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(-1);
+            await transaction.SaveAsync(default);
+        }
+        using var runtime = Runtime(http, handler, store);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => runtime.OpenAsync(default));
+
+        Assert.Contains("guarded operator recovery", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(0, handler.StartCount);
+        await using var persisted = await store.OpenAsync(default);
+        Assert.NotNull(persisted.State);
+    }
+
+    [Fact]
     public async Task AmbiguousStartIsRecoveredWithTheSameIdempotencyKeyAsync()
     {
         using var temporaryStore = new TemporarySessionStore();

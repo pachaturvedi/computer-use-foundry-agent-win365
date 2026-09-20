@@ -53,6 +53,14 @@ public static class DesktopRuntimePolicy
     /// <returns><see langword="true"/> when the tool is allowlisted; otherwise, <see langword="false"/>.</returns>
     public static bool IsAllowedTool(string toolName) => AllowedTools.Contains(toolName);
 
+    /// <summary>Determines whether an advertised lifecycle tool is permitted for harness use.</summary>
+    /// <param name="toolName">The exact MCP catalog tool name.</param>
+    /// <param name="operation">The lifecycle operation without an MCP server prefix.</param>
+    /// <returns><see langword="true"/> only for the expected exact lifecycle name.</returns>
+    public static bool IsAllowedLifecycleTool(string toolName, string operation) =>
+        operation is "StartSession" or "GetSessionDetails" or "EndSession" &&
+        (toolName == operation || toolName == $"mcp_W365ComputerUse_{operation}");
+
     /// <summary>
     /// Adds the documented W365 interaction tools that are callable after allocation but omitted from
     /// the server's <c>tools/list</c> response. This is a live-validated compatibility requirement, not
