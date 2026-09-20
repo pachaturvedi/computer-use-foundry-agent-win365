@@ -82,6 +82,7 @@ public sealed class DesktopRuntimeTests
         Assert.DoesNotContain(
             tools.EnumerateArray(),
             tool => tool.GetProperty("inputSchema").GetRawText().Contains("sessionId", StringComparison.Ordinal));
+        // One initialization proves allocation and interaction share the same live-compatible transport.
         Assert.Equal(1, handler.Methods.Count(method => method == "initialize"));
         await runtime.ExecuteAsync(
             "click",

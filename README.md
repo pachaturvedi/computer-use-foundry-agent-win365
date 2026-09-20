@@ -11,7 +11,9 @@ Windows 365 tools through Agent 365 MCP to complete a bounded Cloud PC task.
 
 The sample opens an invoice in Edge, summarizes it in Notepad, verifies the
 result, and releases the desktop. It supports one operator and one fresh task
-at a time. The optional viewer adds authenticated live view and human control.
+at a time. Transport-level conversation metadata from `azd` is accepted, while
+`previous_response_id` and background execution are rejected. The optional
+viewer adds authenticated live view and human control.
 
 ## Choose a path
 

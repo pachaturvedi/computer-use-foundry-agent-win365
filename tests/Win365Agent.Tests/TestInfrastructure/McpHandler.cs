@@ -43,6 +43,8 @@ internal sealed class McpHandler : HttpMessageHandler
         switch (method)
         {
             case "initialize":
+                // Match the live service: a newly initialized transport is not bound to the allocated desktop.
+                // Preserving this flag would hide regressions that reconnect after StartSession.
                 _desktopBound = false;
                 result = new { protocolVersion = "2025-06-18" };
                 break;
