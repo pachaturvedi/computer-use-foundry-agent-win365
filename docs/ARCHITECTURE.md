@@ -125,8 +125,10 @@ Relevant implementation: [`azure.yaml`](../azure.yaml),
 `W365_ENABLED` defaults to `false` and is strictly `true`/`false`. Bootstrap
 serves Foundry Responses with a phase-2-required 503 and healthy readiness,
 starting before any model initialization and without accessing W365, model or
-state credentials. Viewer bootstrap has
-`/health` and 503 routes, requiring no OIDC configuration. Local mode is
+state credentials. The dedicated `Win365Viewer` executable owns viewer bootstrap and live routes.
+Viewer bootstrap has `/health` and viewer-specific 503 routes, requiring no
+OIDC configuration. The hosted agent receives the viewer hostname separately
+but advertises links only after `VIEWER_LIVE_ENABLED=true`. Local mode is
 loopback-only bootstrap/offline; enabled local desktop execution is refused.
 
 After phase 2 enables W365, the hosting composition creates an
@@ -310,10 +312,11 @@ subscription/resumption client is implemented.
 
 `McpObservationConverter` returns real `DataContent` image objects, not base64 text.
 Screenshots become JPEGs with maximum dimension 1280 and maximum encoded size
-128 KiB; four screenshots per task are allowed. Original/resized dimensions are
-included so the model can map click coordinates. Oversize images fail explicitly.
-Each textual observation is limited to 16000 characters; at most 40 desktop
-action calls are allowed. Prefer accessibility observations.
+128 KiB; eight screenshots per task are allowed. Original/resized dimensions
+are included so the model can map click coordinates. Oversize images fail
+explicitly. Each textual observation is limited to 16000 characters; at most
+60 desktop action calls are allowed, and each request is bounded to 15 minutes.
+Prefer accessibility observations.
 
 `FreshTaskSessionStore` deliberately does not persist model history. New tasks
 create new Agent Framework sessions, avoiding cross-request image accumulation.
@@ -323,21 +326,21 @@ No dependency-vulnerability or downgrade warnings are suppressed.
 
 ## Source layout
 
-The application remains one deployable project. Feature folders make security
-and lifecycle boundaries visible without introducing extra projects, repository
-layers, CQRS, or framework abstractions.
+The hosted agent and ACA viewer are separate executables. Both depend on a
+small shared class library, while neither executable references the other, so
+viewer bootstrap/live configuration cannot select the hosted agent's startup
+route.
 
-| Folder | Responsibility |
+| Project/folder | Responsibility |
 | --- | --- |
-| `Configuration` | Strict environment parsing and startup validation. |
-| `Hosting` | Small composition helpers, bootstrap endpoints, agent tools, and per-request cleanup. |
-| `Desktop` | Desktop session model, lifecycle, ownership, budgets, and allowlist policy. |
-| `Mcp` | MCP handshake/catalog/call transport and bounded observation conversion. |
-| `Identity` | Explicit blueprint credential modes plus shared agent-user token exchanges; no implicit fallback. |
-| `State` | Blob-backed live state and file-backed offline test state. |
-| `Responses` | Fresh Agent Framework sessions and bounded fresh-request validation. |
-| `Viewer` | OIDC owner authorization, CSRF, CSP, and viewer endpoints. |
-| `wwwroot` | Static viewer assets. |
+| `src\Win365Shared\Configuration` | Strict environment parsing and startup validation shared by both executables. |
+| `src\Win365Shared\Identity` | Explicit blueprint credential modes plus shared agent-user token exchanges; no implicit fallback. |
+| `src\Win365Shared\State` | Desktop session contract plus Blob-backed live state and file-backed offline test state. |
+| `src\Win365Agent\Hosting` | Hosted-agent composition, bootstrap endpoints, tools, and per-request cleanup. |
+| `src\Win365Agent\Desktop` | Desktop lifecycle, ownership, budgets, and allowlist policy. |
+| `src\Win365Agent\Mcp` | MCP handshake/catalog/call transport and bounded observation conversion. |
+| `src\Win365Agent\Responses` | Fresh Agent Framework sessions and bounded fresh-request validation. |
+| `src\Win365Viewer` | Independent ACA entry point, OIDC authorization, CSRF/CSP, viewer endpoints, and static assets; references only `Win365Shared`. |
 
 Tests mirror these folders under `tests/Win365Agent.Tests`; reusable fakes and
 temporary state helpers live only in `TestInfrastructure`.

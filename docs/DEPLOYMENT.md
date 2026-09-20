@@ -212,12 +212,17 @@ one `azure.ai.project` service, one `azure.ai.agent` service, pinned minimum
 tool versions, code runtime/entry point, protocol, environment mapping, resource
 limits, and scenario tags.
 
-Generic templates often use `azd up`, but this sample deliberately uses
-`azd deploy win365-desktop-agent`: the project and model must already exist, and
-phase 1 must not provision an unconfirmed model SKU or W365 capacity. Do not run
-`azd provision` or `azd up` unless you have intentionally added and reviewed
-complete infrastructure declarations for your own fork, or you are following
-the dedicated greenfield path above.
+Generic templates often use `azd up`, but this sample deliberately uses the
+`Invoke-AzdDeployment.ps1` wrapper: the project and model must already exist,
+and phase 1 must not provision an unconfirmed model SKU or W365 capacity. In
+`client_secret` mode, do **not** call `azd deploy win365-desktop-agent`
+directly. The wrapper retrieves the blueprint credential from Key Vault,
+temporarily supplies it to azd for the immutable hosted-agent deployment, and
+clears it afterward. A direct deploy expands an empty `W365_CLIENT_SECRET` and
+can publish an active version that fails startup with `Configure
+W365_CLIENT_SECRET.` Do not run `azd provision` or `azd up` unless you have
+intentionally added and reviewed complete infrastructure declarations for your
+own fork, or you are following the dedicated greenfield path above.
 
 `W365_ENABLED` defaults to `false` and accepts only `true` or `false`. In phase 1,
 all phase-2 environment values in the manifest may remain empty: **no W365 IDs,
@@ -301,7 +306,11 @@ federated credentials, and the blueprint's prior `requiredResourceAccess`.
 
 ## Optional phase-1 viewer bootstrap
 
-The viewer is a separate process built from the same project (`--viewer`).
+The viewer is a separate `src\Win365Viewer` executable and ACA container. It
+references shared identity/state contracts from `Win365Agent` but has an
+independent startup path and cannot expose the hosted Responses endpoint.
+Until `VIEWER_LIVE_ENABLED=true`, the hosted agent suppresses viewer links even
+if `VIEWER_PUBLIC_URL` already contains the provisioned ACA hostname.
 Deploy it in bootstrap mode first so ACA can establish the public origin, UAMI,
 and ACR without requiring live W365 or OIDC settings. The shared W365
 credential vault is provisioned separately by the state layer.

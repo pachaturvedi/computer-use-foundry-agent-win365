@@ -1,13 +1,11 @@
 using Microsoft.Agents.AI.Foundry.Hosting;
 using Win365Agent;
 
-var viewerMode = args.Contains("--viewer", StringComparer.Ordinal);
-var cleanArgs = args.Where(argument => argument != "--viewer").ToArray();
-var builder = WebApplication.CreateBuilder(cleanArgs);
+var builder = WebApplication.CreateBuilder(args);
 var settings = new Settings(builder.Configuration);
 
-ApplicationHosting.Configure(builder, settings, viewerMode);
-settings.Validate(viewerMode);
+ApplicationHosting.Configure(builder, settings, viewerMode: false);
+settings.Validate();
 
 if (!settings.Enabled)
 {
@@ -17,16 +15,7 @@ if (!settings.Enabled)
     return;
 }
 
-builder.AddWin365Services(settings, viewerMode);
-if (viewerMode)
-{
-    ViewerEndpoints.Configure(builder, settings);
-    var viewer = builder.Build();
-    ViewerEndpoints.Map(viewer, settings);
-    viewer.Run();
-    return;
-}
-
+builder.AddWin365Services(settings, viewerMode: false);
 builder.AddDesktopAgent(settings);
 var app = builder.Build();
 app.UseMiddleware<DesktopRequestMiddleware>();

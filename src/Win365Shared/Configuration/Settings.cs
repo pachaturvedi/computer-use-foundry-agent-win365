@@ -44,6 +44,15 @@ public sealed class Settings(IConfiguration config)
         _ => throw new InvalidOperationException("W365_ENABLED must be true or false.")
     };
 
+    /// <summary>Gets whether the authenticated companion viewer is fully activated.</summary>
+    public bool ViewerLiveEnabled => Optional("VIEWER_LIVE_ENABLED") switch
+    {
+        null => false,
+        { } value when string.Equals(value, "false", StringComparison.OrdinalIgnoreCase) => false,
+        { } value when string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) => true,
+        _ => throw new InvalidOperationException("VIEWER_LIVE_ENABLED must be true or false.")
+    };
+
     /// <summary>Gets the explicitly selected blueprint authentication mode.</summary>
     public string BlueprintCredentialMode =>
         Optional("W365_BLUEPRINT_CREDENTIAL_MODE") ?? "managed_identity_federation";
@@ -97,6 +106,11 @@ public sealed class Settings(IConfiguration config)
     {
         get
         {
+            if (!Local && !ViewerLiveEnabled)
+            {
+                return null;
+            }
+
             var value = Optional("VIEWER_PUBLIC_URL");
             if (value is null)
             {

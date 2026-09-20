@@ -1,7 +1,11 @@
 # Live view and human control
 
-The same application runs as the companion viewer with `--viewer`. It does not
-host the model or expose an agent `/responses` endpoint in this mode.
+The companion ACA runs the dedicated `src\Win365Viewer` executable. It
+references configuration, identity, and state contracts from the independent
+`src\Win365Shared` class library. It does not reference `Win365Agent`, host the
+model, or expose an agent `/responses` endpoint. This dependency and process
+boundary prevents viewer bootstrap configuration from changing hosted-agent
+startup behavior.
 
 ## Prerequisites
 
@@ -36,8 +40,10 @@ deployed managed identity endpoint, not CLI credentials. Keep the local host
 private; never tunnel these ports.
 
 With `W365_ENABLED=false` (default, strictly `true`/`false`), `/health` is healthy
-and other routes return a phase-2-required 503. No OIDC, W365 or state configuration
-or credential access is required. This applies to local and ACA bootstrap.
+and other routes return a viewer-specific 503. No OIDC, W365 or state
+configuration or credential access is required. The hosted agent advertises no
+viewer links until `VIEWER_LIVE_ENABLED=true`, even when the ACA hostname has
+already been provisioned.
 
 Deploy [phase-1 viewer bootstrap](DEPLOYMENT.md#optional-phase-1-viewer-bootstrap)
 to create the UAMI with ACR pull and Blob roles. Record the outputs:
@@ -102,13 +108,20 @@ configuration is one setting:
 
 ```powershell
 azd env set VIEWER_PUBLIC_URL https://<companion-viewer-aca-hostname>
-azd deploy win365-desktop-agent --no-prompt
+pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
+    -Mode DeployAgent `
+    -ConfirmResourceChanges
 ```
 
 The next `open_desktop` call creates the opaque session identifier and returns
 the completed live-view and take-control links. An arbitrary Container App or
 the W365 static viewer URL cannot be used because it does not have the shared
 session state, operator authentication, or token endpoints.
+
+Do not replace the wrapper with a direct `azd deploy` when
+`W365_BLUEPRINT_CREDENTIAL_MODE=client_secret`: the wrapper retrieves the
+blueprint credential from Key Vault only for the deployment, then clears it
+from the azd environment.
 
 `SCREENSHARE_APP_URL` selects the W365-hosted view-only application. Pass it
 through the azd environment or an untracked viewer deployment parameter file.

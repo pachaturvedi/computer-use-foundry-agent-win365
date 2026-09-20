@@ -34,8 +34,8 @@ public sealed class McpObservationConverterTests
         var content = Assert.IsType<DataContent>(output[1]);
         Assert.Equal("image/jpeg", content.MediaType);
         Assert.True(content.Data.Length <= 128 * 1024);
-        count = 4;
+        count = 8;
         Assert.Throws<InvalidOperationException>(
-            () => McpObservationConverter.Convert(result, ref count));
+            () => McpObservationConverter.Convert(result, ref count, 8));
     }
 }

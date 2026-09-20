@@ -1,6 +1,8 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Win365Agent/Win365Agent.csproj" />
+    <Project Path="src/Win365Shared/Win365Shared.csproj" />
+    <Project Path="src/Win365Viewer/Win365Viewer.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Win365Agent.Tests/Win365Agent.Tests.csproj" />

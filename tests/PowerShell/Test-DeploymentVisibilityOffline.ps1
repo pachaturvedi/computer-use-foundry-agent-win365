@@ -132,6 +132,8 @@ try {
         $viewerFoundationBicep -notmatch "destination: 'none'" -or
         $viewerFoundationBicep -notmatch 'createManagedEnvironment && enableLogAnalytics' -or
         $viewerAppBicep -notmatch "name: 'W365_ENABLED', value: w365Enabled \? 'true' : 'false'" -or
+        $viewerAppBicep -notmatch "name: 'VIEWER_LIVE_ENABLED', value: viewerLiveEnabled \? 'true' : 'false'" -or
+        $azureYaml -notmatch 'VIEWER_LIVE_ENABLED: \$\{VIEWER_LIVE_ENABLED:-false\}' -or
         $azureYaml -notmatch '(?ms)^\s{2}preup:\s+windows:.*Show-AzdUpContext\.ps1' -or
         $upContextScript -notmatch 'informational, not failures' -or
         $planScript -notmatch 'Assert-ViewerAzureCliPrerequisites' -or

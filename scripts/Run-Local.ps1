@@ -38,15 +38,20 @@ try {
         }
         [Environment]::SetEnvironmentVariable($setting.Key, $setting.Value)
     }
+    $project = if ($Mode -eq 'viewer') {
+        "$root\src\Win365Viewer\Win365Viewer.csproj"
+    }
+    else {
+        "$root\src\Win365Agent\Win365Agent.csproj"
+    }
     $args = @(
         'run',
-        '--project', "$root\src\Win365Agent\Win365Agent.csproj",
+        '--project', $project,
         '--configuration', 'Release',
         '--no-build',
         '--no-restore',
         '--no-launch-profile'
     )
-    if ($Mode -eq 'viewer') { $args += @('--', '--viewer') }
     & dotnet @args
     if ($LASTEXITCODE -ne 0) { throw "Sample process exited with code $LASTEXITCODE." }
 }

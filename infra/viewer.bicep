@@ -9,6 +9,7 @@ param keyVaultName string
 param oidcSecretName string = 'w365-viewer-client-secret'
 param blueprintSecretName string = 'w365-blueprint-client-secret'
 param w365Enabled bool = false
+param viewerLiveEnabled bool = false
 @allowed([
   'client_secret'
   'managed_identity_federation'
@@ -84,14 +85,14 @@ resource viewer 'Microsoft.App/containerApps@2024-03-01' = {
       containers: [{
         name: 'viewer'
         image: containerImage
-        command: ['dotnet', 'Win365Agent.dll']
-        args: ['--viewer']
+        command: ['dotnet', 'Win365Viewer.dll']
         resources: { cpu: json('0.5'), memory: '1Gi' }
         env: concat([
           { name: 'ASPNETCORE_URLS', value: 'http://+:8080' }
           { name: 'AZURE_CLIENT_ID', value: identity.properties.clientId }
           { name: 'SAMPLE_LOCAL_MODE', value: 'false' }
           { name: 'W365_ENABLED', value: w365Enabled ? 'true' : 'false' }
+          { name: 'VIEWER_LIVE_ENABLED', value: viewerLiveEnabled ? 'true' : 'false' }
           { name: 'W365_TENANT_ID', value: w365TenantId }
           { name: 'W365_BLUEPRINT_ID', value: blueprintId }
           { name: 'W365_AGENT_ID', value: agentId }

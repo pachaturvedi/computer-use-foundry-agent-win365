@@ -54,12 +54,12 @@ function Invoke-Az {
 function Get-ViewerImageBuildHash {
     param([Parameter(Mandatory)][string]$RepositoryRoot)
 
-    $projectRoot = Join-Path $RepositoryRoot 'src\Win365Agent'
+    $sourceRoot = Join-Path $RepositoryRoot 'src'
     $inputFiles = @(
         Get-Item -LiteralPath (Join-Path $RepositoryRoot '.dockerignore')
         Get-Item -LiteralPath (Join-Path $RepositoryRoot 'Dockerfile')
         Get-Item -LiteralPath (Join-Path $RepositoryRoot 'NuGet.Config')
-        Get-ChildItem -LiteralPath $projectRoot -File -Recurse |
+        Get-ChildItem -LiteralPath $sourceRoot -File -Recurse |
             Where-Object {
                 $_.FullName -notmatch '[\\/](bin|obj)[\\/]' -and
                 $_.Name -notmatch '^\.env' -and
