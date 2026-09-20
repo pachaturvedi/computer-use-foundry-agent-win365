@@ -24,8 +24,7 @@ internal static class HostedSessionRecoveryGuard
             "W365_BLUEPRINT_CREDENTIAL_MODE",
             "OPERATOR_TENANT_ID",
             "OPERATOR_OBJECT_ID",
-            "FOUNDRY_AGENT_NAME",
-            "AGENT_WIN365_DESKTOP_AGENT_VERSION"
+            "FOUNDRY_AGENT_NAME"
         };
         var configuration = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var name in names)
@@ -51,7 +50,6 @@ internal static class HostedSessionRecoveryGuard
             [
                 "ai", "agent", "sessions", "list",
                 "--agent-name", configuration["FOUNDRY_AGENT_NAME"],
-                "--version", configuration["AGENT_WIN365_DESKTOP_AGENT_VERSION"],
                 "--environment", environmentName,
                 "--limit", "100",
                 "--output", "json"

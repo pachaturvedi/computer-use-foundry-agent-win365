@@ -44,7 +44,6 @@ if ($Arguments[0] -eq 'env' -and $Arguments[1] -eq 'get-value') {
         OPERATOR_TENANT_ID = '11111111-1111-1111-1111-111111111111'
         OPERATOR_OBJECT_ID = '55555555-5555-5555-5555-555555555555'
         FOUNDRY_AGENT_NAME = 'deployed-agent'
-        AGENT_WIN365_DESKTOP_AGENT_VERSION = '42'
     }
     $values[$Arguments[2]]
     return
@@ -102,8 +101,7 @@ $global:LASTEXITCODE = 0
         '--user-identity' -in @($sessionCall[0].arguments) -or
         '--output' -notin @($sessionCall[0].arguments) -or
         $sessionCall[0].arguments[5] -ne 'deployed-agent' -or
-        '--version' -notin @($sessionCall[0].arguments) -or
-        '42' -notin @($sessionCall[0].arguments)) {
+        '--version' -in @($sessionCall[0].arguments)) {
         throw 'Recovery helper did not perform the required hosted-session check.'
     }
     if ($readOnlyOutput -match 'must-not-print|stateacct|private-vault') {

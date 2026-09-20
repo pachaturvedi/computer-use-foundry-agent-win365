@@ -116,16 +116,13 @@ internal static class DesktopAgentHosting
                 () => Current().Tools(),
                 "list_desktop_tools",
                 "List allowed tools and their live JSON input schemas after opening the desktop."),
-            AIFunctionFactory.Create(
+            CreateDesktopActionFunction(
                 async (string toolName, JsonElement arguments, CancellationToken cancellationToken) =>
                 {
                     using var linked = DesktopRequestContext.LinkDeadline(accessor, cancellationToken);
                     return await MapLeaseFailureAsync(async () =>
                         await Current().ExecuteAsync(toolName, arguments, linked.Token));
-                },
-                "desktop_action",
-                "Call one allowed W365 tool with arguments matching its live schema. " +
-                "Screenshots are images. Never supply session identifiers."),
+                }),
             AIFunctionFactory.Create(
                 async (CancellationToken cancellationToken) =>
                 {
@@ -195,4 +192,29 @@ internal static class DesktopAgentHosting
 
         builder.Services.AddFoundryResponses(agent, new FreshTaskSessionStore());
     }
+
+    internal static AIFunction CreateDesktopActionFunction(
+        Func<string, JsonElement, CancellationToken, Task<object>> action) =>
+        AIFunctionFactory.Create(
+            action,
+            new AIFunctionFactoryOptions
+            {
+                Name = "desktop_action",
+                Description =
+                    "Call one allowed W365 tool with arguments matching its live schema. " +
+                    "Screenshots are images. Never supply session identifiers.",
+                ExcludeResultSchema = true,
+                MarshalResult = MarshalDesktopActionResultAsync
+            });
+
+    private static ValueTask<object?> MarshalDesktopActionResultAsync(
+        object? result,
+        Type? _,
+        CancellationToken __) =>
+        ValueTask.FromResult<object?>(result is IList<AIContent>
+            ? result
+            : JsonSerializer.SerializeToElement(
+            result,
+            result?.GetType() ?? typeof(object),
+            AIJsonUtilities.DefaultOptions));
 }

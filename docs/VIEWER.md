@@ -82,10 +82,12 @@ live-view flow passes the short-lived W365 token only in the redirect fragment.
 
 Configure `VIEWER_PUBLIC_URL` with the exact HTTPS origin used by the browser.
 OIDC redirect and token redemption use this configured origin, not untrusted
-forwarded headers. The ACA template allows HTTPS-only ingress. The viewer can
-have a different human sign-in tenant from W365, but its **Azure UAMI, Foundry
-and W365 must share the same tenant**. Its Azure identity must have access to
-the configured Key Vault and Blob resource.
+host values. The ACA template allows HTTPS-only ingress, and the application
+trusts one forwarded-protocol hop from that ingress so secure authentication
+and antiforgery cookies remain valid after TLS termination. The viewer can have
+a different human sign-in tenant from W365, but its **Azure UAMI, Foundry and
+W365 must share the same tenant**. Its Azure identity must have access to the
+configured Key Vault and Blob resource.
 
 `VIEWER_PUBLIC_URL` is the only viewer setting consumed by the hosted agent.
 When it contains the origin of a fully configured companion ACA deployment,

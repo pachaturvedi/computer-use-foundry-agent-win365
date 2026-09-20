@@ -300,9 +300,10 @@ For stale desktop state, use the explicit recovery helper documented in
 [Architecture: fail-closed recovery](ARCHITECTURE.md#fail-closed-recovery).
 It is read-only unless `-Apply` is supplied and approved; `-Apply -WhatIf`
 does not mutate. The helper binds session inspection to
-`FOUNDRY_AGENT_NAME` and `AGENT_WIN365_DESKTOP_AGENT_VERSION` from the selected
-azd environment. It requires the exact W365 no-session sentence documented
-there and validates persisted operator ownership before lease break. Never
+`FOUNDRY_AGENT_NAME` from the selected azd environment and checks every hosted
+session for that agent across versions because they share the same state Blob.
+It requires the exact W365 no-session sentence documented there and validates
+persisted operator ownership before lease break. Never
 automatically rerun `-Apply` after an ambiguous acquire, upload, or release
 outcome—run read-only inspection again first.
 

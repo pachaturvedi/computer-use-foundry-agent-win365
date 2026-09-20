@@ -325,9 +325,10 @@ pwsh -NoProfile -File .\scripts\Recover-StaleDesktopState.ps1 `
 ```
 
 Before either command, stop every actively running hosted session. The wrapper
-reads `FOUNDRY_AGENT_NAME` and `AGENT_WIN365_DESKTOP_AGENT_VERSION` from the
-selected azd environment; there is no caller-selectable agent name. Both the
-wrapper and the mutating C# process use that exact binding with
+reads `FOUNDRY_AGENT_NAME` from the selected azd environment; there is no
+caller-selectable agent name. It checks every hosted session for that agent,
+across immutable versions, because those versions share the same desktop-state
+Blob. Both the wrapper and the mutating C# process use that exact binding with
 `azd ai agent sessions list` and accept only non-executing `idle`, `stopped`,
 `deleted`, or `expired` records; a running, provisioning, unknown, or paged result
 fails closed. The default command is read-only. Its expected terminal message is:
@@ -400,12 +401,14 @@ POSTs. JSON and SSE are supported with matching response IDs and negotiated MCP
 version; empty initialized notifications are accepted. No general streaming
 subscription/resumption client is implemented.
 
-`McpObservationConverter` returns real `DataContent` image objects, not base64 text.
-Screenshots become JPEGs with maximum dimension 1280 and maximum encoded size
-128 KiB; eight screenshots per task are allowed. Original/resized dimensions
-are included so the model can map click coordinates. Oversize images fail
-explicitly. Each textual observation is limited to 16000 characters; at most
-60 desktop action calls are allowed, and each request is bounded to 15 minutes.
+`McpObservationConverter` returns real `DataContent` image objects, not base64
+text. The desktop function disables the factory's default JSON result marshalling
+so those objects reach the Responses model as multimodal tool content. Screenshots
+become JPEGs with maximum dimension 1280 and maximum encoded size 128 KiB; eight
+screenshots per task are allowed. Original/resized dimensions are included so
+the model can map click coordinates. Oversize images fail explicitly. Each
+textual observation is limited to 16000 characters; at most 60 desktop action
+calls are allowed, and each request is bounded to 15 minutes.
 Prefer accessibility observations.
 
 `FreshTaskSessionStore` deliberately does not persist model history. New tasks
