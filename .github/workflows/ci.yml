@@ -15,6 +15,12 @@ jobs:
       - name: Run the shared pre-PR validation gate
         shell: pwsh
         run: ./scripts/Validate-PrePr.ps1
+  container-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the viewer container
+        run: docker build --tag win365-viewer-ci .
   windows-quickstart:
     runs-on: windows-latest
     steps:
