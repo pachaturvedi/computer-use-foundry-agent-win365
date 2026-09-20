@@ -639,8 +639,14 @@ an environment that used `key_vault_certificate` mode, an administrator with
 `AgentIdentityBlueprint.AddRemoveCreds.All` must also:
 
 1. Remove the registered certificate `keyCredential`(s) from the blueprint.
-   List the blueprint's current `keyCredentials`
-   (`GET /applications/{id}/microsoft.graph.agentIdentityBlueprint?$select=keyCredentials`).
+   List the blueprint's current `keyCredentials` (`GET
+   /applications/{applicationObjectId}/microsoft.graph.agentIdentityBlueprint?$select=keyCredentials`)
+   — `{applicationObjectId}` is the Entra **application object ID** of the
+   blueprint (for example `blueprint.id` as resolved by
+   `scripts/Register-W365BlueprintCertificate.ps1`, via `GET
+   /applications/microsoft.graph.agentIdentityBlueprint?$filter=appId eq
+   '<BlueprintId>'`), not the blueprint's client/app ID you passed as
+   `-BlueprintId` when registering.
    `displayName` alone is not a safe identifier: every credential this sample
    registers uses the same `w365-blueprint-certificate` display name, and
    `-Rotate` intentionally adds a new one alongside the prior entry rather than
@@ -659,10 +665,12 @@ an environment that used `key_vault_certificate` mode, an administrator with
 2. If `Initialize-W365BlueprintCertificate.ps1` self-granted the operator "Key
    Vault Certificates Officer" role on the Key Vault because it was missing,
    remove that role assignment once certificate rotation/administration is no
-   longer needed (`az role assignment delete --assignee <operator-object-id>
-   --role "Key Vault Certificates Officer" --scope <vault-resource-id>`). Skip
-   this step if the operator already held the role before setup for another
-   reason.
+   longer needed (`az role assignment delete --assignee-object-id
+   <operator-object-id> --role "Key Vault Certificates Officer" --scope
+   <vault-resource-id>`; `--assignee-object-id` avoids a Microsoft Graph lookup
+   of the assignee, matching the pattern used by the deployment-time RBAC
+   checks in `scripts/Invoke-AzdDeployment.ps1`). Skip this step if the
+   operator already held the role before setup for another reason.
 3. Deleting the Key Vault (via `azd down`) removes the certificate object and
    its backing key; no separate Key Vault cleanup is required for those.
 
