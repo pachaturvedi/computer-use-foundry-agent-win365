@@ -52,6 +52,15 @@ function Get-W365OwnershipManifestPath {
     return Join-Path (Join-Path $RepositoryRoot ".azure\$EnvironmentName") 'w365-ownership.json'
 }
 
+function Get-ViewerOwnershipManifestPath {
+    param(
+        [Parameter(Mandatory)][string]$RepositoryRoot,
+        [Parameter(Mandatory)][string]$EnvironmentName
+    )
+
+    return Join-Path (Join-Path $RepositoryRoot ".azure\$EnvironmentName") 'viewer-ownership.json'
+}
+
 function Read-W365OwnershipManifest {
     param(
         [Parameter(Mandatory)][string]$Path,

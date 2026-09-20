@@ -574,17 +574,27 @@ End active sessions first. `azd down` now invokes
 resources. The recorded teardown order is: pool assignment, agent user,
 sample-created federated credentials, created permission grants or restored
 reused grant scopes, sample-created inheritance entries, blueprint
-`requiredResourceAccess`, and finally a sample-created W365 pool.
+`requiredResourceAccess`, a sample-created W365 pool, then any viewer OIDC
+credential created on a reused app, a sample-created viewer service principal,
+a sample-created viewer application, and finally the sample-created Key Vault
+RBAC assignments recorded for the viewer bootstrap.
 
 Cleanup is ownership-driven, not name-driven. The script reads
-`.azure/<environment>/w365-ownership.json` and removes only objects recorded as
-sample-created. Reused grants are restored to their prior scope instead of being
-deleted, reused inheritance entries are preserved, and reused identities or
-pools are preserved. Before any sample-owned deletion runs, cleanup now verifies
-that every reused shared-state dependency it may need to preserve or restore is
-still present. If W365 state exists but the manifest is missing, or reused
-shared state has drifted beyond safe restoration, cleanup is blocked because the
+`.azure/<environment>/w365-ownership.json` and, when viewer live mode was
+enabled, `.azure/<environment>/viewer-ownership.json`. It removes only objects
+recorded as sample-created. Reused grants are restored to their prior scope
+instead of being deleted, reused inheritance entries are preserved, and reused
+identities, pools, viewer apps, or Key Vault RBAC are preserved. Before any
+sample-owned W365 deletion runs, cleanup now verifies that every reused shared
+grant or inheritance dependency it may need to preserve or restore is still
+present. If W365 state exists but the manifest is missing, or reused shared
+state has drifted beyond safe restoration, cleanup is blocked because the
 sample can no longer prove what it owns.
+
+Viewer-only cleanup is stricter. If `viewer-ownership.json` exists without a
+matching W365 ownership manifest, set `W365_CLEANUP_CONFIRMED=true` before
+running `Remove-W365Resources.ps1`; `-Confirm:$false` by itself does not unlock
+viewer OIDC or Key Vault RBAC deletion in that path.
 
 For direct execution, use the selected azd environment or pass the paths
 explicitly:

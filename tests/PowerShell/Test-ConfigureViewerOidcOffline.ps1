@@ -126,6 +126,11 @@ try {
     if ($manifest.application.redirectUri -ne 'https://viewer.example.com/signin-oidc') {
         throw 'OIDC configuration recorded the wrong redirect URI.'
     }
+    if ($manifest.application.disposition -ne 'created' -or
+        $manifest.application.credential.disposition -ne 'created' -or
+        $manifest.application.servicePrincipal.disposition -ne 'created') {
+        throw 'OIDC configuration did not record created ownership for the viewer application artifacts.'
+    }
     $applicationCreate = $global:viewerOidcGraphCalls |
         Where-Object { $_.Method -eq 'POST' -and $_.Uri.EndsWith('/applications') } |
         Select-Object -First 1

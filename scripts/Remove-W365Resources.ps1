@@ -117,6 +117,31 @@ function Get-RequiredStringValue {
 
     return [string]$Map[$Key]
 }
+function Resolve-CleanupTenantId {
+    param(
+        [Parameter(Mandatory)][hashtable]$EnvironmentValues,
+        $W365Manifest,
+        $ViewerManifest
+    )
+
+    if (![string]::IsNullOrWhiteSpace([string]$EnvironmentValues['W365_TENANT_ID']) -and [string]$EnvironmentValues['W365_TENANT_ID'] -ne '00000000-0000-0000-0000-000000000000') {
+        return [string]$EnvironmentValues['W365_TENANT_ID']
+    }
+    if (![string]::IsNullOrWhiteSpace([string]$EnvironmentValues['AZURE_TENANT_ID'])) {
+        return [string]$EnvironmentValues['AZURE_TENANT_ID']
+    }
+    if ($W365Manifest -and $W365Manifest.foundry -and ![string]::IsNullOrWhiteSpace([string]$W365Manifest.foundry.tenantId)) {
+        return [string]$W365Manifest.foundry.tenantId
+    }
+
+    $viewerOperator = Get-OptionalObjectValue -Object $ViewerManifest -Name 'operator'
+    $viewerTenantId = [string](Get-OptionalObjectValue -Object $viewerOperator -Name 'tenantId')
+    if (![string]::IsNullOrWhiteSpace($viewerTenantId)) {
+        return $viewerTenantId
+    }
+
+    throw 'Tenant ID is unavailable. Cleanup requires a valid tenant from the azd environment.'
+}
 function List-MapValues {
     param([hashtable]$Map)
 
@@ -145,6 +170,64 @@ function Test-GraphContext {
 
     $missingScopes = @($RequiredScopes | Where-Object { $_ -notin $Context.Scopes })
     return $missingScopes.Count -eq 0
+}
+function Connect-GraphForCleanup {
+    param(
+        [Parameter(Mandatory)][guid]$TenantId,
+        [Parameter(Mandatory)][string[]]$Scopes
+    )
+
+    $requiredScopes = @($Scopes | Select-Object -Unique)
+    $graphContext = Get-MgContext
+    if (Test-GraphContext -Context $graphContext -RequiredTenantId $TenantId -RequiredScopes $requiredScopes) {
+        return
+    }
+
+    $connectParameters = @{
+        TenantId = $TenantId
+        Scopes = $requiredScopes
+        ClientTimeout = $GraphClientTimeoutSeconds
+        ContextScope = 'CurrentUser'
+        NoWelcome = $true
+    }
+    try {
+        Connect-MgGraph @connectParameters
+        $graphContext = Get-MgContext
+    }
+    catch {
+        if (!$UseDeviceCode) {
+            throw
+        }
+
+        $connectParameters.UseDeviceCode = $true
+        Connect-MgGraph @connectParameters
+        $graphContext = Get-MgContext
+    }
+
+    if (!(Test-GraphContext -Context $graphContext -RequiredTenantId $TenantId -RequiredScopes $requiredScopes)) {
+        throw 'A delegated Graph connection in the requested tenant is required for cleanup.'
+    }
+}
+function Assert-CleanupApproved {
+    param(
+        [string]$TargetName,
+        [switch]$RequireProtectedApproval
+    )
+
+    $cleanupApproval = [Environment]::GetEnvironmentVariable('W365_CLEANUP_CONFIRMED')
+    if (![string]::IsNullOrWhiteSpace($cleanupApproval) -and $cleanupApproval -notin @('true', 'false')) {
+        throw "W365_CLEANUP_CONFIRMED must be 'true' or 'false', received '$cleanupApproval'."
+    }
+
+    $protectedCleanupApproved = $cleanupApproval -eq 'true'
+    if ($RequireProtectedApproval -and !$protectedCleanupApproved) {
+        throw 'Viewer-only cleanup requires W365_CLEANUP_CONFIRMED=true before any mutation runs.'
+    }
+
+    if (!$protectedCleanupApproved -and
+        !$PSCmdlet.ShouldProcess(($TargetName ?? 'current azd environment'), 'Remove W365 and Entra resources before azd down')) {
+        throw 'Cleanup confirmation was declined.'
+    }
 }
 function Graph([string]$Method, [string]$Path, $Body = $null) {
     $uri = if ($Path.StartsWith('https://')) { $Path } else { "https://graph.microsoft.com/$Path" }
@@ -184,6 +267,161 @@ function SingleOrNone($Items, [string]$Label) {
     }
 
     return $null
+}
+function Get-CurrentViewerRoleAssignmentId {
+    param(
+        [Parameter(Mandatory)]$Entry,
+        [Parameter(Mandatory)][string]$SubscriptionId
+    )
+
+    $query = "[?roleDefinitionId=='$([string]$Entry.roleDefinitionId)'].id | [0]"
+    $assignmentId = (& az role assignment list `
+        --subscription $SubscriptionId `
+        --scope ([string]$Entry.scope) `
+        --assignee-object-id ([string]$Entry.principalId) `
+        --query $query `
+        --output tsv 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to inspect viewer role assignment '$([string]$Entry.roleName)' on '$([string]$Entry.scope)'."
+    }
+
+    return $assignmentId
+}
+function Remove-ViewerArtifacts {
+    param(
+        [Parameter(Mandatory)][hashtable]$Manifest,
+        [Parameter(Mandatory)][hashtable]$EnvironmentValues,
+        [Parameter(Mandatory)][string]$ManifestPath
+    )
+
+    $viewerApplication = Get-OptionalObjectValue -Object $Manifest -Name 'application'
+    $viewerRoleAssignments = Get-OptionalObjectValue -Object $Manifest -Name 'keyVaultRoleAssignments'
+    if (!($viewerApplication -is [System.Collections.IDictionary]) -and
+        !($viewerRoleAssignments -is [System.Collections.IDictionary])) {
+        return
+    }
+
+    Write-Output 'Cleaning viewer bootstrap artifacts recorded in viewer-ownership.json.'
+
+    if ($viewerApplication -is [System.Collections.IDictionary]) {
+        $viewerAppObjectId = [string](Get-OptionalObjectValue -Object $viewerApplication -Name 'objectId')
+        $viewerAppId = [string](Get-OptionalObjectValue -Object $viewerApplication -Name 'appId')
+        $viewerApplicationDisposition = [string](Get-OptionalObjectValue -Object $viewerApplication -Name 'disposition')
+        $viewerCredential = Get-OptionalObjectValue -Object $viewerApplication -Name 'credential'
+        $viewerServicePrincipal = Get-OptionalObjectValue -Object $viewerApplication -Name 'servicePrincipal'
+
+        $currentApplication = $null
+        if (![string]::IsNullOrWhiteSpace($viewerAppObjectId)) {
+            try {
+                $currentApplication = Graph GET "v1.0/applications/${viewerAppObjectId}?`$select=id,appId,passwordCredentials"
+            }
+            catch {
+                if (Test-GraphResourceNotFound -ErrorRecord $_) {
+                    $currentApplication = $null
+                }
+                else {
+                    throw
+                }
+            }
+        }
+
+        if (($viewerCredential -is [System.Collections.IDictionary]) -and
+            [string](Get-OptionalObjectValue -Object $viewerCredential -Name 'disposition') -eq 'created' -and
+            $currentApplication -and
+            $viewerApplicationDisposition -ne 'created') {
+            $credentialKeyId = [string](Get-OptionalObjectValue -Object $viewerCredential -Name 'keyId')
+            $currentCredential = SingleOrNone @(@($currentApplication.passwordCredentials) | Where-Object { [string]$_.keyId -eq $credentialKeyId }) 'viewer application credential'
+            if ($currentCredential) {
+                Graph POST "v1.0/applications/$viewerAppObjectId/removePassword" @{ keyId = $credentialKeyId } | Out-Null
+                Write-Output "Removed viewer application credential $credentialKeyId."
+            }
+            else {
+                Write-Output 'Viewer application credential was already absent.'
+            }
+        }
+
+        $currentServicePrincipals = if (![string]::IsNullOrWhiteSpace($viewerAppId)) {
+            @(List "v1.0/servicePrincipals?`$filter=appId eq '$viewerAppId'&`$select=id,appId")
+        }
+        else {
+            @()
+        }
+        if (($viewerServicePrincipal -is [System.Collections.IDictionary]) -and
+            [string](Get-OptionalObjectValue -Object $viewerServicePrincipal -Name 'disposition') -eq 'created') {
+            $viewerServicePrincipalId = [string](Get-OptionalObjectValue -Object $viewerServicePrincipal -Name 'objectId')
+            $currentServicePrincipal = if (![string]::IsNullOrWhiteSpace($viewerServicePrincipalId)) {
+                SingleOrNone @($currentServicePrincipals | Where-Object { [string]$_.id -eq $viewerServicePrincipalId }) 'viewer service principal'
+            }
+            else {
+                SingleOrNone $currentServicePrincipals 'viewer service principal'
+            }
+
+            if ($currentServicePrincipal) {
+                Graph DELETE "v1.0/servicePrincipals/$([string]$currentServicePrincipal.id)" | Out-Null
+                Write-Output "Removed viewer service principal $([string]$currentServicePrincipal.id)."
+            }
+            else {
+                Write-Output 'Viewer service principal was already absent.'
+            }
+        }
+
+        if ($viewerApplicationDisposition -eq 'created') {
+            if ($currentApplication) {
+                if ([string]$currentApplication.appId -ne $viewerAppId) {
+                    throw 'The current viewer application does not match the recorded ownership manifest.'
+                }
+
+                Graph DELETE "v1.0/applications/$viewerAppObjectId" | Out-Null
+                Write-Output "Removed viewer application $viewerAppObjectId."
+            }
+            else {
+                Write-Output 'Viewer application was already absent.'
+            }
+        }
+    }
+
+    if ($viewerRoleAssignments -is [System.Collections.IDictionary] -and $viewerRoleAssignments.Keys.Count -gt 0) {
+        if (!(Get-Command az -ErrorAction SilentlyContinue)) {
+            throw 'Azure CLI is required to remove viewer Key Vault RBAC assignments.'
+        }
+
+        $subscriptionId = [string]$EnvironmentValues['AZURE_SUBSCRIPTION_ID']
+        if ([string]::IsNullOrWhiteSpace($subscriptionId)) {
+            throw 'AZURE_SUBSCRIPTION_ID is required to remove viewer Key Vault RBAC assignments.'
+        }
+
+        foreach ($entry in @(List-MapValues $viewerRoleAssignments)) {
+            if ([string](Get-OptionalObjectValue -Object $entry -Name 'disposition') -ne 'created') {
+                continue
+            }
+
+            $currentAssignmentId = Get-CurrentViewerRoleAssignmentId -Entry $entry -SubscriptionId $subscriptionId
+            $recordedAssignmentId = [string](Get-OptionalObjectValue -Object $entry -Name 'assignmentId')
+            if (![string]::IsNullOrWhiteSpace($currentAssignmentId) -and
+                ![string]::IsNullOrWhiteSpace($recordedAssignmentId) -and
+                $currentAssignmentId -ne $recordedAssignmentId) {
+                throw "Viewer role assignment '$([string]$entry.roleName)' does not match the ownership manifest ID."
+            }
+
+            if ([string]::IsNullOrWhiteSpace($currentAssignmentId)) {
+                Write-Output "Viewer role assignment $([string]$entry.roleName) was already absent."
+                continue
+            }
+
+            & az role assignment delete --ids $currentAssignmentId --output none 2>$null
+            if ($LASTEXITCODE -ne 0) {
+                throw "Unable to remove viewer role assignment '$([string]$entry.roleName)'."
+            }
+
+            Write-Output "Removed viewer role assignment $([string]$entry.roleName)."
+        }
+    }
+
+    $Manifest['cleanup'] = [ordered]@{
+        status = 'completed'
+        completedAtUtc = [DateTimeOffset]::UtcNow.ToString('o')
+    }
+    Write-W365OwnershipManifest -Path $ManifestPath -Manifest $Manifest
 }
 function Assert-ReusedManifestDependenciesPresent {
     param(
@@ -272,6 +510,18 @@ $manifest = if (![string]::IsNullOrWhiteSpace($context.OwnershipManifestPath)) {
 else {
     $null
 }
+$viewerManifestPath = if (![string]::IsNullOrWhiteSpace($context.EnvironmentName)) {
+    Get-ViewerOwnershipManifestPath -RepositoryRoot $context.RepositoryRoot -EnvironmentName $context.EnvironmentName
+}
+else {
+    ''
+}
+$viewerManifest = if (![string]::IsNullOrWhiteSpace($viewerManifestPath)) {
+    Read-W365OwnershipManifest -Path $viewerManifestPath -AllowMissing
+}
+else {
+    $null
+}
 
 if ($null -eq $manifest) {
     $hasW365State = Test-TrueString ([string]$envValues['W365_ENABLED']) -or
@@ -282,6 +532,15 @@ if ($null -eq $manifest) {
     }
 
     Write-Output 'No W365 ownership manifest was found and no W365 state is configured. Nothing to clean before azd down.'
+
+    if ($viewerManifest) {
+        Assert-CleanupApproved -TargetName ($context.EnvironmentName ?? 'current azd environment') -RequireProtectedApproval
+        $viewerTenantId = [guid](Resolve-CleanupTenantId -EnvironmentValues $envValues -W365Manifest $manifest -ViewerManifest $viewerManifest)
+        Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
+        Connect-GraphForCleanup -TenantId $viewerTenantId -Scopes @('Application.ReadWrite.All')
+        Remove-ViewerArtifacts -Manifest $viewerManifest -EnvironmentValues $envValues -ManifestPath $viewerManifestPath
+    }
+
     return
 }
 
@@ -298,28 +557,9 @@ if ($projectOwnership -eq 'existing' -and !$allowExistingProjectCleanup) {
     throw 'This environment is bound to an existing Foundry project. Set ALLOW_EXISTING_FOUNDRY_CLEANUP=true or pass -AllowExistingProjectCleanup only after confirming azd down may delete that shared project resource group.'
 }
 
-$cleanupApproval = [Environment]::GetEnvironmentVariable('W365_CLEANUP_CONFIRMED')
-if (![string]::IsNullOrWhiteSpace($cleanupApproval) -and $cleanupApproval -notin @('true', 'false')) {
-    throw "W365_CLEANUP_CONFIRMED must be 'true' or 'false', received '$cleanupApproval'."
-}
-$protectedCleanupApproved = $cleanupApproval -eq 'true'
-if (!$protectedCleanupApproved -and
-    !$PSCmdlet.ShouldProcess(($context.EnvironmentName ?? 'current azd environment'), 'Remove W365 and Entra resources before azd down')) {
-    throw 'Cleanup confirmation was declined.'
-}
+Assert-CleanupApproved -TargetName ($context.EnvironmentName ?? 'current azd environment')
 
-$tenantIdValue = if (![string]::IsNullOrWhiteSpace([string]$envValues['W365_TENANT_ID']) -and [string]$envValues['W365_TENANT_ID'] -ne '00000000-0000-0000-0000-000000000000') {
-    [string]$envValues['W365_TENANT_ID']
-}
-elseif (![string]::IsNullOrWhiteSpace([string]$envValues['AZURE_TENANT_ID'])) {
-    [string]$envValues['AZURE_TENANT_ID']
-}
-elseif ($manifest.foundry -and ![string]::IsNullOrWhiteSpace([string]$manifest.foundry.tenantId)) {
-    [string]$manifest.foundry.tenantId
-}
-else {
-    throw 'Tenant ID is unavailable. Cleanup requires a valid tenant from the azd environment.'
-}
+$tenantIdValue = Resolve-CleanupTenantId -EnvironmentValues $envValues -W365Manifest $manifest -ViewerManifest $viewerManifest
 $tenantId = [guid]$tenantIdValue
 
 Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
@@ -332,35 +572,12 @@ if ((List-MapValues $manifest.graph.federatedIdentityCredentials).Count -gt 0) {
     $scopes += 'AgentIdentityBlueprint.AddRemoveCreds.All'
 }
 
-$graphContext = Get-MgContext
-if (!(Test-GraphContext -Context $graphContext -RequiredTenantId $tenantId -RequiredScopes $scopes)) {
-    $connectParameters = @{
-        TenantId = $tenantId
-        Scopes = $scopes
-        ClientTimeout = $GraphClientTimeoutSeconds
-        ContextScope = 'CurrentUser'
-        NoWelcome = $true
-    }
-    try {
-        Connect-MgGraph @connectParameters
-        $graphContext = Get-MgContext
-    }
-    catch {
-        if (!$UseDeviceCode) {
-            throw
-        }
-
-        $connectParameters.UseDeviceCode = $true
-        Connect-MgGraph @connectParameters
-        $graphContext = Get-MgContext
-    }
+if ($viewerManifest -and ($viewerManifest.application -is [System.Collections.IDictionary])) {
+    $scopes += 'Application.ReadWrite.All'
 }
-if (!(Test-GraphContext -Context $graphContext -RequiredTenantId $tenantId -RequiredScopes $scopes)) {
-    throw 'A delegated Graph connection in the requested tenant is required for cleanup.'
-}
+Connect-GraphForCleanup -TenantId $tenantId -Scopes $scopes
 
 $blueprint = $manifest.graph.blueprint
-$agent = $manifest.graph.agent
 $blueprintObjectId = Get-RequiredStringValue -Map $blueprint -Key 'objectId'
 $blueprintAppId = Get-RequiredStringValue -Map $blueprint -Key 'appId'
 $blueprintPrincipalId = Get-RequiredStringValue -Map $blueprint -Key 'principalId'
@@ -564,6 +781,10 @@ if ($poolManifest -and [string]$poolManifest.disposition -eq 'created') {
     else {
         Write-Output 'Sample-owned pool was already absent.'
     }
+}
+
+if ($viewerManifest) {
+    Remove-ViewerArtifacts -Manifest $viewerManifest -EnvironmentValues $envValues -ManifestPath $viewerManifestPath
 }
 
 $manifest['cleanup'] = [ordered]@{
