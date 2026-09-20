@@ -168,8 +168,10 @@ function Assert-LiveViewerConfiguration {
 function Assert-W365AgentKeyVaultAccessConfigured {
     # The hosted agent now fetches the blueprint client secret directly from Key Vault using its
     # own runtime identity (KeyVaultBlueprintSecretResolver) instead of receiving it as an
-    # environment variable. This only confirms the vault name and secret exist before deployment;
-    # the RBAC role assignment itself is provisioned by infra/state/keyvault.bicep.
+    # environment variable. Confirms both that the secret exists and that the agent's principal
+    # actually holds the Key Vault Secrets User role assignment provisioned by
+    # infra/state/keyvault.bicep before deployment, so a missing/unprovisioned state layer fails
+    # here instead of surfacing as a live startup failure.
     if ((Get-AzdOptionalValue 'W365_ENABLED') -ne 'true' -or
         (Get-AzdOptionalValue 'W365_BLUEPRINT_CREDENTIAL_MODE') -ne 'client_secret') {
         return
@@ -179,8 +181,9 @@ function Assert-W365AgentKeyVaultAccessConfigured {
     if ([string]::IsNullOrWhiteSpace($vaultName)) {
         throw 'Client-secret mode requires W365_KEY_VAULT_NAME (or VIEWER_KEY_VAULT_NAME) to resolve the Key Vault holding w365-blueprint-client-secret.'
     }
+    $subscriptionId = Get-AzdValue 'AZURE_SUBSCRIPTION_ID'
     & az keyvault secret show `
-        --subscription (Get-AzdValue 'AZURE_SUBSCRIPTION_ID') `
+        --subscription $subscriptionId `
         --vault-name $vaultName `
         --name 'w365-blueprint-client-secret' `
         --query id `
@@ -188,7 +191,31 @@ function Assert-W365AgentKeyVaultAccessConfigured {
     if ($LASTEXITCODE -ne 0) {
         throw "Key Vault '$vaultName' must contain secret 'w365-blueprint-client-secret' before deploying the hosted agent in client_secret mode."
     }
-    Write-DeploymentEvent DECISION "Confirmed 'w365-blueprint-client-secret' exists in '$vaultName'; the hosted agent fetches it directly at startup using its own identity."
+
+    $agentPrincipalId = Get-AzdOptionalValue 'STATE_AGENT_PRINCIPAL_ID'
+    if ([string]::IsNullOrWhiteSpace($agentPrincipalId)) {
+        throw 'Client-secret mode requires STATE_AGENT_PRINCIPAL_ID so the deployed agent identity can be verified against Key Vault RBAC.'
+    }
+    $vaultId = (& az keyvault show `
+        --subscription $subscriptionId `
+        --name $vaultName `
+        --query id `
+        --output tsv 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($vaultId)) {
+        throw "Unable to resolve the resource ID of Key Vault '$vaultName' to verify agent RBAC."
+    }
+    # Key Vault Secrets User role definition ID, matching infra/state/keyvault.bicep.
+    $secretsUserRoleId = '4633458b-17de-408a-b874-0445c86b69e6'
+    $assignmentCount = (& az role assignment list `
+        --subscription $subscriptionId `
+        --assignee $agentPrincipalId `
+        --scope $vaultId `
+        --query "length([?roleDefinitionId.ends_with(@, '$secretsUserRoleId')])" `
+        --output tsv 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $assignmentCount -eq '0' -or [string]::IsNullOrWhiteSpace($assignmentCount)) {
+        throw "Agent principal '$agentPrincipalId' does not have Key Vault Secrets User on '$vaultName'. Run 'azd provision state --environment <env> --no-prompt' (via -Mode DeployAll or manually) so infra/state/keyvault.bicep grants this role before deploying the hosted agent."
+    }
+    Write-DeploymentEvent DECISION "Confirmed 'w365-blueprint-client-secret' exists in '$vaultName' and agent principal '$agentPrincipalId' has Key Vault Secrets User on it."
 }
 
 function Invoke-HostedAgentSmokeTest {

@@ -8,8 +8,13 @@ param tags object = {}
 @minLength(36)
 @maxLength(36)
 param agentPrincipalId string = '00000000-0000-0000-0000-000000000000'
+// Not @allowed-restricted: this may be unset/empty in phase 1, before W365 setup selects a
+// credential mode. Only an exact 'client_secret' match enables the role assignment below.
+param blueprintCredentialMode string = 'client_secret'
 
-var agentRoleAssignmentEnabled = agentPrincipalId != '00000000-0000-0000-0000-000000000000'
+// Only client_secret mode reads the blueprint secret from this vault at agent runtime; other
+// modes must not receive standing read access to it.
+var agentRoleAssignmentEnabled = agentPrincipalId != '00000000-0000-0000-0000-000000000000' && blueprintCredentialMode == 'client_secret'
 
 var resourceSuffix = take(uniqueString(subscription().id, resourceGroup().id, resourcePrefix), 6)
 var keyVaultName = take('${resourcePrefix}-kv-${resourceSuffix}', 24)

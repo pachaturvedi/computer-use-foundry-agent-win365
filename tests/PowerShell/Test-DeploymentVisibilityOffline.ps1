@@ -199,6 +199,7 @@ function Get-AzdOptionalValue {
         'W365_ENABLED' { 'true' }
         'W365_BLUEPRINT_CREDENTIAL_MODE' { 'client_secret' }
         'W365_KEY_VAULT_NAME' { 'sample-w365-vault' }
+        'STATE_AGENT_PRINCIPAL_ID' { '22222222-2222-2222-2222-222222222222' }
         default { '' }
     }
 }

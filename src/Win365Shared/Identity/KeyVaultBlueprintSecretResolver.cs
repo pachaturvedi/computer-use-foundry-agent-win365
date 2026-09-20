@@ -16,7 +16,7 @@ public sealed class KeyVaultBlueprintSecretResolver : IBlueprintSecretResolver
     public const string SecretName = "w365-blueprint-client-secret";
 
     private readonly SecretClient _client;
-    private readonly Lazy<Task<string>> _secret;
+    private Lazy<Task<string>> _secret;
 
     /// <summary>Initializes a resolver bound to the shared Key Vault named by <c>W365_KEY_VAULT_NAME</c>.</summary>
     /// <param name="settings">The configuration source providing the vault name.</param>
@@ -31,15 +31,34 @@ public sealed class KeyVaultBlueprintSecretResolver : IBlueprintSecretResolver
     internal KeyVaultBlueprintSecretResolver(SecretClient client)
     {
         _client = client;
-        _secret = new Lazy<Task<string>>(FetchAsync, LazyThreadSafetyMode.ExecutionAndPublication);
+        _secret = CreateLazyFetch(CancellationToken.None);
     }
 
     /// <inheritdoc/>
-    public Task<string> GetSecretAsync(CancellationToken cancellationToken) => _secret.Value;
-
-    private async Task<string> FetchAsync()
+    public async Task<string> GetSecretAsync(CancellationToken cancellationToken)
     {
-        var secret = await _client.GetSecretAsync(SecretName).ConfigureAwait(false);
+        var attempt = Volatile.Read(ref _secret);
+        try
+        {
+            return await attempt.Value.ConfigureAwait(false);
+        }
+        catch
+        {
+            // Only a successful fetch is cached for the process lifetime. A failed attempt (for
+            // example, RBAC not yet propagated or a transient Key Vault error) must not be cached
+            // forever; swap in a fresh attempt so the next call retries instead of replaying the
+            // same failure indefinitely.
+            Interlocked.CompareExchange(ref _secret, CreateLazyFetch(cancellationToken), attempt);
+            throw;
+        }
+    }
+
+    private Lazy<Task<string>> CreateLazyFetch(CancellationToken cancellationToken) =>
+        new(() => FetchAsync(cancellationToken), LazyThreadSafetyMode.ExecutionAndPublication);
+
+    private async Task<string> FetchAsync(CancellationToken cancellationToken)
+    {
+        var secret = await _client.GetSecretAsync(SecretName, cancellationToken: cancellationToken).ConfigureAwait(false);
         return secret.Value.Value;
     }
 }

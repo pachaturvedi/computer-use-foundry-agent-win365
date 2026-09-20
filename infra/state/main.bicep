@@ -14,6 +14,7 @@ param resourceGroupName string
 @minLength(36)
 @maxLength(36)
 param agentPrincipalId string = '00000000-0000-0000-0000-000000000000'
+param blueprintCredentialMode string = 'client_secret'
 
 var stateEnabled = toLower(deployState) == 'true'
 var tags = {
@@ -35,6 +36,7 @@ module keyVault './keyvault.bicep' = {
     resourcePrefix: resourcePrefix
     tags: union(tags, { component: 'credentials' })
     agentPrincipalId: agentPrincipalId
+    blueprintCredentialMode: blueprintCredentialMode
   }
 }
 
