@@ -1,8 +1,9 @@
 # Live view and human control
 
 The companion ACA runs the dedicated `src\Win365Viewer` executable. It
-references the shared identity and state contracts from `Win365Agent`, but it
-does not host the model or expose an agent `/responses` endpoint. This process
+references configuration, identity, and state contracts from the independent
+`src\Win365Shared` class library. It does not reference `Win365Agent`, host the
+model, or expose an agent `/responses` endpoint. This dependency and process
 boundary prevents viewer bootstrap configuration from changing hosted-agent
 startup behavior.
 

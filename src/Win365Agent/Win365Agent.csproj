@@ -6,10 +6,10 @@
     <UserSecretsId>computer-use-foundry-agent-win365</UserSecretsId>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="..\Win365Shared\Win365Shared.csproj" />
     <PackageReference Include="Microsoft.Agents.AI.Foundry.Hosting" Version="1.17.0-preview.260804.1" />
     <PackageReference Include="Azure.AI.Projects" Version="2.1.0-beta.4" />
     <PackageReference Include="Azure.Identity" Version="1.21.0" />
-    <PackageReference Include="Azure.Storage.Blobs" Version="12.29.2" />
     <PackageReference Include="SkiaSharp" Version="3.119.0" />
     <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="3.119.0" />
   </ItemGroup>
