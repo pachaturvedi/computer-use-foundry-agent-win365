@@ -201,8 +201,12 @@ try {
     }
 
     Write-Host ''
-    Write-Host 'Review the preview, then deploy everything with:'
-    Write-Host '  azd up --no-prompt'
+    Write-Host 'Review the preview, then deploy the disabled Foundry bootstrap in stages:'
+    Write-Host "  pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 -Environment '$environmentName' -Mode Validate"
+    Write-Host "  pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 -Environment '$environmentName' -Mode ProvisionFoundry -ConfirmResourceChanges"
+    Write-Host "  pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 -Environment '$environmentName' -Mode DeployAgent -ConfirmResourceChanges"
+    Write-Host "  azd ai agent doctor --environment '$environmentName'"
+    Write-Host 'Do not enable W365 until the deployed agent principal has shared Blob state and the phase-2 prerequisites are complete.'
     Write-Host ''
     Write-Host 'Override defaults with either:'
     Write-Host '  1. config\deployment.local.json'

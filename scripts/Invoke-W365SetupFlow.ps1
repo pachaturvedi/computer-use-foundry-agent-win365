@@ -118,6 +118,35 @@ try {
         throw 'Foundry identity discovery did not return a valid agent identity ID.'
     }
 
+    $activationValues = [ordered]@{}
+    foreach ($name in @(
+        'DEPLOY_STATE',
+        'SESSION_BLOB_URI',
+        'STATE_AGENT_PRINCIPAL_ID',
+        'OPERATOR_TENANT_ID',
+        'OPERATOR_OBJECT_ID',
+        'HOSTED_ALLOWED_USER_ID',
+        'W365_BLUEPRINT_CREDENTIAL_MODE',
+        'W365_KEY_VAULT_NAME'
+    )) {
+        $activationValues[$name] = Get-W365AzdValue -Azd $azd -Name $name -AllowMissing
+    }
+    $activation = Assert-W365ActivationPrerequisites `
+        -EnvironmentValues $activationValues `
+        -ExpectedAgentIdentityId $discoveredAgentIdentityId `
+        -HostedRuntimeIdentityObjectId $HostedRuntimeIdentityObjectId `
+        -AuthorizeHostedRuntimeFederation:$AuthorizeHostedRuntimeFederation
+    $subscriptionId = [guid](Get-W365AzdValue -Azd $azd -Name 'AZURE_SUBSCRIPTION_ID')
+    Assert-W365StateResourceReady `
+        -SubscriptionId $subscriptionId `
+        -SessionBlobUri ([uri][string]$activationValues['SESSION_BLOB_URI']) `
+        -ExpectedAgentIdentityId $discoveredAgentIdentityId | Out-Null
+    if ($activation.CredentialMode -eq 'client_secret') {
+        Assert-W365BlueprintSecretReady `
+            -SubscriptionId $subscriptionId `
+            -KeyVaultName $activation.KeyVaultName
+    }
+
     Write-W365ProvisioningStep "Running W365 setup for azd environment '$environmentName'."
     $setupArguments = @{
         TenantId = $discoveredTenantId

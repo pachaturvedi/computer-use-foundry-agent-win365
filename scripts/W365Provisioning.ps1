@@ -439,6 +439,167 @@ function Assert-W365ResourceApproval {
     }
 }
 
+function Assert-W365ActivationPrerequisites {
+    param(
+        [Parameter(Mandatory)][System.Collections.IDictionary]$EnvironmentValues,
+        [Parameter(Mandatory)][guid]$ExpectedAgentIdentityId,
+        [guid]$HostedRuntimeIdentityObjectId = [guid]::Empty,
+        [bool]$AuthorizeHostedRuntimeFederation = $false
+    )
+
+    $required = @(
+        'SESSION_BLOB_URI',
+        'STATE_AGENT_PRINCIPAL_ID',
+        'OPERATOR_TENANT_ID',
+        'OPERATOR_OBJECT_ID',
+        'HOSTED_ALLOWED_USER_ID',
+        'W365_BLUEPRINT_CREDENTIAL_MODE'
+    )
+    $missing = @($required | Where-Object {
+        !$EnvironmentValues.Contains($_) -or
+        [string]::IsNullOrWhiteSpace([string]$EnvironmentValues[$_])
+    })
+    if ($missing.Count -gt 0) {
+        throw "W365 activation requires these azd environment values before setup mutates W365 or Entra: $($missing -join ', ')."
+    }
+    if ([string]$EnvironmentValues['DEPLOY_STATE'] -ne 'true') {
+        throw 'W365 activation requires DEPLOY_STATE=true and provisioned shared Blob state.'
+    }
+
+    $sessionBlobUri = $null
+    if (![uri]::TryCreate([string]$EnvironmentValues['SESSION_BLOB_URI'], [UriKind]::Absolute, [ref]$sessionBlobUri) -or
+        $sessionBlobUri.Scheme -ne [Uri]::UriSchemeHttps) {
+        throw 'SESSION_BLOB_URI must be a valid HTTPS URI before W365 setup.'
+    }
+
+    $statePrincipalId = [guid]::Empty
+    if (![guid]::TryParse([string]$EnvironmentValues['STATE_AGENT_PRINCIPAL_ID'], [ref]$statePrincipalId) -or
+        $statePrincipalId -eq [guid]::Empty -or
+        $statePrincipalId -ne $ExpectedAgentIdentityId) {
+        throw 'STATE_AGENT_PRINCIPAL_ID must match the discovered Foundry agent object/principal ID.'
+    }
+    foreach ($name in @('OPERATOR_TENANT_ID', 'OPERATOR_OBJECT_ID')) {
+        $id = [guid]::Empty
+        if (![guid]::TryParse([string]$EnvironmentValues[$name], [ref]$id) -or $id -eq [guid]::Empty) {
+            throw "$name must be a non-empty GUID before W365 setup."
+        }
+    }
+
+    $credentialMode = [string]$EnvironmentValues['W365_BLUEPRINT_CREDENTIAL_MODE']
+    if ($credentialMode -notin @('client_secret', 'managed_identity_federation')) {
+        throw 'W365_BLUEPRINT_CREDENTIAL_MODE must be explicitly client_secret or managed_identity_federation before W365 setup.'
+    }
+    if ($credentialMode -eq 'client_secret' -and
+        (!$EnvironmentValues.Contains('W365_KEY_VAULT_NAME') -or
+         [string]::IsNullOrWhiteSpace([string]$EnvironmentValues['W365_KEY_VAULT_NAME']))) {
+        throw 'client_secret mode requires W365_KEY_VAULT_NAME and a securely stored blueprint secret before W365 setup.'
+    }
+    if ($credentialMode -eq 'managed_identity_federation' -and
+        (!$AuthorizeHostedRuntimeFederation -or
+         $HostedRuntimeIdentityObjectId -eq [guid]::Empty -or
+         $HostedRuntimeIdentityObjectId -ne $ExpectedAgentIdentityId)) {
+        throw 'managed_identity_federation requires explicit hosted-runtime federation authorization for the exact discovered Foundry agent object/principal ID before W365 setup.'
+    }
+
+    return [pscustomobject]@{
+        CredentialMode = $credentialMode
+        KeyVaultName = [string]$EnvironmentValues['W365_KEY_VAULT_NAME']
+    }
+}
+
+function Invoke-W365AzureCliRead {
+    param([Parameter(Mandatory)][string[]]$Arguments)
+
+    $output = & az @Arguments 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Azure CLI read failed: az $($Arguments -join ' ')."
+    }
+    return ($output | Out-String).Trim()
+}
+
+function Assert-W365StateResourceReady {
+    param(
+        [Parameter(Mandatory)][guid]$SubscriptionId,
+        [Parameter(Mandatory)][uri]$SessionBlobUri,
+        [Parameter(Mandatory)][guid]$ExpectedAgentIdentityId
+    )
+
+    if ($SessionBlobUri.Scheme -ne [Uri]::UriSchemeHttps -or
+        $SessionBlobUri.Host -notmatch '^(?<account>[a-z0-9]{3,24})\.blob\.core\.windows\.net$') {
+        throw 'SESSION_BLOB_URI must use HTTPS on a public Azure Blob Storage account.'
+    }
+    $storageAccountName = $Matches.account
+    $segments = @($SessionBlobUri.AbsolutePath.Trim('/').Split(
+        '/',
+        [StringSplitOptions]::RemoveEmptyEntries))
+    if ($segments.Count -ne 2 -or
+        $segments[0] -ne 'desktop-state' -or
+        $segments[1] -ne 'slot.json') {
+        throw 'SESSION_BLOB_URI must identify the expected desktop-state/slot.json Blob.'
+    }
+
+    $storageAccountId = Invoke-W365AzureCliRead -Arguments @(
+        'storage', 'account', 'show',
+        '--subscription', $SubscriptionId.ToString(),
+        '--name', $storageAccountName,
+        '--query', 'id',
+        '--output', 'tsv')
+    if ([string]::IsNullOrWhiteSpace($storageAccountId)) {
+        throw "Storage account '$storageAccountName' was not found."
+    }
+
+    $containerScope = "$storageAccountId/blobServices/default/containers/desktop-state"
+    $containerName = Invoke-W365AzureCliRead -Arguments @(
+        'rest',
+        '--method', 'get',
+        '--url', "https://management.azure.com${containerScope}?api-version=2023-05-01",
+        '--query', 'name',
+        '--output', 'tsv')
+    if ($containerName -ne 'desktop-state') {
+        throw "Storage account '$storageAccountName' does not contain the expected desktop-state container."
+    }
+
+    $principalId = $ExpectedAgentIdentityId.ToString()
+    $roleDefinitionIds = Invoke-W365AzureCliRead -Arguments @(
+        'role', 'assignment', 'list',
+        '--subscription', $SubscriptionId.ToString(),
+        '--assignee-object-id', $principalId,
+        '--scope', $containerScope,
+        '--query', "[?principalId=='$principalId'].roleDefinitionId",
+        '--output', 'tsv')
+    $blobContributorRoleId = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
+    $hasBlobContributor = @($roleDefinitionIds -split '\r?\n' | Where-Object {
+        $_.Trim().EndsWith("/$blobContributorRoleId", [StringComparison]::OrdinalIgnoreCase)
+    }).Count -gt 0
+    if (!$hasBlobContributor) {
+        throw "Foundry agent principal '$principalId' requires container-scoped Storage Blob Data Contributor on '$containerScope'."
+    }
+
+    return [pscustomobject]@{
+        StorageAccountName = $storageAccountName
+        ContainerName = $containerName
+        ContainerScope = $containerScope
+    }
+}
+
+function Assert-W365BlueprintSecretReady {
+    param(
+        [Parameter(Mandatory)][guid]$SubscriptionId,
+        [Parameter(Mandatory)][string]$KeyVaultName
+    )
+
+    $secretId = Invoke-W365AzureCliRead -Arguments @(
+        'keyvault', 'secret', 'show',
+        '--subscription', $SubscriptionId.ToString(),
+        '--vault-name', $KeyVaultName,
+        '--name', 'w365-blueprint-client-secret',
+        '--query', 'id',
+        '--output', 'tsv')
+    if ([string]::IsNullOrWhiteSpace($secretId)) {
+        throw "Key Vault '$KeyVaultName' must contain w365-blueprint-client-secret before W365 setup mutates resources."
+    }
+}
+
 function Get-W365ProvisioningState {
     param(
         [Parameter(Mandatory)][string]$RepositoryRoot,

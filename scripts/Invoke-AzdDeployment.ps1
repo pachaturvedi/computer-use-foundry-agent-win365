@@ -96,15 +96,15 @@ function Get-AzdOptionalValue {
         return ($value | Out-String).Trim()
     }
 
-    function Get-W365KeyVaultName {
-        $vaultName = Get-AzdOptionalValue 'W365_KEY_VAULT_NAME'
-        if ([string]::IsNullOrWhiteSpace($vaultName)) {
-            $vaultName = Get-AzdOptionalValue 'VIEWER_KEY_VAULT_NAME'
-        }
-        return $vaultName
-    }
-
     return ''
+}
+
+function Get-W365KeyVaultName {
+    $vaultName = Get-AzdOptionalValue 'W365_KEY_VAULT_NAME'
+    if ([string]::IsNullOrWhiteSpace($vaultName)) {
+        $vaultName = Get-AzdOptionalValue 'VIEWER_KEY_VAULT_NAME'
+    }
+    return $vaultName
 }
 
 function Assert-LiveViewerConfiguration {

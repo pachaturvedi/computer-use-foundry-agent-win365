@@ -65,10 +65,35 @@ $setup = @{
 
 ### Stitched azd flow
 
+Run this only after the phase-1 identity has been discovered and
+[deployment phase 2](DEPLOYMENT.md#phase-2-bind-and-enable) has provisioned
+shared Blob state, configured the hosted operator, explicitly selected a
+credential mode, and securely stored the blueprint secret when using
+`client_secret`. The wrapper verifies these prerequisites before any W365 or
+Entra mutation.
+
+For `client_secret` mode:
+
 ```powershell
 pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
     -Environment "<azd-environment-name>" `
+    -TenantId "<Foundry-and-W365-tenant-guid>" `
     -AgentUserPrincipalName "foundry-w365-agent@YOUR-TENANT.onmicrosoft.com" `
+    -PoolIdOrUrl "<existing-pool-guid-or-intune-url>" `
+    -BillingConfirmed `
+    -ConfirmResourceChanges `
+    -UseDeviceCode
+```
+
+For the explicitly approved `managed_identity_federation` mode:
+
+```powershell
+azd env set W365_BLUEPRINT_CREDENTIAL_MODE managed_identity_federation
+pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
+    -Environment "<azd-environment-name>" `
+    -TenantId "<Foundry-and-W365-tenant-guid>" `
+    -HostedRuntimeIdentityObjectId "<Foundry-agent-object-principal-guid>" `
+    -AuthorizeHostedRuntimeFederation `
     -PoolIdOrUrl "<existing-pool-guid-or-intune-url>" `
     -BillingConfirmed `
     -ConfirmResourceChanges `
