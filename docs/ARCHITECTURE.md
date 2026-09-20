@@ -154,6 +154,22 @@ Session lifecycle identifiers are supplied by the harness, never the model.
 Pixel input can still launch powerful applications: an allowlist is not a desktop
 sandbox or a guarantee that the model follows safety instructions.
 
+`DesktopRequestMiddleware` bounds the whole task (including operator handoff
+wait) with a 15-minute internal deadline, but never overwrites
+`HttpContext.RequestAborted` with that deadline token. Doing so previously tied
+the entire downstream response pipeline — including the final assistant
+message write — to the internal budget: once the deadline elapsed, the
+framework's own response-writing code observed the same canceled token and the
+whole HTTP response died silently (no body, no error, no log line). Instead,
+the middleware links the deadline into each desktop tool call individually
+(`DesktopRequestContext.LinkDeadline`), while the original client-abort token
+stays untouched. When the deadline elapses mid-tool-call, `OpenDesktopAsync`'s
+`OperationCanceledException` catch (guarded on the *original* token still being
+live) converts it into a normal `w365_dependency_timeout` tool result the model
+can see and report; a middleware-level catch is a last-resort fallback that
+writes a `504 task_deadline_exceeded` JSON response only if some other
+cancellation escapes tool-level handling and the real connection is still open.
+
 ## Session ownership and lifetime
 
 Live deployed agent/viewer state uses one slot in a private shared Azure Blob.

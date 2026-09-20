@@ -748,6 +748,21 @@ container as an independent public ACA endpoint with spoofable headers.
 
 ## Operations and rollback
 
+> **Always redeploy `win365-desktop-agent` through
+> `scripts/Invoke-AzdDeployment.ps1 -Mode DeployAgent -Environment <env>
+> -ConfirmResourceChanges`. Never run `azd deploy win365-desktop-agent` or
+> `azd up` directly** when `W365_BLUEPRINT_CREDENTIAL_MODE=client_secret`. Direct
+> invocations publish with an **empty `W365_CLIENT_SECRET`** — azd's local
+> environment only ever holds a placeholder for this value, since the real
+> secret lives in Key Vault — and the agent crashes immediately at startup with
+> `System.InvalidOperationException: Configure W365_CLIENT_SECRET.` The wrapper
+> script's `Set-W365ClientSecretForDeployment` step retrieves the secret from
+> Key Vault, injects it into the azd environment only for the duration of the
+> deploy, and clears it again afterward. This applies to *any* operation that
+> packages/publishes the agent, including debugging or verifying a packaging
+> fix in isolation — use `-Mode DeployAgent`, not a raw `azd` command, even for
+> a quick redeploy.
+
 Keep one active revision/replica per component. Stop/drain tasks before
 deployment or identity changes. Do not clear a slot to make a deployment appear
 healthy: follow [recovery](ARCHITECTURE.md#fail-closed-recovery) after resolving
