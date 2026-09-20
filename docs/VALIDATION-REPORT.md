@@ -4,6 +4,28 @@ Validated on Windows through September 18, 2026. Evidence is sanitized: no
 secret values, access tokens, assertions, raw caller identifiers, or
 environment files are included.
 
+## September 20, 2026 offline change validation
+
+The current branch adds bundled hosted-agent dependency resolution and a
+Windows invoice-demo helper. These changes have **offline validation only**:
+
+- `scripts\Validate-PrePr.ps1` completed with a Release build containing
+  0 warnings and 0 errors.
+- 74 .NET tests passed: 34 agent, 32 shared, and 8 viewer tests.
+- 54 PowerShell files parsed and all 19 offline PowerShell tests passed.
+- The focused invoice-demo test validates active endpoint selection, fresh
+  session/conversation flags, full-GUID filenames, view-only link validation,
+  output redaction, exact terminal result markers, and fail-closed recovery
+  guidance.
+- `azd ai agent doctor --local-only` validated the bundled manifest, and a
+  local `linux-x64` framework-dependent publish completed.
+
+No bundled version from this branch has been deployed to Foundry. The invoice
+demo has not been run against a live Windows 365 desktop, viewer, or the
+external invoice URL. The September 18 live evidence below applies to the
+previously deployed versions and must not be interpreted as acceptance of this
+branch.
+
 ## Current result
 
 The sample is validated end to end with the explicit `client_secret` blueprint

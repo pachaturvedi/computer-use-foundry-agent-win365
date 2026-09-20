@@ -23,6 +23,7 @@ services:
     codeConfiguration:
       runtime: dotnet_10
       entryPoint: Win365Agent.dll
+      dependencyResolution: bundled
     uses:
       - ai-project
     kind: hosted

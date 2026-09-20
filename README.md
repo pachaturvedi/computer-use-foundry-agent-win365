@@ -125,22 +125,49 @@ Before real tasks, complete the
 - exclusive ownership, bounded actions, and unknown-outcome recovery;
 - `EndSession`, task/session cleanup, and recovery behavior.
 
-After acceptance, invoke the included scenario with a fresh agent session:
+After acceptance, run the included scenario helper:
+
+```powershell
+pwsh -NoProfile -File .\scripts\Invoke-InvoiceProcessingDemo.ps1 `
+    -Environment "<resource-prefix>-dev"
+```
+
+The helper creates a new agent session, generates a unique
+`Invoice-Processing-Summary-<run-guid>.txt` filename, opens the authenticated
+live viewer in the default browser, and waits for the final success or failure
+result. The viewer is observation-only in this basic scenario; the prompt
+forbids human handoff and fails instead of waiting for operator control.
+
+To invoke the same scenario directly without the helper:
 
 ```powershell
 $environment = "<resource-prefix>-dev"
+$runSuffix = [guid]::NewGuid().ToString("N")
+$outputFile = "Invoice-Processing-Summary-$runSuffix.txt"
 $prompt = Get-Content .\samples\prompts\invoice-processing.txt -Raw
+$prompt = $prompt.Replace(
+    "{{INVOICE_URI}}",
+    "https://invoicemgmt.blob.core.windows.net/invoices/Invoice_6.png")
+$prompt = $prompt.Replace("{{OUTPUT_FILE_NAME}}", $outputFile)
 $version = azd env get-value AGENT_WIN365_DESKTOP_AGENT_VERSION `
     --environment $environment
 azd ai agent invoke win365-desktop-agent `
     --environment $environment `
     --version $version `
-    --new-session $prompt
+    --new-session `
+    --new-conversation `
+    --timeout 1200 `
+    $prompt
 ```
 
-Add `--user-identity "<caller-partition>"` only when required. This is the
-opaque Foundry caller partition, not `OPERATOR_OBJECT_ID` or an Entra object ID;
-see [hosted operator binding](docs/DEPLOYMENT.md#bind-the-hosted-operator).
+The direct command waits for completion but does not automatically open or
+redact the viewer link. Use the helper when you want that behavior. See the
+[live invoice demo workflow](docs/LIVE-INVOICE-DEMO.md) for detailed execution,
+evidence, retry, and recovery steps.
+
+Pass `-UserIdentity "<caller-partition>"` only when required. This is the opaque
+Foundry caller partition, not `OPERATOR_OBJECT_ID` or an Entra object ID; see
+[hosted operator binding](docs/DEPLOYMENT.md#bind-the-hosted-operator).
 
 ## Documentation map
 
@@ -151,6 +178,7 @@ see [hosted operator binding](docs/DEPLOYMENT.md#bind-the-hosted-operator).
 | Credential modes and token exchanges | [Authentication](docs/AUTHENTICATION.md) |
 | Lifecycle, ownership, state, recovery, source layout | [Architecture](docs/ARCHITECTURE.md) |
 | Optional live view and human handoff | [Viewer](docs/VIEWER.md) |
+| Live invoice demo workflow | [Live invoice demo](docs/LIVE-INVOICE-DEMO.md) |
 | Dated live evidence and unverified boundaries | [Validation report](docs/VALIDATION-REPORT.md) |
 | Development and contribution checks | [Contributing](CONTRIBUTING.md) |
 | Operational and computer-use risks | [Security](SECURITY.md) |

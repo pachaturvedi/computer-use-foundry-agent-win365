@@ -179,6 +179,24 @@ any in-flight action's shared lock, persists Paused, then issues a control token
 performs an explicit CSRF-protected resume. Closing a tab, reconnecting,
 switching to watch mode or a token-refresh error does not resume automation.
 
+### Observation-only invoice demo
+
+Run the basic invoice scenario from Windows PowerShell with:
+
+```powershell
+pwsh -NoProfile -File .\scripts\Invoke-InvoiceProcessingDemo.ps1 `
+    -Environment "<resource-prefix>-dev"
+```
+
+The helper opens only the `/live/<opaque-id>` view and never the control route.
+Its prompt forbids pause, takeover, or human handoff because the basic scenario
+needs no authentication or sensitive action. If an unexpected page requires
+human action, the agent reports failure instead of waiting. Each run uses a
+locally generated run GUID in the Notepad filename; it does not expose or reuse
+the hosted session ID. Follow the complete
+[live invoice demo workflow](LIVE-INVOICE-DEMO.md) for endpoint verification,
+expected evidence, retry behavior, and cleanup checks.
+
 Live-view links enter through the authenticated `/live/<id>` route and then
 redirect into the W365-hosted view-only app. Take-control links stay on the
 authenticated companion `/view/<id>#control` page. The `#control` fragment is
