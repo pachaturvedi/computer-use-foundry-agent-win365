@@ -208,14 +208,88 @@ function Assert-W365AgentKeyVaultAccessConfigured {
     $secretsUserRoleId = '4633458b-17de-408a-b874-0445c86b69e6'
     $assignmentCount = (& az role assignment list `
         --subscription $subscriptionId `
-        --assignee $agentPrincipalId `
+        --assignee-object-id $agentPrincipalId `
+        --fill-principal-name false `
         --scope $vaultId `
         --query "length([?roleDefinitionId.ends_with(@, '$secretsUserRoleId')])" `
         --output tsv 2>$null | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or $assignmentCount -eq '0' -or [string]::IsNullOrWhiteSpace($assignmentCount)) {
-        throw "Agent principal '$agentPrincipalId' does not have Key Vault Secrets User on '$vaultName'. Run 'azd provision state --environment <env> --no-prompt' (via -Mode DeployAll or manually) so infra/state/keyvault.bicep grants this role before deploying the hosted agent."
+        throw "Agent principal '$agentPrincipalId' does not have Key Vault Secrets User on '$vaultName'. Run 'azd provision state --environment <env> --no-prompt' so infra/state/keyvault.bicep grants this role, then redeploy the hosted agent."
     }
     Write-DeploymentEvent DECISION "Confirmed 'w365-blueprint-client-secret' exists in '$vaultName' and agent principal '$agentPrincipalId' has Key Vault Secrets User on it."
+}
+
+function Assert-W365AgentCertificateKeyVaultAccessConfigured {
+    # Mirrors Assert-W365AgentKeyVaultAccessConfigured for key_vault_certificate mode: confirms the
+    # blueprint certificate exists and that the agent's runtime principal actually holds the
+    # certificate- and key-scoped role assignments provisioned by infra/state/keyvault.bicep
+    # (Key Vault Certificate User on the certificate object, Key Vault Crypto User on its backing
+    # key) before deployment. Because these roles were later re-scoped from the whole vault to the
+    # specific certificate/key objects, a state layer that was provisioned before the mode was
+    # switched to key_vault_certificate (or before the certificate existed) can leave the agent
+    # without this access; this check fails fast here instead of surfacing as a live signing
+    # failure.
+    if ((Get-AzdOptionalValue 'W365_ENABLED') -ne 'true' -or
+        (Get-AzdOptionalValue 'W365_BLUEPRINT_CREDENTIAL_MODE') -ne 'key_vault_certificate') {
+        return
+    }
+
+    $vaultName = Get-W365KeyVaultName
+    if ([string]::IsNullOrWhiteSpace($vaultName)) {
+        throw 'key_vault_certificate mode requires W365_KEY_VAULT_NAME (or VIEWER_KEY_VAULT_NAME) to resolve the Key Vault holding w365-blueprint-certificate.'
+    }
+    $subscriptionId = Get-AzdValue 'AZURE_SUBSCRIPTION_ID'
+    $certificateName = 'w365-blueprint-certificate'
+    $certificateId = (& az keyvault certificate show `
+        --subscription $subscriptionId `
+        --vault-name $vaultName `
+        --name $certificateName `
+        --query id `
+        --output tsv 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($certificateId)) {
+        throw "Key Vault '$vaultName' must contain certificate '$certificateName' before deploying the hosted agent in key_vault_certificate mode. Run scripts\Initialize-W365BlueprintCertificate.ps1 first."
+    }
+
+    $agentPrincipalId = Get-AzdOptionalValue 'STATE_AGENT_PRINCIPAL_ID'
+    if ([string]::IsNullOrWhiteSpace($agentPrincipalId)) {
+        throw 'key_vault_certificate mode requires STATE_AGENT_PRINCIPAL_ID so the deployed agent identity can be verified against Key Vault RBAC.'
+    }
+    $vaultId = (& az keyvault show `
+        --subscription $subscriptionId `
+        --name $vaultName `
+        --query id `
+        --output tsv 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($vaultId)) {
+        throw "Unable to resolve the resource ID of Key Vault '$vaultName' to verify agent RBAC."
+    }
+    $certificateScope = "$vaultId/certificates/$certificateName"
+    $keyScope = "$vaultId/keys/$certificateName"
+    # Role definition IDs matching infra/state/keyvault.bicep.
+    $certificateUserRoleId = 'db79e9a7-68ee-4b58-9aeb-b90e7c24fcba'
+    $cryptoUserRoleId = '12338af0-0e69-4776-bea7-57ae8d297424'
+
+    $hasCertificateRole = (& az role assignment list `
+        --subscription $subscriptionId `
+        --assignee-object-id $agentPrincipalId `
+        --fill-principal-name false `
+        --scope $certificateScope `
+        --query "length([?roleDefinitionId.ends_with(@, '$certificateUserRoleId')])" `
+        --output tsv 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $hasCertificateRole -eq '0' -or [string]::IsNullOrWhiteSpace($hasCertificateRole)) {
+        throw "Agent principal '$agentPrincipalId' does not have Key Vault Certificate User on certificate '$certificateName' in '$vaultName'. Run 'azd provision state --environment <env> --no-prompt' after the certificate exists so infra/state/keyvault.bicep grants this role, then redeploy the hosted agent."
+    }
+
+    $hasCryptoRole = (& az role assignment list `
+        --subscription $subscriptionId `
+        --assignee-object-id $agentPrincipalId `
+        --fill-principal-name false `
+        --scope $keyScope `
+        --query "length([?roleDefinitionId.ends_with(@, '$cryptoUserRoleId')])" `
+        --output tsv 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $hasCryptoRole -eq '0' -or [string]::IsNullOrWhiteSpace($hasCryptoRole)) {
+        throw "Agent principal '$agentPrincipalId' does not have Key Vault Crypto User on the backing key of certificate '$certificateName' in '$vaultName'. Run 'azd provision state --environment <env> --no-prompt' after the certificate exists so infra/state/keyvault.bicep grants this role, then redeploy the hosted agent."
+    }
+    Write-DeploymentEvent DECISION "Confirmed certificate '$certificateName' exists in '$vaultName' and agent principal '$agentPrincipalId' has Key Vault Certificate User and Key Vault Crypto User on it."
 }
 
 function Invoke-HostedAgentSmokeTest {
@@ -361,6 +435,7 @@ try {
 
     if ($Mode -in @('DeployAgent', 'DeployAll')) {
         Assert-W365AgentKeyVaultAccessConfigured
+        Assert-W365AgentCertificateKeyVaultAccessConfigured
     }
 
     if (!$SkipPackage) {
