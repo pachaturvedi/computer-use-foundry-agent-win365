@@ -190,61 +190,64 @@ flowchart TD
   <div class="timebar"><span>0:25 – 1:10</span></div>
   <h2>Identity was the biggest piece of engineering</h2>
   <div class="quote">
-    "A hosted Foundry agent can't call Windows 365 with its own credentials —
-    we had to build a <em>three-hop token exchange</em>. The blueprint
-    credential becomes an assertion, that gets exchanged for an
-    agent-identity token, and that gets exchanged again for a scoped
-    agent-user token — that last one is the only thing W365 actually
-    accepts."
+    "Think of it like getting a visitor badge for a secure building, except
+    you need <em>three badges, one after another</em> — each one only gets
+    you the next. The agent's own credential gets badge one. We hand that
+    back to Microsoft Entra and get badge two: proof this is a real agent
+    identity. Hand back both, and we get badge three — the only one Windows
+    365 actually lets through the door. We had to build that whole handoff
+    ourselves."
   </div>
   <div class="quote">
-    "And identity wasn't just tokens. We also had to <em>create a dedicated
-    W365 agent-user, license it, and assign it to a Cloud PC pool</em> —
-    separate from the agent identity itself. Three distinct identities,
-    wired together, before a single token gets exchanged."
+    "And it's not just badges. We also had to <em>set up a dedicated W365
+    user account for the agent, license it, and put it in the right Cloud PC
+    pool</em> — separate from the agent's own identity. Three things to
+    register and wire together before any badge handoff even starts."
   </div>
 </section>
 
 <section id="build2">
   <span class="tag">WHAT IT TOOK · PART 2</span>
-  <h2>Three identities, one token chain</h2>
+  <h2>Three things to set up, one badge handoff</h2>
   <div class="mermaid">
 sequenceDiagram
     participant Setup as One-time identity setup
-    participant Blueprint as Blueprint (Entra app)
+    participant Blueprint as Agent credential
     participant AgentId as Agent identity
-    participant AgentUser as W365 agent-user
-    Setup->>Blueprint: Register blueprint + credential
-    Setup->>AgentId: Create dedicated agent identity
-    Setup->>AgentUser: Create, license, assign to Cloud PC pool
-    Note over Blueprint,AgentUser: All three provisioned by hand today
+    participant AgentUser as W365 agent-user account
+    Setup->>Blueprint: Register the agent's credential
+    Setup->>AgentId: Create a dedicated agent identity
+    Setup->>AgentUser: Create, license, and assign to a Cloud PC pool
+    Note over Blueprint,AgentUser: All three set up by hand today
 
     participant Runtime as Foundry hosted agent
     participant Entra as Microsoft Entra ID
-    participant MCP as Agent 365 W365 MCP
-    Runtime->>Entra: T1 = blueprint assertion
-    Runtime->>Entra: T1 to T2 (agent-identity token)
-    Runtime->>Entra: T1 + T2 + agent-user to T3 (scoped token)
-    Runtime->>MCP: Bearer T3 on every call
-    MCP-->>Runtime: Live tool catalog + desktop actions
+    participant MCP as Agent 365 W365 connection
+    Runtime->>Entra: Badge 1 - prove who the agent is
+    Runtime->>Entra: Badge 1 in, badge 2 out - "real agent identity"
+    Runtime->>Entra: Badges 1 and 2 in, badge 3 out - the one W365 accepts
+    Runtime->>MCP: Attach badge 3 to every call
+    MCP-->>Runtime: Available desktop actions for this session
   </div>
   <div class="grid3">
     <div class="card">
-      <h4>MCP wrapper</h4>
-      Connects to Agent 365's W365 tools, attaches the token to every call,
-      and pulls the live tool catalog each session — nothing hardcoded.
+      <h4>Connecting to the desktop tools</h4>
+      We attach the final badge to every call to Windows 365, and check what
+      desktop actions are available fresh each session — nothing hardcoded.
     </div>
     <div class="card">
-      <h4>Session lifecycle</h4>
-      Ownership + idempotency key before start. A valid screen-share URL is
-      the readiness signal. Ambiguous outcomes are unresolved, never success.
-      Always cleaned up.
+      <h4>Keeping the session safe</h4>
+      We track who owns a session before we start it, so a flaky start never
+      leaves an abandoned or duplicate desktop. If anything comes back
+      unclear, we treat it as unresolved — never as success. Always cleaned
+      up.
     </div>
     <div class="card">
       <h4>Honest caveat</h4>
-      Wanted fully secretless, managed-identity end to end. One hop hit an
-      Entra limitation — added a client-secret fallback just for that step.
-      Stopgap, not the design we want.
+      We wanted this to run on the agent's built-in identity alone, no stored
+      secret. One handoff step hit a limitation on the Microsoft Entra side,
+      so we added a plain fallback just for that step. A stopgap, not the
+      design we actually want.
     </div>
   </div>
 </section>
@@ -272,14 +275,14 @@ sequenceDiagram
 <section id="painpoints">
   <span class="tag">HONEST PAIN POINTS</span>
   <div class="timebar"><span>2:15 – 3:00</span></div>
-  <h2>Identity spans four things today — all in application code</h2>
+  <h2>Identity touches four things today — all built by hand</h2>
   <table>
     <tr><th>Responsibility</th><th>Today (this sample)</th><th>With native integration</th></tr>
-    <tr><td>Blueprint → agent-identity → agent-user token exchange (T1→T2→T3)</td><td>Application code</td><td>Platform-brokered</td></tr>
-    <tr><td>W365 agent-user creation, licensing, pool assignment</td><td>Manual one-time setup</td><td>Automated at agent deployment</td></tr>
-    <tr><td>Token caching, refresh, secure attachment to MCP calls</td><td>Application code</td><td>Platform-owned</td></tr>
-    <tr><td>Session ownership, idempotency, recovery, cleanup</td><td>Application code</td><td>Remains app/runtime responsibility</td></tr>
-    <tr><td>Human-in-the-loop viewer (watch / take control)</td><td>Application code</td><td>Remains app/runtime responsibility</td></tr>
+    <tr><td>The three-step identity badge handoff (credential → agent identity → W365 user token)</td><td>Hand-built in application code</td><td>Handled automatically by the platform</td></tr>
+    <tr><td>Setting up the W365 user account, license, and Cloud PC pool for the agent</td><td>Manual one-time setup</td><td>Automated when the agent is deployed</td></tr>
+    <tr><td>Keeping tokens fresh and attaching them securely to every call</td><td>Application code</td><td>Platform-owned</td></tr>
+    <tr><td>Making sure a session isn't duplicated or abandoned, and always cleaning up</td><td>Application code</td><td>Remains the app's job either way</td></tr>
+    <tr><td>The human-in-the-loop viewer (watch / take control)</td><td>Application code</td><td>Remains the app's job either way</td></tr>
   </table>
 </section>
 
@@ -287,14 +290,15 @@ sequenceDiagram
   <span class="tag">THE ASK</span>
   <h2>Make the plumbing a platform guarantee</h2>
   <div class="ask">
-    "If Windows 365 becomes a first-class Foundry tool — with Foundry
-    brokering that token exchange and handling agent-user provisioning
-    automatically, the way it already does for other MCP connections — most
-    of that identity setup disappears. What's left is the business logic and
-    the session-safety guarantees, which we'd keep either way.
+    "If Windows 365 becomes something Foundry supports out of the box — where
+    Foundry does that badge handoff for us and sets up the W365 user account
+    automatically, the same way it already smooths over other tool
+    connections — most of that identity setup just goes away. What's left is
+    the actual business logic and the safety checks around the desktop
+    session, which we'd want to keep either way.
     <br/><br/>
-    It works today. It's just more identity plumbing than a customer should
-    have to own — and that's a solvable platform gap."
+    It works today. It's just more plumbing than a customer should have to
+    build themselves — and that's a solvable gap for the platform to close."
   </div>
   <p class="subtitle" style="margin-top:32px;">End of demo.</p>
 </section>

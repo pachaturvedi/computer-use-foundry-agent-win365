@@ -59,51 +59,57 @@ flowchart TD
 
 > "Three pieces of engineering, quickly.
 >
-> **Identity was the biggest one.** A hosted Foundry agent can't call Windows
-> 365 with its own credentials — we had to build a three-hop token exchange.
-> The blueprint credential becomes an assertion, that gets exchanged for an
-> agent-identity token, and that gets exchanged again for a scoped agent-user
-> token — that last one is the only thing W365 actually accepts.
+> **Identity was the biggest one.** Think of it like getting a visitor badge
+> for a secure building, except you need three badges, one after another,
+> and each one only gets you the next one. We start with the agent's own
+> credential — that gets us badge one. We hand badge one back to Microsoft
+> Entra and get badge two, which says 'this is a real agent identity.' Then
+> we hand back both badges and get badge three — the only one Windows 365
+> actually lets through the door. We had to build that whole three-step
+> handoff ourselves.
 >
-> And identity wasn't just tokens. As part of it, we also had to **create a
-> dedicated W365 agent-user, license it, and assign it to a Cloud PC pool** —
-> separate from the agent identity itself. So before a single token gets
-> exchanged, there are three distinct identities set up and wired together: a
-> blueprint, an agent identity, and an agent-user.
+> And it's not just badges — we also had to **set up a dedicated W365 user
+> account for the agent, license it, and put it in the right Cloud PC pool**,
+> separately from the agent's own identity. So before any of that badge
+> handoff even starts, there are three separate things to register and wire
+> together: the agent's credential, its identity, and its W365 user account.
 >
 > **Second, the MCP wrapper.** We connect to Agent 365's W365 tools, attach
 > that token to every call, and pull the live tool catalog each session —
 > nothing hardcoded.
 >
-> **Third, session lifecycle.** Before starting a Cloud PC session we record
-> ownership and an idempotency key, so a flaky start never leaves an orphaned
-> or duplicate session. A valid screen-share URL is our readiness signal.
-> Anything ambiguous, we treat as unresolved, not success. We always clean up.
+> **Third, session lifecycle.** Before starting a Cloud PC session we keep a
+> record of who owns it and a way to tell "did that actually start or not" —
+> so a flaky start never leaves us with an abandoned or duplicate desktop.
+> Once we see a valid screen-share link back, that's how we know the desktop
+> is really ready. If anything comes back unclear, we treat it as unresolved,
+> never as success. And we always clean up after ourselves.
 >
-> One honest detail — we wanted this fully secretless, managed identity end to
-> end. In the environment we tested, the first hop hit an Entra limitation, so
-> we added a client-secret fallback for just that step. Stopgap, not the
-> design we want."
+> One honest detail — we wanted this to need no stored secret at all, just
+> the agent's built-in managed identity the whole way through. In the
+> environment we tested, that first badge handoff hit a limitation on the
+> Microsoft Entra side, so we added a plain client-secret fallback just for
+> that one step. It's a stopgap, not the design we actually want."
 
 ```mermaid
 sequenceDiagram
     participant Setup as One-time identity setup
-    participant Blueprint as Blueprint (Entra app)
+    participant Blueprint as Agent credential
     participant AgentId as Agent identity
-    participant AgentUser as W365 agent-user
-    Setup->>Blueprint: Register blueprint + credential (MI/FIC or secret)
-    Setup->>AgentId: Create dedicated agent identity
-    Setup->>AgentUser: Create agent-user, license, assign to Cloud PC pool
-    Note over Blueprint,AgentUser: All three provisioned by hand today
+    participant AgentUser as W365 agent-user account
+    Setup->>Blueprint: Register the agent's credential
+    Setup->>AgentId: Create a dedicated agent identity
+    Setup->>AgentUser: Create, license, and assign to a Cloud PC pool
+    Note over Blueprint,AgentUser: All three set up by hand today
 
-    participant Runtime as Foundry hosted agent (runtime)
+    participant Runtime as Foundry hosted agent
     participant Entra as Microsoft Entra ID
-    participant MCP as Agent 365 W365 MCP
-    Runtime->>Entra: T1 = blueprint assertion
-    Runtime->>Entra: T1 -> T2 (agent-identity token)
-    Runtime->>Entra: T1 + T2 + agent-user -> T3 (scoped W365 token)
-    Runtime->>MCP: Bearer T3 on every call
-    MCP-->>Runtime: Live tool catalog + desktop actions
+    participant MCP as Agent 365 W365 connection
+    Runtime->>Entra: Badge 1 - prove who the agent is
+    Runtime->>Entra: Badge 1 in, badge 2 out - "this is a real agent identity"
+    Runtime->>Entra: Badges 1 and 2 in, badge 3 out - the one W365 accepts
+    Runtime->>MCP: Attach badge 3 to every call
+    MCP-->>Runtime: Available desktop actions for this session
 ```
 
 ### 1:10–2:15 — Live demo
@@ -137,30 +143,32 @@ Wait for the terminal's completion marker.
 
 ### 2:15–3:00 — Pain points and the ask
 
-> "Here's the honest part. Identity alone spans four things — the Foundry
-> runtime, the blueprint, the agent-identity/agent-user exchange we
-> hand-provisioned, and W365's own authorization. All of it is bridged in our
-> application code today, not the platform's.
+> "Here's the honest part. Identity alone touches four different things — the
+> agent running inside Foundry, its credential, the badge handoff we had to
+> hand-build to get it a real W365 user, and W365's own permission checks.
+> All of that is stitched together in our application code today. Microsoft's
+> platform doesn't do it for us yet.
 >
-> If Windows 365 becomes a first-class Foundry tool — with Foundry brokering
-> that token exchange and handling agent-user provisioning automatically, the
-> way it already does for other MCP connections — most of that identity setup
-> disappears. What's left is the business logic and the session-safety
-> guarantees, which we'd keep either way.
+> If Windows 365 becomes something Foundry supports out of the box — where
+> Foundry does that badge handoff for us and sets up the W365 user account
+> automatically, the same way it already smooths over other tool connections
+> — most of that identity setup just goes away. What's left is the actual
+> business logic, and the safety checks around the desktop session, which
+> we'd want to keep either way.
 >
-> It works today. It's just more identity plumbing than a customer should have
-> to own — and that's a solvable platform gap."
+> It works today. It's just more plumbing than a customer should have to
+> build themselves — and that's a solvable gap for the platform to close."
 
 ## Today vs. native Foundry–W365 integration
 
 | Responsibility | Today (this sample) | With native integration |
 | --- | --- | --- |
-| Blueprint credential, agent-identity token, agent-user token exchange (T1→T2→T3) | Application code | Platform-brokered (`AgenticIdentityToken`-style) |
-| W365 agent-user creation, licensing, pool assignment | Manual one-time setup | Automated at agent deployment |
-| Token caching, refresh, secure attachment to MCP calls | Application code | Platform-owned |
-| Live tool catalog discovery, MCP connection | Application code | Application code (tool-specific) |
-| Session ownership, idempotency, ambiguous-outcome recovery, cleanup | Application code | Remains application/runtime responsibility |
-| Human-in-the-loop viewer (watch / take control) | Application code | Remains application/runtime responsibility |
+| The three-step identity badge handoff (credential → agent identity → W365 user token) | Hand-built in application code | Handled automatically by the platform |
+| Setting up the W365 user account, license, and Cloud PC pool for the agent | Manual one-time setup | Automated when the agent is deployed |
+| Keeping tokens fresh and attaching them securely to every call | Application code | Platform-owned |
+| Discovering what desktop actions are available each session | Application code | Application code (tool-specific) |
+| Making sure a session isn't duplicated or abandoned, and always cleaning up | Application code | Remains the app's job either way |
+| The human-in-the-loop viewer (watch / take control) | Application code | Remains the app's job either way |
 
 ## Presenter notes
 
