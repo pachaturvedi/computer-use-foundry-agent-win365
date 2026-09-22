@@ -28,9 +28,9 @@ The invoice-processing run demonstrates the complete bounded desktop lifecycle:
 6. End the Windows 365 session even when the task fails.
 
 The sample supports one operator and one fresh task at a time. The ACA viewer
-is deployed by default for authenticated observation and controlled human
-handoff, although the basic invoice prompt is observation-only and does not
-pause for operator input.
+is deployed in bootstrap mode by default. After tenant-specific activation it
+supports authenticated observation and controlled human handoff, although the
+basic invoice prompt remains observation-only.
 
 ## Scenario and code map
 
@@ -93,11 +93,12 @@ unauthenticated and loopback-only; never publish or tunnel them.
 
 ## Bring up a fresh environment
 
-A fresh managed environment defaults to the complete demo: Foundry project and
-model, bootstrap agent, shared Blob state, W365 setup, ACA viewer, and the final
-enabled hosted-agent version. `azd up` performs the required two internal
-phases because the first agent version must exist before its identity can
-receive state and W365 access.
+A fresh managed environment defaults to the complete agent path: Foundry
+project and model, bootstrap agent, shared Blob state, W365 setup, ACA viewer
+bootstrap, and the final enabled hosted-agent version. `azd up` performs the
+required two internal phases because the first agent version must exist before
+its identity can receive state and W365 access. Live viewer activation occurs
+in the same run only when its tenant-specific inputs are available.
 
 Authenticate both CLIs to the same tenant and subscription:
 
@@ -112,11 +113,11 @@ pwsh -NoProfile -File .\tests\PowerShell\Test-AzdPrerequisites.ps1 -RequireLogin
 Create the environment and deploy:
 
 ```powershell
-azd env new demosept22-dev `
+azd env new "<resource-prefix>-dev" `
     --subscription "<subscription-id>" `
     --location eastus
 pwsh -NoProfile -File .\scripts\Invoke-AzdUp.ps1 `
-    -Environment "demosept22-dev" `
+    -Environment "<resource-prefix>-dev" `
     -ConfirmResourceChanges
 ```
 
@@ -146,11 +147,12 @@ Azure Key Vault; it is not written to source, JSON, `.azure`, logs, or command
 history.
 
 The reviewed model defaults are `gpt-6-astra`, version `2026-09-03`,
-`GlobalStandard`, and capacity `200` (200K TPM). `azd up` persists the approved
-screen-share values supplied during W365 onboarding; the primary flow does not
-require separate `azd env set SCREENSHARE_*` commands. If those tenant-specific
-values are unavailable, the deployment leaves the viewer in healthy bootstrap
-mode and identifies the missing onboarding inputs.
+`GlobalStandard`, and capacity `200` (200K TPM). If approved screen-share
+values are already present in the selected azd environment or ignored local
+deployment profile, `azd up` uses them to activate the viewer. Otherwise it
+leaves the viewer in healthy bootstrap mode and identifies the missing
+tenant-specific inputs. Screen-share values are not required for agent-only
+desktop execution.
 
 See the [deployment guide](docs/DEPLOYMENT.md) for quota, cost, shared-project
 deployment, staged previews, opt-out settings, rollback, and teardown. See the
@@ -161,9 +163,9 @@ Key Vault credential boundary and other explicitly selected modes.
 For a Foundry-only bootstrap:
 
 ```powershell
-azd env set ENABLE_W365 false --environment demosept22-dev
+azd env set ENABLE_W365 false --environment "<resource-prefix>-dev"
 pwsh -NoProfile -File .\scripts\Invoke-AzdUp.ps1 `
-    -Environment "demosept22-dev" `
+    -Environment "<resource-prefix>-dev" `
     -ConfirmResourceChanges
 ```
 
@@ -191,9 +193,9 @@ no prompt replacement or preprocessing is required:
 
 ```powershell
 $version = azd env get-value AGENT_WIN365_DESKTOP_AGENT_VERSION `
-    --environment demosept22-dev
+    --environment "<resource-prefix>-dev"
 azd ai agent invoke win365-desktop-agent `
-    --environment demosept22-dev `
+    --environment "<resource-prefix>-dev" `
     --version $version `
     --new-session `
     --new-conversation `
@@ -213,13 +215,14 @@ viewer automatically, use the helper:
 
 ```powershell
 pwsh -NoProfile -File .\scripts\Invoke-InvoiceProcessingDemo.ps1 `
-    -Environment "demosept22-dev"
+    -Environment "<resource-prefix>-dev"
 ```
 
 The viewer remains observation-only for this basic scenario. The prompt forbids
-human handoff and reports failure rather than waiting for operator control. See
-the [live invoice demo workflow](docs/LIVE-INVOICE-DEMO.md) for evidence, retry,
-and recovery steps.
+human handoff and reports failure rather than waiting for operator control. If
+the result is ambiguous, do not rerun the task until the
+[fail-closed recovery workflow](docs/ARCHITECTURE.md#fail-closed-recovery)
+confirms that no remote session remains.
 
 Pass `-UserIdentity "<caller-partition>"` only when required. This is the opaque
 Foundry caller partition, not `OPERATOR_OBJECT_ID` or an Entra object ID; see
@@ -234,7 +237,5 @@ Foundry caller partition, not `OPERATOR_OBJECT_ID` or an Entra object ID; see
 | Credential modes and token exchanges | [Authentication](docs/AUTHENTICATION.md) |
 | Lifecycle, ownership, state, recovery, source layout | [Architecture](docs/ARCHITECTURE.md) |
 | Optional live view and human handoff | [Viewer](docs/VIEWER.md) |
-| Live invoice demo workflow | [Live invoice demo](docs/LIVE-INVOICE-DEMO.md) |
-| Dated live evidence and unverified boundaries | [Validation report](docs/VALIDATION-REPORT.md) |
 | Development and contribution checks | [Contributing](CONTRIBUTING.md) |
 | Operational and computer-use risks | [Security](SECURITY.md) |

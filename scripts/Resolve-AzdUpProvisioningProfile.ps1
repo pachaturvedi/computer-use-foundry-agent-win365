@@ -1,4 +1,20 @@
 #Requires -Version 7.4
+<#
+.SYNOPSIS
+Resolves the interactive W365 and viewer choices for azd up.
+
+.DESCRIPTION
+Combines environment values, deployment defaults, tenant discovery, and explicit operator selections to choose existing, new, or skipped W365 and ACA resources.
+
+
+Key inputs: Environment, repository/config paths, discovery-script overrides, W365Mode, ViewerMode, pool/billing/environment IDs, and ViewerOnly.
+
+.OUTPUTS
+A normalized provisioning-profile object and persisted non-secret azd environment choices.
+
+.NOTES
+May prompt and write local azd environment values; it never silently adopts shared resources or performs resource creation.
+#>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$Environment,

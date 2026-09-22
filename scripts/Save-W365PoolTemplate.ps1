@@ -1,4 +1,20 @@
 #Requires -Version 7.4
+<#
+.SYNOPSIS
+Captures an existing W365 agent pool as a reusable local template.
+
+.DESCRIPTION
+Resolves a pool ID or Intune URL, reads the pool and related tenant metadata through delegated Graph, and writes non-secret creation settings to ignored deployment configuration.
+
+
+Key inputs: PoolIdOrUrl and PoolDisplayName are required; description, output path, tenant, device-code, retry, and timeout options are optional.
+
+.OUTPUTS
+An updated local deployment profile containing non-secret pool settings.
+
+.NOTES
+Read-only against W365/Graph and writes only local configuration. It never adopts, clones, or mutates the source pool.
+#>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$PoolIdOrUrl,

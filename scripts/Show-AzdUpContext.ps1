@@ -1,4 +1,20 @@
 #Requires -Version 7.4
+<#
+.SYNOPSIS
+Prints the effective azd up deployment context.
+
+.DESCRIPTION
+Reads deployment defaults, local overrides, process values, and selected azd environment values to show generated names, model settings, and enabled components before provisioning.
+
+
+Key inputs: RepositoryRoot and ConfigPath.
+
+.OUTPUTS
+A redacted, human-readable pre-provision context summary.
+
+.NOTES
+Read-only. It does not provision resources or expose credentials.
+#>
 [CmdletBinding()]
 param(
     [string]$RepositoryRoot = (Split-Path $PSScriptRoot),

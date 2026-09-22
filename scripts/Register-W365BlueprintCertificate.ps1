@@ -11,6 +11,18 @@ certificate and PATCHes the full array back (Graph requires a full read-modify-w
 add-only endpoint for keyCredentials once other credentials already exist). Existing credentials
 are never removed. Only the public certificate bytes are ever sent to Graph; this script never
 requests, receives, or persists private key material.
+
+
+Key inputs: TenantId and BlueprintId identify the target. PublicCertificateBase64 contains only the public certificate. UseDeviceCode and GraphClientTimeoutSeconds control delegated Graph sign-in, and ConfirmResourceChanges authorizes mutation.
+
+.OUTPUTS
+Redacted registration status, including whether the matching keyCredential was
+created or already present.
+
+.NOTES
+Mutates the existing blueprint application through Microsoft Graph. The script
+preserves unrelated credentials, is idempotent by certificate thumbprint, and
+requires explicit confirmation.
 #>
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
 param(

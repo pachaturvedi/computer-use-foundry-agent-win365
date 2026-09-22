@@ -19,10 +19,12 @@ permissions. Do not point it at a desktop with production credentials/data.
   local W365 is refused; live W365 requires a deployed identity endpoint.
 - W365 tokens are held in memory, not included in links/model output/logs.
   The authorized browser must receive the ARI token to use the official SDK.
-- W365 reuses Foundry's blueprint and agent identity through deployed managed
-  identity token exchange. There is no DAC/CLI, certificate or secret fallback,
-  no logged token-exchange bodies and no IdentityRM auxiliary token. Key Vault
-  stores only the viewer's separate OIDC secret. Agent-user IDs are not credentials.
+- W365 reuses Foundry's blueprint and agent identity through one explicitly
+  selected credential mode: Key Vault-backed client secret, managed-identity
+  federation, or Key Vault certificate. There is no DAC/CLI or cross-mode
+  fallback, no logged token-exchange bodies, and no IdentityRM auxiliary token.
+  Key Vault can store the blueprint secret or certificate and the separate
+  viewer OIDC secret. Agent-user IDs are not credentials.
 - Enabled identity IDs must be valid and Foundry/W365/viewer Azure identities
   must share a tenant (the human OIDC tenant can differ). Foundry's injected
   blueprint client ID must match configuration; never set reserved variables
@@ -39,10 +41,11 @@ Setup must find the exact supplied existing blueprint and agent identity, then
 validate the agent parent and any existing agent-user parent before mutations.
 Existing grant/inheritance ambiguity is also rejected before writes; setup does
 not look up `/me` or take over ownership.
-It never creates a blueprint, blueprint principal, agent identity, certificate
-or secret. It preserves unrelated declarations/consent and refuses takeover of
-different inheritance policies. Reusing Foundry identities does not authorize
-changing administrator-managed policy.
+The core setup does not create a blueprint, blueprint principal, or agent
+identity. Credential creation or registration is a separate, explicitly
+approved workflow. Setup preserves unrelated declarations and consent and
+refuses takeover of different inheritance policies. Reusing Foundry identities
+does not authorize changing administrator-managed policy.
 
 Inherited blueprint grants may affect sibling agents. Optional viewer federation
 trusts an existing UAMI object ID with the tenant v2.0 issuer and
@@ -53,11 +56,12 @@ Do not add the FIC if shared-blueprint or tenant policy disallows it. Keep the
 viewer disabled instead, recognizing that viewer links/handoff may be unavailable.
 
 The public managed-identity helper is an activity/autopilot reference; ordinary
-Responses hosting support must be proven in the actual host. No live deployment
-has been performed for this implementation. If blueprint selection is unsupported,
-stop without a token/secret fallback. This sample does not require autopilot
+Responses hosting support must be proven in the actual host. The explicit
+client-secret path has completed live validation, managed-identity federation
+is blocked on the tested host by `AADSTS700231`, and certificate mode has only
+offline validation. Stop on unsupported blueprint selection; never change
+credential modes automatically. This sample does not require autopilot
 publication or a hiring workflow and is not a production identity guarantee.
-Use an approved identity SDK when the host offers one for production.
 
 Preserve the same agent name across deployments, rediscover the new version's
 IDs and reject unexpected identity replacement. For migration, stop tasks and

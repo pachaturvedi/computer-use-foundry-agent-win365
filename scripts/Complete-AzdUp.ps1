@@ -1,4 +1,20 @@
 #Requires -Version 7.4
+<#
+.SYNOPSIS
+Completes phase-two setup after the initial azd deployment.
+
+.DESCRIPTION
+Orchestrates provisioning-profile selection, shared state, optional viewer bootstrap, W365 setup, viewer activation, guarded agent redeployment, and the final deployment summary.
+
+
+Key inputs: Repository paths and optional script overrides; AZURE_ENV_NAME and values from the selected azd environment.
+
+.OUTPUTS
+Console progress and updated non-secret azd environment values.
+
+.NOTES
+Mutating orchestrator. It requires explicit approvals in the delegated setup scripts and never prints credentials.
+#>
 [CmdletBinding()]
 param(
     [string]$RepositoryRoot = (Split-Path $PSScriptRoot),

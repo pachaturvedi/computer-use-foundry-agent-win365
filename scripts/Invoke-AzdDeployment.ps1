@@ -1,4 +1,20 @@
 #Requires -Version 7.4
+<#
+.SYNOPSIS
+Runs guarded validation, provisioning, and hosted-agent deployment modes.
+
+.DESCRIPTION
+Validates project and credential prerequisites, previews or provisions Foundry, packages and deploys the hosted agent, verifies Key Vault RBAC, runs Foundry doctor, and optionally smoke-invokes the active version.
+
+
+Key inputs: Mode selects Validate, ProvisionFoundry, DeployAgent, or DeployAll. Environment, ConfigPath, confirmation, packaging, and smoke-test options refine execution.
+
+.OUTPUTS
+Deployment events, azd outputs, active agent version, doctor results, and optional smoke-test results.
+
+.NOTES
+Mutating modes require ConfirmResourceChanges. Secrets are injected only into the child deployment process and then cleared.
+#>
 [CmdletBinding()]
 param(
     [ValidateSet('Validate', 'ProvisionFoundry', 'DeployAgent', 'DeployAll')]

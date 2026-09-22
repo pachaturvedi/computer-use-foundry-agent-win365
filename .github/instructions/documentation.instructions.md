@@ -14,11 +14,12 @@ applyTo: "README.md,CONTRIBUTING.md,SECURITY.md,docs/**/*.md"
   - `docs/AUTHENTICATION.md` for credential modes, token exchanges, trust, and permission boundaries.
   - `docs/ARCHITECTURE.md` for components, request flow, durable state, ownership, readiness, recovery, and cleanup.
   - `docs/VIEWER.md` for OIDC, screen sharing, pause/resume, and human handoff.
-  - `docs/VALIDATION-REPORT.md` for dated live evidence.
 - Clearly distinguish identifiers from credentials and offline validation from live acceptance.
 - Never include tenant secrets, bearer tokens, raw session IDs, private state, or usable session links.
 - Use exact environment-variable names and script parameters from source.
 - Document defaults, prerequisites, failure behavior, cleanup, and rollback for operational changes.
 - Include expected success output and actionable failures that identify the stage, remediation, whether retry is safe, and whether cleanup is required.
-- When live acceptance is unavailable, state the exact unverified boundary, authorized verification command, expected evidence, and cleanup steps.
+- When live acceptance is unavailable, state the exact unverified boundary,
+  authorized verification command, expected evidence, and cleanup steps in the
+  owning operational guide or pull request.
 - Remove stale or contradictory instructions in the same change rather than adding another caveat.

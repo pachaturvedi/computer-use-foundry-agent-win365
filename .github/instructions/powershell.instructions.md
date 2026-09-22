@@ -6,6 +6,8 @@ applyTo: "scripts/**/*.ps1"
 
 - Target PowerShell 7.4+ and Windows execution from the repository root.
 - Use approved PowerShell verbs, `[CmdletBinding()]`, typed parameters, and `$ErrorActionPreference = 'Stop'` for operational scripts.
+- Start every production script with concise comment-based help covering its
+  purpose, behavior, key inputs, outputs, and read-only or mutation boundary.
 - Under strict mode, wrap function or pipeline results in `@(...)` before using
   `.Count`; a single returned item may otherwise be an unwrapped scalar.
 - Make read-only/default behavior safe. Resource mutation requires an explicit confirmation switch and must honor `-WhatIf`/`ShouldProcess` where applicable.

@@ -1,5 +1,20 @@
 #Requires -Version 7.4
+<#
+.SYNOPSIS
+Provides ownership-manifest and azd environment-file helpers.
 
+.DESCRIPTION
+Reads, copies, and atomically writes W365/viewer ownership manifests and non-secret azd environment values while preserving type and path safety.
+
+
+Key inputs: Repository/environment paths, manifest objects, and key/value dictionaries supplied to exported functions.
+
+.OUTPUTS
+Manifest objects, resolved paths, environment dictionaries, and updated local files.
+
+.NOTES
+Dot-source library. Ownership records are security boundaries; callers must not infer ownership from resource names.
+#>
 Set-StrictMode -Version Latest
 
 . (Join-Path $PSScriptRoot 'Logging.ps1')

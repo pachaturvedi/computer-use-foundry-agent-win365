@@ -1,4 +1,20 @@
 #Requires -Version 7.4
+<#
+.SYNOPSIS
+Stores viewer and blueprint credentials in the shared Key Vault.
+
+.DESCRIPTION
+Resolves the environment vault, ensures required RBAC, securely prompts for missing values, and writes the blueprint client secret and/or viewer OIDC client secret without persisting them to azd.
+
+
+Key inputs: Environment plus optional secure strings, BlueprintOnly, OidcOnly, Overwrite, and role-setup script override.
+
+.OUTPUTS
+Key Vault secret versions and redacted completion messages.
+
+.NOTES
+Credential-mutating. Secret values are never printed, returned, written to source, or stored in azd environment state.
+#>
 [CmdletBinding()]
 param(
     [string]$Environment,

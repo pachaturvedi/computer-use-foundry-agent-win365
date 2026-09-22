@@ -1,4 +1,20 @@
 #Requires -Version 7.4
+<#
+.SYNOPSIS
+Prepares shared state and optional viewer infrastructure for phase two.
+
+.DESCRIPTION
+Selects the managed azd environment, discovers the exact bootstrap agent principal, provisions private Blob state, validates its outputs, and only then enables viewer bootstrap provisioning.
+
+
+Key inputs: Environment is required; DeployViewer and script-path overrides control optional behavior and offline testing.
+
+.OUTPUTS
+Updated azd environment values and provisioned state/viewer bootstrap resources.
+
+.NOTES
+Mutating Azure workflow. It refuses shared existing-project ownership and fails before viewer provisioning when state is incomplete.
+#>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$Environment,

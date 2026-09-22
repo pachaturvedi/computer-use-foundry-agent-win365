@@ -1,4 +1,20 @@
 #Requires -Version 7.4
+<#
+.SYNOPSIS
+Configures least-privilege Key Vault roles for W365 setup.
+
+.DESCRIPTION
+Resolves the shared vault and ownership metadata, grants the current setup operator secret-management access, and optionally grants the viewer identity secret-read access.
+
+
+Key inputs: Environment is required; IncludeViewer includes the deployed viewer UAMI assignment.
+
+.OUTPUTS
+Created or reused Azure RBAC assignments and redacted status messages.
+
+.NOTES
+Mutates Azure RBAC at vault scope and preserves pre-existing assignments for ownership-aware cleanup.
+#>
 [CmdletBinding()]
 param(
     [string]$Environment,
