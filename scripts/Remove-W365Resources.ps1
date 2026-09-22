@@ -31,10 +31,15 @@ function Get-AzdCommand {
             $azdPaths.Add($source)
         }
     }
-    foreach ($path in @(
-        (Join-Path $env:LOCALAPPDATA 'Programs\Azure Dev CLI\azd.exe'),
-        (Join-Path $env:ProgramFiles 'Azure Dev CLI\azd.exe')
-    )) {
+    $knownAzdPaths = @()
+    if (![string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+        $knownAzdPaths += Join-Path $env:LOCALAPPDATA 'Programs\Azure Dev CLI\azd.exe'
+    }
+    if (![string]::IsNullOrWhiteSpace($env:ProgramFiles)) {
+        $knownAzdPaths += Join-Path $env:ProgramFiles 'Azure Dev CLI\azd.exe'
+    }
+
+    foreach ($path in $knownAzdPaths) {
         if (![string]::IsNullOrWhiteSpace($path) -and
             (Test-Path -LiteralPath $path -PathType Leaf) -and
             !$azdPaths.Contains($path)) {

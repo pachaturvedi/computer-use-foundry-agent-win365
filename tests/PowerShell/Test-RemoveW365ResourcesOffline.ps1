@@ -32,15 +32,27 @@ if (!$getAzdCommandAst) {
 $commandDiscoveryTempRoot = Join-Path ([IO.Path]::GetTempPath()) ("w365-azd-discovery-{0}" -f ([guid]::NewGuid()))
 $malformedAzdRoot = Join-Path $commandDiscoveryTempRoot 'malformed'
 $validAzdRoot = Join-Path $commandDiscoveryTempRoot 'valid'
-$malformedAzdPath = Join-Path $malformedAzdRoot 'azd.cmd'
-$fakeAzdPath = Join-Path $validAzdRoot 'azd.cmd'
+$fakeAzdFileName = if ($IsWindows) { 'azd.cmd' } else { 'azd' }
+$malformedAzdPath = Join-Path $malformedAzdRoot $fakeAzdFileName
+$fakeAzdPath = Join-Path $validAzdRoot $fakeAzdFileName
 $previousPath = $env:PATH
 try {
     New-Item -ItemType Directory -Path $malformedAzdRoot -Force | Out-Null
     New-Item -ItemType Directory -Path $validAzdRoot -Force | Out-Null
-    Set-Content -LiteralPath $malformedAzdPath -Value '@echo azd version 999999999999.1.1 (commit malformed-test)'
-    Set-Content -LiteralPath $fakeAzdPath -Value '@echo azd version 9.99.9 (commit offline-test)'
-    $env:PATH = "$malformedAzdRoot;$validAzdRoot;$previousPath"
+    if ($IsWindows) {
+        Set-Content -LiteralPath $malformedAzdPath -Value '@echo azd version 999999999999.1.1 (commit malformed-test)'
+        Set-Content -LiteralPath $fakeAzdPath -Value '@echo azd version 9.99.9 (commit offline-test)'
+    }
+    else {
+        Set-Content -LiteralPath $malformedAzdPath -Value "#!/bin/sh`necho 'azd version 999999999999.1.1 (commit malformed-test)'"
+        Set-Content -LiteralPath $fakeAzdPath -Value "#!/bin/sh`necho 'azd version 9.99.9 (commit offline-test)'"
+        $executableMode = [IO.UnixFileMode]::UserRead -bor
+            [IO.UnixFileMode]::UserWrite -bor
+            [IO.UnixFileMode]::UserExecute
+        [IO.File]::SetUnixFileMode($malformedAzdPath, $executableMode)
+        [IO.File]::SetUnixFileMode($fakeAzdPath, $executableMode)
+    }
+    $env:PATH = @($malformedAzdRoot, $validAzdRoot, $previousPath) -join [IO.Path]::PathSeparator
 
     $commandDiscoveryModule = New-Module -Name W365AzdCommandDiscovery -ScriptBlock ([scriptblock]::Create(@"
 $($getAzdCommandAst.Extent.Text)
