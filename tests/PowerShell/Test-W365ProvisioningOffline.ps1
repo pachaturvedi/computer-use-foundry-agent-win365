@@ -12,6 +12,7 @@ $scriptsRoot = Join-Path $repoRoot 'scripts'
 
 $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("w365-provisioning-{0}" -f ([guid]::NewGuid()))
 $environmentName = 'contoso-dev'
+$previousPath = $env:PATH
 
 function Assert-Throws {
     param(
@@ -33,6 +34,38 @@ function Assert-Throws {
 }
 
 try {
+    $fakeAzdRoot = Join-Path $tempRoot 'bin'
+    New-Item -ItemType Directory -Path $fakeAzdRoot -Force | Out-Null
+    $fakeAzdPath = Join-Path $fakeAzdRoot $(if ($IsWindows) { 'azd.cmd' } else { 'azd' })
+    if ($IsWindows) {
+        Set-Content -LiteralPath $fakeAzdPath -Value @(
+            '@echo off',
+            'echo azd version 99.0.0'
+        )
+    }
+    else {
+        Set-Content -LiteralPath $fakeAzdPath -Value @(
+            '#!/bin/sh',
+            'echo "azd version 99.0.0"'
+        )
+        [IO.File]::SetUnixFileMode(
+            $fakeAzdPath,
+            [IO.UnixFileMode]::UserRead -bor
+                [IO.UnixFileMode]::UserWrite -bor
+                [IO.UnixFileMode]::UserExecute)
+    }
+    $env:PATH = @($fakeAzdRoot, $previousPath) -join [IO.Path]::PathSeparator
+    function global:azd {
+        throw 'The PowerShell azd function must not be treated as an executable candidate.'
+    }
+
+    $resolvedAzd = Get-W365AzdCommand
+    if ($null -eq $resolvedAzd -or
+        (Resolve-Path -LiteralPath $resolvedAzd.Path).Path -ne
+            (Resolve-Path -LiteralPath $fakeAzdPath).Path) {
+        throw 'W365 azd discovery did not ignore the shadowing PowerShell function and select the valid executable.'
+    }
+
     New-Item -ItemType Directory -Path (Join-Path $tempRoot 'config') -Force | Out-Null
     Set-Content -LiteralPath (Join-Path $tempRoot 'config\deployment.defaults.json') -Value @'
 {
@@ -499,6 +532,8 @@ try {
     Write-Output 'Offline W365 provisioning: generic tenant domains, deterministic naming, approval, and fail-closed ownership state passed.'
 }
 finally {
+    Remove-Item Function:\azd -Force -ErrorAction SilentlyContinue
+    $env:PATH = $previousPath
     if (Test-Path -LiteralPath $tempRoot) {
         Remove-Item -LiteralPath $tempRoot -Recurse -Force
     }
