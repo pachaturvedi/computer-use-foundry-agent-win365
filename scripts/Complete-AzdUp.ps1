@@ -184,7 +184,7 @@ if ($enableW365 -and !$w365AlreadyEnabled) {
     }
     $currentValues = Import-AzdEnvironmentValues -Root $RepositoryRoot -EnvironmentName $environmentName
     $enableW365 = Test-EnabledValue -Value ([string]$currentValues['ENABLE_W365'])
-    $deployViewer = Test-EnabledValue -Value ([string]$currentValues['DEPLOY_VIEWER'])
+    $deployViewer = [string]$currentValues['VIEWER_HOSTING_MODE'] -in @('new', 'existing')
 }
 
 if ($enableW365 -and !$w365AlreadyEnabled) {

@@ -10,17 +10,20 @@ $tempRoot = Join-Path ([IO.Path]::GetTempPath()) "azd-up-phase-two-$([guid]::New
 $binPath = Join-Path $tempRoot 'bin'
 $callsPath = Join-Path $tempRoot 'calls.txt'
 $identityCallsPath = Join-Path $tempRoot 'identity-calls.json'
-$mockAzdPath = Join-Path $binPath 'azd.ps1'
+$mockAzdPath = Join-Path $binPath 'azd.cmd'
+$mockAzdScriptPath = Join-Path $binPath 'Mock-Azd.ps1'
 $mockIdentityPath = Join-Path $tempRoot 'Mock-FoundryIdentity.ps1'
 $mockProfilePath = Join-Path $tempRoot 'Mock-ProvisioningProfile.ps1'
 $profileCallsPath = Join-Path $tempRoot 'profile-calls.json'
 $previousPath = $env:Path
 $previousCallsPath = $env:TEST_AZD_CALLS_PATH
 $previousQuotaBehavior = $env:TEST_AZD_VIEWER_QUOTA_ONCE
+$previousStateMode = $env:TEST_AZD_STATE_MODE
+$previousViewerFailure = $env:TEST_AZD_VIEWER_FAILURE
 
 try {
     New-Item -ItemType Directory -Path $binPath -Force | Out-Null
-    Set-Content -LiteralPath $mockAzdPath -Value @'
+    Set-Content -LiteralPath $mockAzdScriptPath -Value @'
 [CmdletBinding()]
 param(
     [Parameter(ValueFromRemainingArguments)]
@@ -38,21 +41,58 @@ if ($env:TEST_AZD_VIEWER_QUOTA_ONCE -eq 'true' -and
         Where-Object { $_ -eq 'provision viewer --environment sample-dev --no-prompt' })
     if ($viewerCalls.Count -eq 1) {
         Write-Output 'MaxNumberOfGlobalEnvironmentsInSubExceeded'
-        $global:LASTEXITCODE = 1
-        return
+        exit 1
+    }
+}
+if ($CommandArgs -join ' ' -eq 'provision viewer --environment sample-dev --no-prompt') {
+    if ($env:VIEWER_PROVISIONING_ACTIVE -ne 'true') {
+        Write-Output 'viewer provisioning was not phase-two active'
+        exit 1
+    }
+    if ($env:TEST_AZD_VIEWER_FAILURE -eq 'generic') {
+        Write-Output 'simulated viewer provider failure'
+        exit 1
+    }
+    if ($env:TEST_AZD_VIEWER_FAILURE -eq 'quota-always') {
+        Write-Output 'MaxNumberOfGlobalEnvironmentsInSubExceeded'
+        exit 1
     }
 }
 if ($CommandArgs[0] -eq 'env' -and $CommandArgs[1] -eq 'get-value') {
+    $storageName = if ($env:TEST_AZD_STATE_MODE -eq 'missing') { '' } else { 'samplestatestorage' }
+    $sessionBlobUri = switch ($env:TEST_AZD_STATE_MODE) {
+        'inconsistent' { 'https://differentstorage.blob.core.windows.net/desktop-state/slot.json' }
+        'missing' { '' }
+        'query' { 'https://samplestatestorage.blob.core.windows.net/desktop-state/slot.json?sig=unexpected' }
+        'fragment' { 'https://samplestatestorage.blob.core.windows.net/desktop-state/slot.json#unexpected' }
+        'port' { 'https://samplestatestorage.blob.core.windows.net:8443/desktop-state/slot.json' }
+        'userinfo' { 'https://unexpected@samplestatestorage.blob.core.windows.net/desktop-state/slot.json' }
+        'http' { 'http://samplestatestorage.blob.core.windows.net/desktop-state/slot.json' }
+        'wrongpath' { 'https://samplestatestorage.blob.core.windows.net/desktop-state/other.json' }
+        'casepath' { 'https://samplestatestorage.blob.core.windows.net/Desktop-State/slot.json' }
+        'dotsegment' { 'https://samplestatestorage.blob.core.windows.net/desktop-state/extra/../slot.json' }
+        'encoded' { 'https://samplestatestorage.blob.core.windows.net/desktop-state/%73lot.json' }
+        default { 'https://samplestatestorage.blob.core.windows.net/desktop-state/slot.json' }
+    }
     $values = @{
         FOUNDRY_PROJECT_OWNERSHIP = 'managed'
         FOUNDRY_PROJECT_ENDPOINT = 'https://sample.services.ai.azure.com/api/projects/sample-project'
         FOUNDRY_AGENT_NAME = 'win365-desktop-agent'
         AGENT_WIN365_DESKTOP_AGENT_VERSION = '1'
         AZURE_TENANT_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+        DEPLOY_STATE = 'true'
+        STATE_STORAGE_ACCOUNT_NAME = $storageName
+        STATE_CONTAINER_NAME = 'desktop-state'
+        SESSION_BLOB_URI = $sessionBlobUri
     }
     Write-Output $values[$CommandArgs[2]]
 }
 '@
+    Set-Content -LiteralPath $mockAzdPath -Value @"
+@echo off
+pwsh -NoProfile -File "$mockAzdScriptPath" %*
+exit /b %ERRORLEVEL%
+"@
     Set-Content -LiteralPath $mockProfilePath -Value @'
 param(
     [string]$Environment,
@@ -109,10 +149,11 @@ param(
         'env set ENABLE_W365 true',
         'env set DEPLOY_STATE true',
         'env set STATE_AGENT_PRINCIPAL_ID cccccccc-cccc-cccc-cccc-cccccccccccc',
-        'env set DEPLOY_VIEWER true',
+        'env set DEPLOY_VIEWER false',
         'env set VIEWER_LIVE_ENABLED false',
         'env set W365_BLUEPRINT_CREDENTIAL_MODE client_secret',
         'provision state --environment sample-dev --no-prompt',
+        'env set DEPLOY_VIEWER true',
         'provision viewer --environment sample-dev --no-prompt'
     )
     foreach ($requiredCall in $requiredCalls) {
@@ -125,6 +166,62 @@ param(
     if ($stateIndex -lt 0 -or $viewerIndex -le $stateIndex) {
         throw 'Phase-two initialization did not provision shared state before the viewer.'
     }
+    if ([array]::IndexOf($calls, 'env get-value STATE_STORAGE_ACCOUNT_NAME') -le $stateIndex -or
+        [array]::IndexOf($calls, 'env get-value SESSION_BLOB_URI') -le $stateIndex) {
+        throw 'Phase-two initialization did not reload state outputs before viewer provisioning.'
+    }
+    $viewerEnableIndex = [array]::IndexOf($calls, 'env set DEPLOY_VIEWER true')
+    if ($viewerEnableIndex -le [array]::IndexOf($calls, 'env get-value SESSION_BLOB_URI') -or
+        $viewerIndex -le $viewerEnableIndex) {
+        throw 'Phase-two initialization enabled the viewer before state outputs were validated.'
+    }
+
+    foreach ($stateMode in @('missing', 'inconsistent', 'query', 'fragment', 'port', 'userinfo', 'http', 'wrongpath', 'casepath', 'dotsegment', 'encoded')) {
+        Remove-Item -LiteralPath $callsPath -ErrorAction SilentlyContinue
+        $env:TEST_AZD_STATE_MODE = $stateMode
+        $stateRejected = $false
+        try {
+            & $scriptPath `
+                -Environment 'sample-dev' `
+                -DeployViewer `
+                -IdentityScriptPath $mockIdentityPath
+        }
+        catch {
+            $stateRejected = $_.Exception.Message -match 'Viewer provisioning was not started'
+        }
+        if (!$stateRejected) {
+            throw "Phase-two initialization accepted $stateMode shared-state outputs."
+        }
+        $rejectedCalls = @(Get-Content -LiteralPath $callsPath)
+        if ('env set DEPLOY_VIEWER true' -in $rejectedCalls -or
+            'provision viewer --environment sample-dev --no-prompt' -in $rejectedCalls) {
+            throw "Phase-two initialization enabled or provisioned the viewer for $stateMode shared state."
+        }
+    }
+    $env:TEST_AZD_STATE_MODE = 'valid'
+
+    foreach ($failureMode in @('generic', 'quota-always')) {
+        Remove-Item -LiteralPath $callsPath, $profileCallsPath -ErrorAction SilentlyContinue
+        $env:TEST_AZD_VIEWER_FAILURE = $failureMode
+        $viewerFailureRejected = $false
+        try {
+            & $scriptPath `
+                -Environment 'sample-dev' `
+                -DeployViewer `
+                -IdentityScriptPath $mockIdentityPath `
+                -ProvisioningProfileScriptPath $mockProfilePath
+        }
+        catch {
+            $viewerFailureRejected = $true
+        }
+        if (!$viewerFailureRejected) {
+            throw "Phase-two initialization accepted $failureMode viewer provisioning failure."
+        }
+        if (![string]::IsNullOrEmpty($env:VIEWER_PROVISIONING_ACTIVE)) {
+            throw "Phase-two initialization did not clear transient viewer activation after $failureMode failure."
+        }
+    }
+    $env:TEST_AZD_VIEWER_FAILURE = ''
 
     Remove-Item -LiteralPath $callsPath, $profileCallsPath -ErrorAction SilentlyContinue
     $env:TEST_AZD_VIEWER_QUOTA_ONCE = 'true'
@@ -152,6 +249,8 @@ finally {
     $env:Path = $previousPath
     $env:TEST_AZD_CALLS_PATH = $previousCallsPath
     $env:TEST_AZD_VIEWER_QUOTA_ONCE = $previousQuotaBehavior
+    $env:TEST_AZD_STATE_MODE = $previousStateMode
+    $env:TEST_AZD_VIEWER_FAILURE = $previousViewerFailure
     Remove-Item Env:\TEST_IDENTITY_CALLS_PATH -ErrorAction SilentlyContinue
     Remove-Item Env:\TEST_PROFILE_CALLS_PATH -ErrorAction SilentlyContinue
     if (Test-Path -LiteralPath $tempRoot) {

@@ -71,7 +71,7 @@ $phaseTwoValues = [ordered]@{
     ENABLE_W365 = 'true'
     DEPLOY_STATE = 'true'
     STATE_AGENT_PRINCIPAL_ID = $agentPrincipalId.ToString()
-    DEPLOY_VIEWER = $DeployViewer.IsPresent.ToString().ToLowerInvariant()
+    DEPLOY_VIEWER = 'false'
     VIEWER_LIVE_ENABLED = 'false'
     W365_BLUEPRINT_CREDENTIAL_MODE = $credentialMode
 }
@@ -85,31 +85,77 @@ try {
         'provision', 'state', '--environment', $Environment, '--no-prompt'
     ) | Out-Null
 
-    if ($DeployViewer) {
-        Write-W365ProvisioningStep 'Provisioning the ACA viewer bootstrap after shared state is ready.'
-        try {
-            Invoke-W365Azd -Azd $azd -Arguments @(
-                'provision', 'viewer', '--environment', $Environment, '--no-prompt'
-            ) | Out-Null
+    $stateValues = [ordered]@{
+        DEPLOY_STATE = Get-W365AzdValue -Azd $azd -Name 'DEPLOY_STATE'
+        STATE_STORAGE_ACCOUNT_NAME = Get-W365AzdValue -Azd $azd -Name 'STATE_STORAGE_ACCOUNT_NAME'
+        STATE_CONTAINER_NAME = Get-W365AzdValue -Azd $azd -Name 'STATE_CONTAINER_NAME'
+        SESSION_BLOB_URI = Get-W365AzdValue -Azd $azd -Name 'SESSION_BLOB_URI'
+    }
+    $missingStateValues = @($stateValues.GetEnumerator() | Where-Object {
+        [string]::IsNullOrWhiteSpace([string]$_.Value)
+    } | ForEach-Object Key)
+    if ($stateValues.DEPLOY_STATE -ne 'true' -or $missingStateValues.Count -gt 0) {
+        $missingSummary = if ($missingStateValues.Count -gt 0) {
+            " Missing outputs: $($missingStateValues -join ', ')."
         }
-        catch {
-            $quotaFailure = $_.Exception.Message -match
-                'MaxNumberOfGlobalEnvironmentsInSubExceeded|managed environment.{0,80}(quota|capacity)|quota.{0,80}managed environment'
-            if (!$quotaFailure -or $env:AZD_NON_INTERACTIVE -eq 'true') {
-                throw
-            }
+        else {
+            ''
+        }
+        throw "Shared state provisioning completed without usable Blob state.$missingSummary Viewer provisioning was not started."
+    }
 
-            Write-Warning 'A new ACA managed environment could not be created because of a subscription quota or capacity limit.'
-            & $ProvisioningProfileScriptPath `
-                -Environment $Environment `
-                -ViewerOnly `
-                -ViewerMode existing
-            if (!$?) {
-                throw 'Existing ACA managed-environment selection failed after the creation quota error.'
+    $sessionBlobUri = $null
+    $expectedSessionBlobUri = "https://$($stateValues.STATE_STORAGE_ACCOUNT_NAME).blob.core.windows.net/$($stateValues.STATE_CONTAINER_NAME)/slot.json"
+    if (![uri]::TryCreate(
+            [string]$stateValues.SESSION_BLOB_URI,
+            [UriKind]::Absolute,
+            [ref]$sessionBlobUri) -or
+        $sessionBlobUri.Scheme -ne [Uri]::UriSchemeHttps -or
+        !$sessionBlobUri.IsDefaultPort -or
+        $sessionBlobUri.Host -ne "$($stateValues.STATE_STORAGE_ACCOUNT_NAME).blob.core.windows.net" -or
+        $sessionBlobUri.AbsolutePath -cne "/$($stateValues.STATE_CONTAINER_NAME)/slot.json" -or
+        ![string]::IsNullOrEmpty($sessionBlobUri.UserInfo) -or
+        ![string]::IsNullOrEmpty($sessionBlobUri.Query) -or
+        ![string]::IsNullOrEmpty($sessionBlobUri.Fragment) -or
+        [string]::CompareOrdinal([string]$stateValues.SESSION_BLOB_URI, $expectedSessionBlobUri) -ne 0) {
+        throw 'Shared state provisioning returned inconsistent STATE_STORAGE_ACCOUNT_NAME, STATE_CONTAINER_NAME, and SESSION_BLOB_URI values. Viewer provisioning was not started.'
+    }
+
+    if ($DeployViewer) {
+        Set-W365AzdValues -Azd $azd -Values ([ordered]@{
+            DEPLOY_VIEWER = 'true'
+        })
+        $previousViewerProvisioningActive = $env:VIEWER_PROVISIONING_ACTIVE
+        $env:VIEWER_PROVISIONING_ACTIVE = 'true'
+        try {
+            Write-W365ProvisioningStep 'Provisioning the ACA viewer bootstrap after shared state is ready.'
+            try {
+                Invoke-W365Azd -Azd $azd -Arguments @(
+                    'provision', 'viewer', '--environment', $Environment, '--no-prompt'
+                ) | Out-Null
             }
-            Invoke-W365Azd -Azd $azd -Arguments @(
-                'provision', 'viewer', '--environment', $Environment, '--no-prompt'
-            ) | Out-Null
+            catch {
+                $quotaFailure = $_.Exception.Message -match
+                    'MaxNumberOfGlobalEnvironmentsInSubExceeded|managed environment.{0,80}(quota|capacity)|quota.{0,80}managed environment'
+                if (!$quotaFailure -or $env:AZD_NON_INTERACTIVE -eq 'true') {
+                    throw
+                }
+
+                Write-Warning 'A new ACA managed environment could not be created because of a subscription quota or capacity limit.'
+                & $ProvisioningProfileScriptPath `
+                    -Environment $Environment `
+                    -ViewerOnly `
+                    -ViewerMode existing
+                if (!$?) {
+                    throw 'Existing ACA managed-environment selection failed after the creation quota error.'
+                }
+                Invoke-W365Azd -Azd $azd -Arguments @(
+                    'provision', 'viewer', '--environment', $Environment, '--no-prompt'
+                ) | Out-Null
+            }
+        }
+        finally {
+            $env:VIEWER_PROVISIONING_ACTIVE = $previousViewerProvisioningActive
         }
     }
 }

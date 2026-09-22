@@ -31,6 +31,15 @@ you need the full staged deployment, rollback, or live-acceptance detail.
 | Binding | Select the W365/ACA profile, discover the version, provision state/viewer, create or reuse the agent user and pool, and persist ownership | Automatic after bootstrap approval |
 | Phase 2 | Enable W365 and redeploy the same service name | Automatic final stage; viewer activation can trigger one additional immutable version |
 
+The ACA choice is saved after bootstrap, but `DEPLOY_VIEWER` remains disabled
+until Blob state has been created and its storage account, container, and blob
+URI outputs have been validated. A retry after interrupted onboarding therefore
+re-enters state provisioning instead of deploying the viewer with empty state.
+If validation fails, rerun `azd up` after correcting the reported state output;
+the viewer is not started and no viewer cleanup is required. During onboarding,
+only phase two activates viewer provisioning. After W365 is enabled, later
+`azd up` runs can update the existing viewer normally.
+
 The complete W365 lifecycle is validated with explicit `client_secret` mode.
 Blueprint-selected managed identity remains blocked on the tested Responses
 host by Entra `AADSTS700231`; the public reference helper is from an
@@ -530,9 +539,9 @@ azd env set DEPLOY_VIEWER true
 azd env set VIEWER_IMAGE_NAME "win365-sample:v1"
 azd env set VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID `
   "/subscriptions/<subscription>/resourceGroups/<rg>/providers/Microsoft.App/managedEnvironments/<name>"
-pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
-    -Mode DeployAll `
-    -ConfirmResourceChanges
+pwsh -NoProfile -File .\scripts\Initialize-AzdUpPhaseTwo.ps1 `
+  -Environment "<env>" `
+  -DeployViewer
 ```
 
 The viewer bootstrap calculates a `build-<hash>` image tag from the Dockerfile,
@@ -563,13 +572,20 @@ Before enabling `DEPLOY_VIEWER`, preview the state and viewer layers separately:
 
 ```powershell
 azd provision state --preview --no-prompt
-azd provision viewer --preview --no-prompt
+$env:VIEWER_PROVISIONING_ACTIVE = "true"
+try {
+  azd provision viewer --preview --no-prompt
+}
+finally {
+  Remove-Item Env:\VIEWER_PROVISIONING_ACTIVE -ErrorAction SilentlyContinue
+}
 ```
 
 Layered projects do not support a combined `azd provision --preview`. If the
 preview reports `MaxNumberOfGlobalEnvironmentsInSubExceeded`, select an
 approved existing environment by full resource ID or request a quota increase.
-The deployment never silently chooses an environment.
+The deployment never silently chooses an environment. Never persist
+`VIEWER_PROVISIONING_ACTIVE`; it is an internal process-only guard.
 
 The [parameter example](../infra/viewer.parameters.example.json) contains only
 identifiers and URLs, never secret values. Its phase-2 placeholders are not
