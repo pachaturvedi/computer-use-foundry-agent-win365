@@ -5,6 +5,7 @@
     "environmentName": { "value": "${AZURE_ENV_NAME}" },
     "location": { "value": "${AZURE_LOCATION}" },
     "deployViewer": { "value": "${DEPLOY_VIEWER=false}" },
+    "deployState": { "value": "${DEPLOY_STATE=false}" },
     "resourcePrefix": { "value": "${RESOURCE_PREFIX=}" },
     "resourceGroupName": { "value": "${AZURE_RESOURCE_GROUP=}" },
     "viewerImageName": { "value": "${VIEWER_IMAGE_NAME=win365-sample:v1}" },

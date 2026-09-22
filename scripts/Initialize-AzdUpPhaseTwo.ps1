@@ -85,6 +85,36 @@ try {
         'provision', 'state', '--environment', $Environment, '--no-prompt'
     ) | Out-Null
 
+    $stateValues = [ordered]@{
+        DEPLOY_STATE = Get-W365AzdValue -Azd $azd -Name 'DEPLOY_STATE'
+        STATE_STORAGE_ACCOUNT_NAME = Get-W365AzdValue -Azd $azd -Name 'STATE_STORAGE_ACCOUNT_NAME'
+        STATE_CONTAINER_NAME = Get-W365AzdValue -Azd $azd -Name 'STATE_CONTAINER_NAME'
+        SESSION_BLOB_URI = Get-W365AzdValue -Azd $azd -Name 'SESSION_BLOB_URI'
+    }
+    $missingStateValues = @($stateValues.GetEnumerator() | Where-Object {
+        [string]::IsNullOrWhiteSpace([string]$_.Value)
+    } | ForEach-Object Key)
+    if ($stateValues.DEPLOY_STATE -ne 'true' -or $missingStateValues.Count -gt 0) {
+        $missingSummary = if ($missingStateValues.Count -gt 0) {
+            " Missing outputs: $($missingStateValues -join ', ')."
+        }
+        else {
+            ''
+        }
+        throw "Shared state provisioning completed without usable Blob state.$missingSummary Viewer provisioning was not started."
+    }
+
+    $sessionBlobUri = $null
+    if (![uri]::TryCreate(
+            [string]$stateValues.SESSION_BLOB_URI,
+            [UriKind]::Absolute,
+            [ref]$sessionBlobUri) -or
+        $sessionBlobUri.Scheme -ne [Uri]::UriSchemeHttps -or
+        $sessionBlobUri.Host -ne "$($stateValues.STATE_STORAGE_ACCOUNT_NAME).blob.core.windows.net" -or
+        $sessionBlobUri.AbsolutePath -ne "/$($stateValues.STATE_CONTAINER_NAME)/slot.json") {
+        throw 'Shared state provisioning returned inconsistent STATE_STORAGE_ACCOUNT_NAME, STATE_CONTAINER_NAME, and SESSION_BLOB_URI values. Viewer provisioning was not started.'
+    }
+
     if ($DeployViewer) {
         Write-W365ProvisioningStep 'Provisioning the ACA viewer bootstrap after shared state is ready.'
         try {

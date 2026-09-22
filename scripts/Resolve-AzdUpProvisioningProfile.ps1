@@ -378,7 +378,7 @@ if ($w365StillEnabled) {
         }
 
         Assert-ViewerManagedEnvironmentResourceId -ResourceId $resolvedResourceId
-        $updates['DEPLOY_VIEWER'] = 'true'
+        $updates['DEPLOY_VIEWER'] = $ViewerOnly.IsPresent.ToString().ToLowerInvariant()
         $updates['VIEWER_HOSTING_MODE'] = 'existing'
         $updates['VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID'] = $resolvedResourceId
     }
@@ -388,7 +388,7 @@ if ($w365StillEnabled) {
         $updates['VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID'] = ''
     }
     else {
-        $updates['DEPLOY_VIEWER'] = 'true'
+        $updates['DEPLOY_VIEWER'] = $ViewerOnly.IsPresent.ToString().ToLowerInvariant()
         $updates['VIEWER_HOSTING_MODE'] = 'new'
         $updates['VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID'] = ''
     }

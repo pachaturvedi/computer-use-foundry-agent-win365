@@ -31,6 +31,11 @@ you need the full staged deployment, rollback, or live-acceptance detail.
 | Binding | Select the W365/ACA profile, discover the version, provision state/viewer, create or reuse the agent user and pool, and persist ownership | Automatic after bootstrap approval |
 | Phase 2 | Enable W365 and redeploy the same service name | Automatic final stage; viewer activation can trigger one additional immutable version |
 
+The ACA choice is saved after bootstrap, but `DEPLOY_VIEWER` remains disabled
+until Blob state has been created and its storage account, container, and blob
+URI outputs have been validated. A retry after interrupted onboarding therefore
+re-enters state provisioning instead of deploying the viewer with empty state.
+
 The complete W365 lifecycle is validated with explicit `client_secret` mode.
 Blueprint-selected managed identity remains blocked on the tested Responses
 host by Entra `AADSTS700231`; the public reference helper is from an

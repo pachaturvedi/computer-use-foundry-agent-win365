@@ -7,6 +7,11 @@ param location string
   'false'
 ])
 param deployViewer string = 'false'
+@allowed([
+  'true'
+  'false'
+])
+param deployState string = 'false'
 @maxLength(24)
 param resourcePrefix string = ''
 param resourceGroupName string = ''
@@ -40,7 +45,8 @@ param screenShareSdkUrl string = ''
 param screenShareFrameOrigins string = ''
 param screenShareAppUrl string = ''
 
-var viewerEnabled = toLower(deployViewer) == 'true'
+var stateReady = toLower(deployState) == 'true' && !empty(stateStorageAccountName) && !empty(stateContainerName) && !empty(sessionBlobUri)
+var viewerEnabled = toLower(deployViewer) == 'true' && stateReady
 var liveViewerEnabled = viewerEnabled && toLower(viewerLiveEnabled) == 'true'
 var resolvedResourcePrefix = !empty(resourcePrefix) ? resourcePrefix : environmentName
 var resolvedResourceGroupName = !empty(resourceGroupName) ? resourceGroupName : '${resolvedResourcePrefix}-rg'

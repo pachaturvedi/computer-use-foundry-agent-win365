@@ -10,7 +10,8 @@ $tempRoot = Join-Path ([IO.Path]::GetTempPath()) "azd-up-phase-two-$([guid]::New
 $binPath = Join-Path $tempRoot 'bin'
 $callsPath = Join-Path $tempRoot 'calls.txt'
 $identityCallsPath = Join-Path $tempRoot 'identity-calls.json'
-$mockAzdPath = Join-Path $binPath 'azd.ps1'
+$mockAzdPath = Join-Path $binPath 'azd.cmd'
+$mockAzdScriptPath = Join-Path $binPath 'Mock-Azd.ps1'
 $mockIdentityPath = Join-Path $tempRoot 'Mock-FoundryIdentity.ps1'
 $mockProfilePath = Join-Path $tempRoot 'Mock-ProvisioningProfile.ps1'
 $profileCallsPath = Join-Path $tempRoot 'profile-calls.json'
@@ -20,7 +21,7 @@ $previousQuotaBehavior = $env:TEST_AZD_VIEWER_QUOTA_ONCE
 
 try {
     New-Item -ItemType Directory -Path $binPath -Force | Out-Null
-    Set-Content -LiteralPath $mockAzdPath -Value @'
+    Set-Content -LiteralPath $mockAzdScriptPath -Value @'
 [CmdletBinding()]
 param(
     [Parameter(ValueFromRemainingArguments)]
@@ -38,8 +39,7 @@ if ($env:TEST_AZD_VIEWER_QUOTA_ONCE -eq 'true' -and
         Where-Object { $_ -eq 'provision viewer --environment sample-dev --no-prompt' })
     if ($viewerCalls.Count -eq 1) {
         Write-Output 'MaxNumberOfGlobalEnvironmentsInSubExceeded'
-        $global:LASTEXITCODE = 1
-        return
+        exit 1
     }
 }
 if ($CommandArgs[0] -eq 'env' -and $CommandArgs[1] -eq 'get-value') {
@@ -49,10 +49,19 @@ if ($CommandArgs[0] -eq 'env' -and $CommandArgs[1] -eq 'get-value') {
         FOUNDRY_AGENT_NAME = 'win365-desktop-agent'
         AGENT_WIN365_DESKTOP_AGENT_VERSION = '1'
         AZURE_TENANT_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+        DEPLOY_STATE = 'true'
+        STATE_STORAGE_ACCOUNT_NAME = 'samplestatestorage'
+        STATE_CONTAINER_NAME = 'desktop-state'
+        SESSION_BLOB_URI = 'https://samplestatestorage.blob.core.windows.net/desktop-state/slot.json'
     }
     Write-Output $values[$CommandArgs[2]]
 }
 '@
+    Set-Content -LiteralPath $mockAzdPath -Value @"
+@echo off
+pwsh -NoProfile -File "$mockAzdScriptPath" %*
+exit /b %ERRORLEVEL%
+"@
     Set-Content -LiteralPath $mockProfilePath -Value @'
 param(
     [string]$Environment,
@@ -124,6 +133,10 @@ param(
     $viewerIndex = [array]::IndexOf($calls, 'provision viewer --environment sample-dev --no-prompt')
     if ($stateIndex -lt 0 -or $viewerIndex -le $stateIndex) {
         throw 'Phase-two initialization did not provision shared state before the viewer.'
+    }
+    if ([array]::IndexOf($calls, 'env get-value STATE_STORAGE_ACCOUNT_NAME') -le $stateIndex -or
+        [array]::IndexOf($calls, 'env get-value SESSION_BLOB_URI') -le $stateIndex) {
+        throw 'Phase-two initialization did not reload state outputs before viewer provisioning.'
     }
 
     Remove-Item -LiteralPath $callsPath, $profileCallsPath -ErrorAction SilentlyContinue

@@ -102,9 +102,9 @@ param(
         $newValues['W365_POOL_REGIONS'] -ne 'centralus' -or
         $newValues['W365_POOL_IMAGE_ID'] -ne 'microsoftwindowsdesktop_windows-ent-cpc_win11-25h2-ent-cpc-m365' -or
         $newValues['VIEWER_HOSTING_MODE'] -ne 'new' -or
-        $newValues['DEPLOY_VIEWER'] -ne 'true' -or
+        $newValues['DEPLOY_VIEWER'] -ne 'false' -or
         ![string]::IsNullOrWhiteSpace([string]$newValues['VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID'])) {
-        throw 'New W365 pool and new ACA environment choices were not persisted per azd environment.'
+        throw 'New W365 pool and pending ACA environment choices were not persisted safely per azd environment.'
     }
 
     Write-EnvironmentFile
@@ -121,8 +121,22 @@ param(
     if ($existingValues['W365_ONBOARDING_MODE'] -ne 'existing' -or
         $existingValues['W365_POOL_ID'] -ne '22222222-2222-2222-2222-222222222222' -or
         $existingValues['VIEWER_HOSTING_MODE'] -ne 'existing' -or
-        $existingValues['VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID'] -notmatch '/managedEnvironments/shared-aca$') {
-        throw 'Existing W365 pool and ACA managed-environment choices were not persisted.'
+    $existingValues['DEPLOY_VIEWER'] -ne 'false' -or
+    $existingValues['VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID'] -notmatch '/managedEnvironments/shared-aca$') {
+    throw 'Existing W365 pool and pending ACA managed-environment choices were not persisted safely.'
+    }
+
+    & $scriptPath `
+    -Environment $environmentName `
+    -RepositoryRoot $tempRoot `
+    -ConfigPath (Join-Path $root 'config\deployment.defaults.json') `
+    -ViewerDiscoveryScriptPath $viewerDiscoveryPath `
+    -ViewerOnly `
+    -ViewerMode existing
+    $viewerRetryValues = Read-AzdEnvironmentFile -Path $environmentPath
+    if ($viewerRetryValues['DEPLOY_VIEWER'] -ne 'true' -or
+    $viewerRetryValues['VIEWER_HOSTING_MODE'] -ne 'existing') {
+    throw 'Viewer-only ACA quota recovery did not activate the viewer after shared state was ready.'
     }
 
     Write-EnvironmentFile
