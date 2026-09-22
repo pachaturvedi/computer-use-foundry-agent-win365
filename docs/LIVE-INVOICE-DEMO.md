@@ -194,28 +194,22 @@ shared logs.
 Operators who do not want the helper can run:
 
 ```powershell
-$environment = "<resource-prefix>-dev"
-$runSuffix = [guid]::NewGuid().ToString("N")
-$outputFile = "Invoice-Processing-Summary-$runSuffix.txt"
-$prompt = Get-Content .\samples\prompts\invoice-processing.txt -Raw
-$prompt = $prompt.Replace(
-    "{{INVOICE_URI}}",
-    "https://invoicemgmt.blob.core.windows.net/invoices/Invoice_6.png")
-$prompt = $prompt.Replace("{{OUTPUT_FILE_NAME}}", $outputFile)
 $version = azd env get-value AGENT_WIN365_DESKTOP_AGENT_VERSION `
-    --environment $environment
+    --environment demosept22-dev
 azd ai agent invoke win365-desktop-agent `
-    --environment $environment `
+    --environment demosept22-dev `
     --version $version `
     --new-session `
     --new-conversation `
     --timeout 1200 `
-    $prompt
+    (Get-Content .\samples\prompts\invoice-processing-direct.txt -Raw)
 ```
 
-This command keeps the same no-handoff prompt and unique filename. It does not
-verify or open the viewer automatically, and its output is not sanitized by the
-repository helper.
+The direct prompt already contains the sample invoice URL and writes
+`Documents\Invoice-Processing-Summary.txt`; no string replacement is required.
+The command keeps the same no-handoff behavior, but it does not generate a
+unique filename, verify or open the viewer automatically, or sanitize raw
+`azd` output. Use the helper for those safeguards.
 
 ## Evidence checklist
 
