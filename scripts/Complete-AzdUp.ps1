@@ -283,9 +283,11 @@ if ($enableW365 -and !$w365AlreadyEnabled -and $credentialMode -eq 'key_vault_ce
     catch {
         $certificatePrimaryError = $_
     }
-    Complete-W365CertificateOfficerLease `
-        -Lease $certificateOfficerLease `
-        -PrimaryError $certificatePrimaryError
+    finally {
+        Complete-W365CertificateOfficerLease `
+            -Lease $certificateOfficerLease `
+            -PrimaryError $certificatePrimaryError
+    }
 }
 
 if ($enableW365 -and !$w365AlreadyEnabled -and !$credentialAccessFinalized) {

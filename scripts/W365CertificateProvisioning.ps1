@@ -1,7 +1,11 @@
 Set-StrictMode -Version Latest
 
+. (Join-Path $PSScriptRoot 'Logging.ps1')
+Write-SampleVerbose -Component 'certificate-role-lease' -Message 'Loaded temporary Key Vault certificate role helpers.'
+Write-SampleDebug -Component 'certificate-role-lease' -Message 'Role propagation retries are bounded and cleanup preserves primary failures.'
+
 function Enter-W365CertificateOfficerLease {
-    [CmdletBinding()]
+    [CmdletBinding(SupportsShouldProcess)]
     param(
         [Parameter(Mandatory)][guid]$SubscriptionId,
         [Parameter(Mandatory)][string]$VaultName,
@@ -9,7 +13,8 @@ function Enter-W365CertificateOfficerLease {
         [Parameter(Mandatory)][guid]$OperatorObjectId,
         [switch]$ConfirmResourceChanges,
         [ValidateRange(1, 30)][int]$PropagationAttempts = 8,
-        [ValidateRange(0, 30)][int]$PropagationDelaySeconds = 2
+        [ValidateRange(0, 30)][int]$PropagationDelaySeconds = 2,
+        [Threading.CancellationToken]$CancellationToken = [Threading.CancellationToken]::None
     )
 
     $roleId = 'a4417e6f-fecd-4de8-b567-7b0420556985'
@@ -28,6 +33,16 @@ function Enter-W365CertificateOfficerLease {
     if ([string]::IsNullOrWhiteSpace(($existing | Out-String))) {
         if (!$ConfirmResourceChanges) {
             throw "The current operator lacks Key Vault Certificates Officer on '$VaultName'. Re-run with -ConfirmResourceChanges to grant it, or have an administrator grant it."
+        }
+        if (!$PSCmdlet.ShouldProcess("$OperatorObjectId on $VaultName", 'Grant temporary Key Vault Certificates Officer')) {
+            return [pscustomobject]@{
+                SubscriptionId = $SubscriptionId
+                VaultName = $VaultName
+                VaultId = $VaultId
+                OperatorObjectId = $OperatorObjectId
+                TemporaryRoleAssignmentId = $null
+                AcquisitionSkipped = $true
+            }
         }
         $assignmentId = (& az role assignment create `
             --subscription $SubscriptionId `
@@ -51,6 +66,7 @@ function Enter-W365CertificateOfficerLease {
         $propagationError = $null
         try {
             for ($attempt = 1; $attempt -le $PropagationAttempts; $attempt++) {
+                $CancellationToken.ThrowIfCancellationRequested()
                 $probeOutput = (& az keyvault certificate list `
                     --subscription $SubscriptionId `
                     --vault-name $VaultName `
@@ -67,7 +83,12 @@ function Enter-W365CertificateOfficerLease {
                 if ($attempt -eq $PropagationAttempts) {
                     throw "Key Vault Certificates Officer was assigned on '$VaultName', but certificate access was not authorized after $PropagationAttempts bounded propagation attempts."
                 }
-                Start-Sleep -Seconds $PropagationDelaySeconds
+                if ($PropagationDelaySeconds -gt 0 -and
+                    $CancellationToken.WaitHandle.WaitOne([TimeSpan]::FromSeconds($PropagationDelaySeconds))) {
+                    throw [OperationCanceledException]::new(
+                        'Key Vault role propagation wait was canceled.',
+                        $CancellationToken)
+                }
             }
         }
         catch {
@@ -84,6 +105,7 @@ function Enter-W365CertificateOfficerLease {
         VaultId = $VaultId
         OperatorObjectId = $OperatorObjectId
         TemporaryRoleAssignmentId = $assignmentId
+        AcquisitionSkipped = $false
     }
 }
 

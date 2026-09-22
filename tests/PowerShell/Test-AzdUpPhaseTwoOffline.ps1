@@ -185,7 +185,7 @@ param(
     $stateKeyVaultTemplate = Get-Content -LiteralPath (Join-Path $root 'infra\state\keyvault.bicep') -Raw
     $viewerTemplate = Get-Content -LiteralPath (Join-Path $root 'infra\viewer.bicep') -Raw
     if ($stateKeyVaultTemplate -notmatch
-        'agentCertificateRoleAssignmentEnabled\s*=\s*certificateProvisioningActive\s*&&' -or
+        'agentCertificateRoleAssignmentEnabled\s*=\s*\(certificateProvisioningActive \|\| certificateRbacReady\)' -or
         $viewerTemplate -notmatch
         "certificateEnabled\s*=\s*blueprintCredentialMode == 'key_vault_certificate'\s*&&\s*certificateConfigurationReady") {
         throw 'Certificate-scoped state/viewer RBAC is not gated by orchestration readiness.'

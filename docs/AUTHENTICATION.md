@@ -102,6 +102,11 @@ viewer with object-scoped RBAC. The internal
 `W365_CERTIFICATE_PROVISIONING_ACTIVE` gate is process-local and must never be
 persisted or supplied by an operator.
 
+For established deployments, `W365_ENABLED=true` is the persisted readiness
+proof used by state/viewer Bicep during preview, live activation, and routine
+reprovisioning. Fresh deployments cannot use that proof because setup has not
+completed, so they still require the transient post-registration gate.
+
 ## Three-stage agent-user tokens
 
 `AgentUserTokenProvider` uses the explicitly selected T1 path:

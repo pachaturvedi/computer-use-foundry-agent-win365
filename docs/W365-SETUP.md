@@ -158,6 +158,11 @@ pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
 For `key_vault_certificate` mode (self-signed, non-exportable; the private key
 never leaves Key Vault): first create the certificate, then register only its
 public bytes with the Foundry Agent ID Blueprint application via Graph.
+This staged sequence requires the operator to already hold Key Vault
+Certificates Officer through the final `Invoke-W365SetupFlow.ps1` readiness
+check; the standalone initializer does not leave a self-granted temporary role
+behind. Prefer fresh `azd up`, which owns one bounded temporary lease across
+initialization, registration, and readiness and then revokes it automatically.
 
 ```powershell
 $environment = "<azd-environment-name>"
@@ -204,6 +209,8 @@ thumbprint — re-running it after the certificate already exists on the
 blueprint is a no-op. Re-running `Initialize-W365BlueprintCertificate.ps1`
 without `-Rotate` reuses the existing certificate; pass `-Rotate` to issue a
 new one (and re-run the registration step so Entra trusts the new public key).
+Reuse fails closed unless the existing policy is non-exportable RSA 2048 with
+digital-signature usage; deliberately rotate an incompatible certificate.
 `Invoke-W365SetupFlow.ps1` re-verifies, via a read-only Graph call, that the
 certificate is actually registered on the blueprint before mutating W365
 resources — Key Vault presence alone does not satisfy this check.
@@ -216,6 +223,17 @@ confirmation and delegated Graph sign-in. `-BillingConfirmed` acknowledges
 your completed billing prerequisites; it does not activate billing.
 `-UseDeviceCode` is recommended in VS Code and other embedded terminals where
 WAM cannot obtain a parent window handle.
+
+During fresh `azd up`, one temporary Key Vault Certificates Officer lease is
+held across certificate create/reuse, Graph registration, and exact readiness
+verification. Recognized RBAC-propagation authorization failures are retried
+with bounded backoff; terminal errors stop immediately. The lease is revoked
+in an outer `finally`. A primary operation failure remains the primary error;
+if revocation also fails, both errors are retained. A cleanup-only failure
+marks deployment incomplete. Rerun `azd up` after correcting the reported
+cause: certificate creation and Graph registration are idempotent. If the
+diagnostic reports residual temporary RBAC, remove only the reported role
+assignment before retrying; do not delete the certificate or unrelated roles.
 
 For repeatable no-`PoolId` creates, store reusable pool settings in
 `config\deployment.local.json`. `Setup-W365.ps1` now reads the `w365` section
@@ -757,8 +775,10 @@ an environment that used `key_vault_certificate` mode, an administrator with
    remove `keyCredentials` belonging to any other integration, and do not
    remove an entry you cannot uniquely match to a retired certificate.
 2. Verify no temporary "Key Vault Certificates Officer" assignment remains.
-   The initializer revokes an assignment it creates even on cancellation or
-   failure. If an older release left one behind, remove it with `az role
+   Fresh orchestration holds its assignment through exact readiness
+   verification and revokes it in an outer `finally`; standalone initialization
+   also revokes an assignment it owns. If cleanup reported a failure or an
+   older release left one behind, remove it with `az role
    assignment delete --assignee-object-id <operator-object-id> --role "Key
    Vault Certificates Officer" --scope <vault-resource-id>`. Skip this step if the
    operator already held the role before setup for another reason.

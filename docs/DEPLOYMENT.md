@@ -698,7 +698,11 @@ The earlier validated development deployment created:
 The application creates `slot.json` atomically on first enabled use; the
 infrastructure deployment intentionally does not seed the Blob.
 
-Configure the hosted operator and credential before W365 mutation:
+### Legacy `client_secret` opt-in
+
+Only use this section to deliberately migrate or validate legacy
+`client_secret` mode. It is not part of the default certificate flow.
+Configure the hosted operator and legacy credential before W365 mutation:
 
 ```powershell
 $environment = "<azd-environment-name>"
@@ -805,43 +809,33 @@ viewer, separately from `W365_AGENT_ID` (app/client ID). Set viewer `agentObject
 from the corresponding setup output, not the agent's app ID. The viewer has no
 `hostedAllowedUserId` Bicep parameter; its authorization uses the human OIDC claims.
 
-Finish [OIDC/SDK configuration](VIEWER.md#enable-the-hosted-viewer). The lean
-Windows activation sequence is:
+Finish [OIDC/SDK configuration](VIEWER.md#enable-the-hosted-viewer). The
+certificate-primary Windows activation sequence keeps
+`W365_BLUEPRINT_CREDENTIAL_MODE=key_vault_certificate` and creates only the
+viewer’s separate OIDC secret:
 
 ```powershell
-# Bootstrap must already have produced VIEWER_PUBLIC_URL. State provisioning
-# always produces W365_KEY_VAULT_NAME.
 $environment = "<azd-environment-name>"
-pwsh -NoProfile -File .\scripts\Configure-ViewerOidc.ps1 -Environment $environment
-pwsh -NoProfile -File .\scripts\Set-ViewerSecrets.ps1 `
-    -Environment $environment `
-    -BlueprintOnly
-azd env set W365_BLUEPRINT_CREDENTIAL_MODE client_secret --environment $environment
-azd env set VIEWER_LIVE_ENABLED true --environment $environment
-pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
-    -Environment $environment `
-    -Mode DeployAll `
-    -ConfirmResourceChanges
+pwsh -NoProfile -File .\scripts\Enable-ViewerLive.ps1 -Environment $environment
 ```
 
 `Configure-ViewerOidc.ps1` creates or reconciles the single-tenant web app,
 exact `https://<viewer-host>/signin-oidc` callback, service principal, operator
 binding, and `w365-viewer-client-secret`. `Set-ViewerSecrets.ps1
--BlueprintOnly` prompts securely for the proven blueprint credential and stores
+-BlueprintOnly` is legacy-only: it prompts securely for a blueprint credential and stores
 it as `w365-blueprint-client-secret`. Neither secret is stored in `.azure`,
 JSON, Bicep parameters, `azure.yaml`, or the image. In `client_secret` mode,
 the hosted agent retrieves the blueprint secret from Key Vault at runtime with
 its own managed identity.
 
-Only live activation references the two secrets. The Windows postup hook
-configures the two least-privilege, vault-scoped built-in RBAC assignments from
-one script: `Key Vault Secrets User` for the viewer UAMI when enabled and
-`Key Vault Secrets Officer` for the signed-in setup operator. It then creates
-or reuses the OIDC credential, prompts only when the blueprint secret is
-absent, stores both in the same vault, and reprovisions the viewer.
-`managed_identity_federation` does not require the blueprint secret, but fails
-unless the exact viewer UAMI federation is present in the W365 ownership
-manifest.
+Live activation always references the viewer OIDC secret. It references a
+blueprint secret only in explicit legacy `client_secret` mode. The Windows
+hook grants the viewer UAMI Key Vault Secrets User for its OIDC reference and
+uses Key Vault Secrets Officer for the signed-in setup operator while creating
+or reconciling that OIDC credential. Certificate mode keeps its separate
+certificate/key-scoped roles and never prompts for a blueprint secret.
+`managed_identity_federation` also omits the blueprint secret, but fails unless
+the exact viewer UAMI federation is present in the W365 ownership manifest.
 
 For a dedicated managed environment, routine `azd up` reruns are supported.
 The `postup` hook reuses the guarded deployment wrapper after W365 or viewer

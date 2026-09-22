@@ -77,6 +77,9 @@ if ($ownsCertificateOfficerLease) {
         -VaultId $vaultId `
         -OperatorObjectId ([guid]$operatorObjectId) `
         -ConfirmResourceChanges:$ConfirmResourceChanges
+    if ($CertificateOfficerLease.AcquisitionSkipped) {
+        return
+    }
 }
 elseif ([string]$CertificateOfficerLease.SubscriptionId -ne $subscriptionId -or
     [string]$CertificateOfficerLease.VaultName -ne $vaultName -or
@@ -204,13 +207,14 @@ $certificateResult = [pscustomobject]@{
 catch {
     $primaryError = $_
 }
-
-if ($ownsCertificateOfficerLease) {
-    Complete-W365CertificateOfficerLease `
-        -Lease $CertificateOfficerLease `
-        -PrimaryError $primaryError
+finally {
+    if ($ownsCertificateOfficerLease) {
+        Complete-W365CertificateOfficerLease `
+            -Lease $CertificateOfficerLease `
+            -PrimaryError $primaryError
+    }
 }
-elseif ($null -ne $primaryError) {
+if (!$ownsCertificateOfficerLease -and $null -ne $primaryError) {
     throw $primaryError
 }
 

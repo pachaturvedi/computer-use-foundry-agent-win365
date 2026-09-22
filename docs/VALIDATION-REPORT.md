@@ -30,6 +30,14 @@ No live sign-in, certificate creation, or Graph keyCredential registration
 against a real tenant has been performed. Live validation remains an explicit
 follow-up before this mode is used in production.
 
+The certificate-primary viewer path, temporary RBAC propagation behavior, and
+partial-failure cleanup are offline-validated only. In particular, no live
+evidence yet proves tenant-specific Key Vault RBAC propagation latency, ACA
+viewer certificate signing, or cleanup after a real interrupted Graph device
+code flow. A failed run must be treated as incomplete and checked for the
+reported temporary role assignment and registered public certificate before
+retrying; retries reuse compatible certificates and idempotent Graph entries.
+
 ## September 20, 2026 offline change validation (unrelated prior branch, kept for history)
 
 The branch described in this section (bundled hosted-agent dependency

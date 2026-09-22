@@ -203,5 +203,9 @@ finally {
     $env:AZURE_DEV_USER_AGENT = $previousUserAgent
 }
 
-$phase = if ($FinalizeCredentialAccess) { 'credential access and viewer prerequisites' } else { 'base state prerequisites' }
-Write-Host "Phase-two $phase are ready for '$Environment'."
+if ($FinalizeCredentialAccess) {
+    Write-Host "Phase-two credential access and viewer provisioning completed for '$Environment'; outer credential cleanup must complete before success."
+}
+else {
+    Write-Host "Phase-two base state prerequisites are ready for '$Environment'."
+}

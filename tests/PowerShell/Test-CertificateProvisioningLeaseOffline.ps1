@@ -87,6 +87,27 @@ try {
     }
     Exit-W365CertificateOfficerLease -Lease $lease
 
+    $global:deleteCalls = 0
+    $cancellation = [Threading.CancellationTokenSource]::new()
+    $cancellation.Cancel()
+    $canceled = $false
+    try {
+        Enter-W365CertificateOfficerLease `
+            -SubscriptionId '11111111-1111-1111-1111-111111111111' `
+            -VaultName sample-vault `
+            -VaultId '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/sample/providers/Microsoft.KeyVault/vaults/sample-vault' `
+            -OperatorObjectId '22222222-2222-2222-2222-222222222222' `
+            -ConfirmResourceChanges `
+            -CancellationToken $cancellation.Token | Out-Null
+    }
+    catch {
+        $canceled = $_.Exception -is [OperationCanceledException] -or
+            $_.Exception.InnerException -is [OperationCanceledException]
+    }
+    if (!$canceled -or $global:deleteCalls -ne 1) {
+        throw 'Cancellation did not stop propagation and clean up the temporary role.'
+    }
+
     foreach ($behavior in @('terminal', 'timeout')) {
         $global:probeCalls = 0
         $global:deleteCalls = 0
