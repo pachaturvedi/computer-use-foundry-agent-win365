@@ -42,9 +42,10 @@ Choose one Foundry path for phase 1:
 - create a dedicated Foundry account, project, and model deployment in a fresh
    azd environment
 
-`gpt-6-astra` is the suggested model; use its actual deployment name if
-available in your subscription/region. The template does not invent a model
-version or SKU.
+For a new managed project, the template defaults to `gpt-6-astra`, version
+`2026-09-03`, `GlobalStandard`, and capacity `200` (200K TPM). These defaults
+must be available in the selected subscription and region. Existing-project
+deployments use the actual deployment name already available to that project.
 
 When reusing an existing project, the user must provide **both** the project
 and a deployed model available to that project. An empty project is not
@@ -56,14 +57,16 @@ needs **Foundry Project Manager** at the project scope; generic subscription
 `Owner` alone does not grant Foundry data-plane access.
 
 For users without either resource, the checked-in project service declares a
-default GA `gpt-6-astra` deployment using GlobalStandard capacity 50. In a new,
+default GA `gpt-6-astra` deployment using GlobalStandard capacity 200. In a new,
 dedicated environment, azd can create the Foundry account, project, model
 deployment, and the minimum Foundry RBAC required for the deploying developer
 and project managed identity. Defaults are committed in
 `config\deployment.defaults.json`. Existing-project users can override the
 deployment name, model version, SKU, location, viewer image, or project
-endpoint through `config\deployment.local.json` or environment variables and
-must not run provisioning against an unreviewed shared project.
+endpoint. `config\deployment.local.json` is consumed by the repository
+initializer and deployment wrappers. Direct `azd up` uses azd environment
+values, so set direct-path overrides with `azd env set`. Never run provisioning
+against an unreviewed shared project.
 
 Install .NET 10, PowerShell 7.4+, Azure CLI and Azure Developer CLI. From the
 repository root, verify the exact versions required by `azure.yaml`:
@@ -89,18 +92,53 @@ same PowerShell window before continuing with direct `azd` commands.
 Choose exactly one project setup path.
 
 **Existing clone (recommended):** the checked-in `azure.yaml` is already the
-project manifest. Create only local azd environment state from the repository
-root:
+project manifest. A new azd environment uses its name as the resource prefix,
+generates the resource group, Foundry account, and project names, and applies
+the reviewed model defaults. Generic infrastructure prompts are not required.
+
+For example:
+
+```powershell
+azd env new demosept22-dev `
+    --subscription "<subscription-id>" `
+    --location eastus
+azd up --environment demosept22-dev
+```
+
+Before provisioning, the `preup` hook prints the generated names, model
+selection, model capacity, and disabled bootstrap features in a readable table.
+Use the staged initializer later in this section when you need preview and
+approval boundaries before each mutation.
+
+The default `200` capacity means 200K TPM and consumes regional model quota.
+Availability varies by model version, SKU, subscription, and region. To use a
+smaller reviewed capacity before provisioning:
+
+```powershell
+azd env set FOUNDRY_MODEL_SKU_CAPACITY "50" --environment demosept22-dev
+```
+
+If model validation or deployment fails, no agent version is published. Azure
+may retain resources created before the failure; inspect the deployment and use
+the [operations and rollback workflow](#operations-and-rollback) when the
+environment is no longer needed. For a sample-owned environment, review the
+ownership record and then run:
+
+```powershell
+azd down --environment demosept22-dev
+```
+
+Do not use `azd down` for an environment bound to a shared existing Foundry
+project until the ownership and cleanup boundaries later in this guide have
+been reviewed. Global Standard is consumption billed rather than fixed PTU
+capacity, but reserving a higher TPM quota permits higher throughput and
+potentially higher usage charges.
+
+To reuse an environment that was already initialized for this repository:
 
 ```powershell
 $env:Path = "$env:LOCALAPPDATA\Programs\Azure Dev CLI;$env:Path"
 azd env list
-azd env new computer-use-foundry-agent-win365-dev
-```
-
-If the environment is already listed, replace `azd env new` with:
-
-```powershell
 azd env select computer-use-foundry-agent-win365-dev
 ```
 
@@ -121,9 +159,37 @@ The no-clone command creates a new project directory. Change into that generated
 directory before running subsequent commands. Do not run it from the repository
 clone or target the existing clone directory.
 
-When the user has no existing Foundry resources, choose **create a new project**
-and use a dedicated environment. The minimum successful path is staged so each
-boundary is validated before the first live agent publish:
+When the user needs a fresh environment, choose **create a new project** and
+run the initializer below. It creates the azd environment, generates globally
+scoped deterministic resource names, applies the reviewed model defaults from
+`config\deployment.defaults.json`, keeps W365/state/viewer disabled, and
+previews the deployment. The minimum successful path is staged so each boundary
+is validated before the first live agent publish:
+
+| Setting | Source for a fresh environment | Default or generated value |
+| --- | --- | --- |
+| Subscription and tenant | Operator's authenticated Azure context, passed to the initializer | No infrastructure prompt |
+| Prefix and environment | Operator naming choice | `<prefix>-dev` |
+| Resource group | Generated | `<prefix>-dev-rg` |
+| Foundry account | Generated from the first 12 compact prefix characters plus a stable subscription suffix | `<prefix>devai<subscription-suffix>` |
+| Foundry project | Generated | `<prefix>-dev-project` |
+| Model deployment and model | `config\deployment.defaults.json` | `gpt-6-astra` |
+| Model version | `config\deployment.defaults.json` | `2026-09-03` |
+| Model SKU and capacity | `config\deployment.defaults.json` | `GlobalStandard`, 200K TPM |
+| State, viewer, and W365 | Safe bootstrap defaults | Disabled |
+
+Override a reviewed default with `config\deployment.local.json` when using the
+initializer, or set the matching azd environment value before direct `azd up`.
+The `preup` hook shows the effective defaults before provisioning.
+
+The generated Foundry account name is deterministic and subscription-qualified,
+not guaranteed globally unique. If Azure reports a name collision, provide an
+explicit name before retrying:
+
+```powershell
+azd env set AZURE_AI_ACCOUNT_NAME "<globally-available-account-name>" `
+    --environment demosept22-dev
+```
 
 ```powershell
 pwsh -NoProfile -File .\scripts\Initialize-Greenfield.ps1 `
@@ -699,15 +765,20 @@ absent, stores both in the same vault, and reprovisions the viewer.
 unless the exact viewer UAMI federation is present in the W365 ownership
 manifest.
 
-After phase 2 is complete, `azd up` can be used for routine reruns of the fully
-configured environment. It prints a pre-provision resource plan and a final
-resource table. Do not use it to bootstrap a fresh W365-enabled environment.
-Set `SAMPLE_LOG_LEVEL` to `summary` (default), `verbose`, or `debug`:
+After phase 2 enables W365 or credentials, publish the agent only through
+`Invoke-AzdDeployment.ps1 -Mode DeployAgent`. The wrapper verifies Key Vault
+and RBAC prerequisites, runs `azd ai agent doctor`, and can perform a smoke
+invocation. Direct `azd up` is supported only for the dedicated, disabled
+phase-1 bootstrap documented earlier. Set `SAMPLE_LOG_LEVEL` to `summary`
+(default), `verbose`, or `debug`:
 
 ```powershell
 $environment = "<azd-environment-name>"
 azd env set SAMPLE_LOG_LEVEL verbose --environment $environment
-azd up --environment $environment
+pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
+    -Environment $environment `
+    -Mode DeployAgent `
+    -ConfirmResourceChanges
 ```
 
 All Windows scripts also support PowerShell's common `-Verbose` and `-Debug`
@@ -716,10 +787,10 @@ sanitized decisions, resource IDs, and parameter context; secret, token,
 password, credential, and certificate values are always redacted.
 
 ```powershell
-azd up --environment $environment
-# For a focused rerun with detailed diagnostics:
-$env:AZURE_ENV_NAME = $environment
-pwsh -NoProfile -File .\scripts\Complete-AzdUp.ps1 `
+pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
+    -Environment $environment `
+    -Mode DeployAgent `
+    -ConfirmResourceChanges `
     -Verbose `
     -Debug
 ```

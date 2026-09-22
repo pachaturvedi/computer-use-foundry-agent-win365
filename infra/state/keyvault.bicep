@@ -2,7 +2,7 @@ targetScope = 'resourceGroup'
 
 param location string = resourceGroup().location
 @minLength(2)
-@maxLength(24)
+@maxLength(90)
 param resourcePrefix string
 param tags object = {}
 @minLength(36)
@@ -21,7 +21,8 @@ var agentRoleAssignmentEnabled = agentPrincipalId != '00000000-0000-0000-0000-00
 var agentCertificateRoleAssignmentEnabled = agentPrincipalId != '00000000-0000-0000-0000-000000000000' && blueprintCredentialMode == 'key_vault_certificate'
 
 var resourceSuffix = take(uniqueString(subscription().id, resourceGroup().id, resourcePrefix), 6)
-var keyVaultName = take('${resourcePrefix}-kv-${resourceSuffix}', 24)
+var compactResourcePrefix = toLower(replace(resourcePrefix, '-', ''))
+var keyVaultName = 'k${take(compactResourcePrefix, 13)}-kv-${resourceSuffix}'
 // Must match the certificate name created by scripts/Initialize-W365BlueprintCertificate.ps1 so
 // the certificate/key-scoped role assignments below apply to that object only, not the whole
 // shared vault (which also holds unrelated viewer/blueprint secrets).

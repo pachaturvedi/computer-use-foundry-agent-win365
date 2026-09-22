@@ -4,10 +4,10 @@
   "parameters": {
     "environmentName": { "value": "${AZURE_ENV_NAME}" },
     "location": { "value": "${AZURE_LOCATION}" },
-    "deployState": { "value": "${DEPLOY_STATE}" },
-    "resourcePrefix": { "value": "${RESOURCE_PREFIX}" },
-    "resourceGroupName": { "value": "${AZURE_RESOURCE_GROUP}" },
-    "agentPrincipalId": { "value": "${STATE_AGENT_PRINCIPAL_ID}" },
-    "blueprintCredentialMode": { "value": "${W365_BLUEPRINT_CREDENTIAL_MODE}" }
+    "deployState": { "value": "${DEPLOY_STATE=false}" },
+    "resourcePrefix": { "value": "${RESOURCE_PREFIX=}" },
+    "resourceGroupName": { "value": "${AZURE_RESOURCE_GROUP=}" },
+    "agentPrincipalId": { "value": "${STATE_AGENT_PRINCIPAL_ID=00000000-0000-0000-0000-000000000000}" },
+    "blueprintCredentialMode": { "value": "${W365_BLUEPRINT_CREDENTIAL_MODE=client_secret}" }
   }
 }

@@ -60,8 +60,12 @@ unauthenticated and loopback-only; never publish or tunnel them.
 
 ## Bring up a fresh environment
 
-Live deployment is staged because Foundry must create the agent identity before
-state and W365 can be bound to it. Each mutation requires explicit approval.
+Choose one phase-1 bootstrap path:
+
+- use direct `azd up` for a new, dedicated Foundry environment with W365,
+  shared state, and the viewer disabled;
+- use the staged scripts when you need a preview and explicit approval before
+  each mutation, are reusing a Foundry project, or are continuing to W365.
 
 Authenticate both CLIs to the same tenant and subscription:
 
@@ -73,7 +77,27 @@ azd ext install microsoft.foundry
 pwsh -NoProfile -File .\tests\PowerShell\Test-AzdPrerequisites.ps1 -RequireLogin
 ```
 
-Initialize a dedicated environment:
+For the shortest fresh-environment path:
+
+```powershell
+azd env new demosept22-dev `
+    --subscription "<subscription-id>" `
+    --location eastus
+azd up --environment demosept22-dev
+```
+
+The environment name drives the generated resource names. The reviewed model
+defaults are `gpt-6-astra`, version `2026-09-03`, `GlobalStandard`, and capacity
+`200` (200K TPM). The `preup` hook displays the effective values before Azure
+changes begin. Confirm regional model availability, quota, and expected cost
+first. A failed deployment can leave partially created resources.
+
+See the [phase-1 deployment guidance](docs/DEPLOYMENT.md#phase-1-deploy-bootstrap)
+for defaults, quota, cost, existing-project rules, and overrides, and
+[operations and rollback](docs/DEPLOYMENT.md#operations-and-rollback) for
+partial deployments and teardown.
+
+For preview and approval boundaries, initialize a dedicated environment:
 
 ```powershell
 pwsh -NoProfile -File .\scripts\Initialize-Greenfield.ps1 `
@@ -110,8 +134,9 @@ short-lived blueprint credential stored through the secure phase-2 prompt.
 Never place it in source, JSON, `.azure`, logs, or command history. See
 [authentication](docs/AUTHENTICATION.md) for supported modes and cleanup.
 
-Do not run `azd init`, `azd ai agent init`, or an unreviewed one-shot `azd up`
-inside this clone. Use the [deployment guide](docs/DEPLOYMENT.md) for phase 2,
+Do not run `azd init` or `azd ai agent init` inside this clone. Direct `azd up`
+is supported only for the reviewed, dedicated phase-1 bootstrap above. Use the
+[deployment guide](docs/DEPLOYMENT.md) for staged changes, phase 2,
 existing-project configuration, rollback, teardown, and recovery.
 
 ## Verify live behavior

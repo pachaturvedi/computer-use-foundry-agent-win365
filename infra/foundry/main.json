@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.47.16.16243",
-      "templateHash": "1067995821549537311"
+      "templateHash": "5455177929083008434"
     }
   },
   "parameters": {
@@ -17,46 +17,51 @@
     },
     "foundryResourceGroupName": {
       "type": "string",
-      "minLength": 3,
+      "defaultValue": "",
       "maxLength": 90
     },
     "accountName": {
       "type": "string",
-      "minLength": 2,
+      "defaultValue": "",
       "maxLength": 24
     },
     "projectName": {
       "type": "string",
-      "minLength": 2,
+      "defaultValue": "",
       "maxLength": 64
     },
     "resourcePrefix": {
       "type": "string",
-      "minLength": 2,
+      "defaultValue": "",
       "maxLength": 64
     },
     "modelDeploymentName": {
       "type": "string",
+      "defaultValue": "gpt-6-astra",
       "minLength": 2,
       "maxLength": 64
     },
     "modelName": {
       "type": "string",
+      "defaultValue": "gpt-6-astra",
       "minLength": 2,
       "maxLength": 64
     },
     "modelVersion": {
       "type": "string",
+      "defaultValue": "2026-09-03",
       "minLength": 1,
       "maxLength": 128
     },
     "modelSkuName": {
       "type": "string",
+      "defaultValue": "GlobalStandard",
       "minLength": 1,
       "maxLength": 64
     },
     "modelSkuCapacity": {
       "type": "int",
+      "defaultValue": 200,
       "minValue": 1
     },
     "foundryProjectOwnership": {
@@ -85,7 +90,7 @@
     },
     "projectDisplayName": {
       "type": "string",
-      "defaultValue": "[parameters('projectName')]"
+      "defaultValue": ""
     },
     "projectDescription": {
       "type": "string",
@@ -117,14 +122,22 @@
     }
   },
   "variables": {
+    "useExistingProject": "[equals(parameters('foundryProjectOwnership'), 'existing')]",
+    "resolvedResourcePrefix": "[if(not(empty(parameters('resourcePrefix'))), parameters('resourcePrefix'), parameters('environmentName'))]",
+    "compactResourcePrefix": "[toLower(replace(variables('resolvedResourcePrefix'), '-', ''))]",
+    "accountPrefix": "[take(variables('compactResourcePrefix'), 12)]",
+    "subscriptionSuffix": "[take(replace(subscription().subscriptionId, '-', ''), 10)]",
+    "resolvedEnvironmentResourceGroupName": "[if(not(empty(parameters('foundryResourceGroupName'))), parameters('foundryResourceGroupName'), format('{0}-rg', variables('resolvedResourcePrefix')))]",
+    "resolvedAccountName": "[if(not(empty(parameters('accountName'))), parameters('accountName'), if(variables('useExistingProject'), fail('Existing-project mode requires AZURE_AI_ACCOUNT_NAME.'), format('{0}ai{1}', variables('accountPrefix'), variables('subscriptionSuffix'))))]",
+    "resolvedProjectName": "[if(not(empty(parameters('projectName'))), parameters('projectName'), if(variables('useExistingProject'), fail('Existing-project mode requires AZURE_AI_PROJECT_NAME.'), take(format('{0}-project', variables('resolvedResourcePrefix')), 64)))]",
+    "resolvedProjectDisplayName": "[if(not(empty(parameters('projectDisplayName'))), parameters('projectDisplayName'), variables('resolvedProjectName'))]",
     "tags": {
       "azd-env-name": "[parameters('environmentName')]",
       "component": "foundry",
       "workload": "win365-foundry-sample",
       "managed-by": "azd",
-      "resource-prefix": "[parameters('resourcePrefix')]"
+      "resource-prefix": "[variables('resolvedResourcePrefix')]"
     },
-    "useExistingProject": "[equals(parameters('foundryProjectOwnership'), 'existing')]",
     "resolvedProjectEndpoint": "[if(not(variables('useExistingProject')), '', if(not(empty(parameters('existingProjectEndpoint'))), parameters('existingProjectEndpoint'), fail('Existing-project mode requires FOUNDRY_PROJECT_ENDPOINT.')))]",
     "resolvedProjectId": "[if(not(variables('useExistingProject')), '', if(not(empty(parameters('existingProjectId'))), parameters('existingProjectId'), fail('Existing-project mode requires AZURE_AI_PROJECT_ID.')))]",
     "resolvedFoundryResourceGroupId": "[if(not(variables('useExistingProject')), '', if(not(empty(parameters('existingFoundryResourceGroupId'))), parameters('existingFoundryResourceGroupId'), fail('Existing-project mode requires AZD_FOUNDRY_RESOURCE_GROUP_ID.')))]",
@@ -132,19 +145,18 @@
   },
   "resources": [
     {
-      "condition": "[not(variables('useExistingProject'))]",
       "type": "Microsoft.Resources/resourceGroups",
       "apiVersion": "2023-07-01",
-      "name": "[parameters('foundryResourceGroupName')]",
+      "name": "[variables('resolvedEnvironmentResourceGroupName')]",
       "location": "[parameters('location')]",
-      "tags": "[variables('tags')]"
+      "tags": "[union(variables('tags'), createObject('component', 'environment'))]"
     },
     {
       "condition": "[not(variables('useExistingProject'))]",
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
       "name": "foundry-resources",
-      "resourceGroup": "[parameters('foundryResourceGroupName')]",
+      "resourceGroup": "[variables('resolvedEnvironmentResourceGroupName')]",
       "properties": {
         "expressionEvaluationOptions": {
           "scope": "inner"
@@ -155,13 +167,13 @@
             "value": "[parameters('location')]"
           },
           "accountName": {
-            "value": "[parameters('accountName')]"
+            "value": "[variables('resolvedAccountName')]"
           },
           "projectName": {
-            "value": "[parameters('projectName')]"
+            "value": "[variables('resolvedProjectName')]"
           },
           "projectDisplayName": {
-            "value": "[parameters('projectDisplayName')]"
+            "value": "[variables('resolvedProjectDisplayName')]"
           },
           "projectDescription": {
             "value": "[parameters('projectDescription')]"
@@ -201,7 +213,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.47.16.16243",
-              "templateHash": "18059828614145424296"
+              "templateHash": "17622265346399634067"
             }
           },
           "parameters": {
@@ -257,6 +269,9 @@
               "defaultValue": {}
             }
           },
+          "variables": {
+            "deployerPrincipalId": "[deployer().objectId]"
+          },
           "resources": [
             {
               "type": "Microsoft.CognitiveServices/accounts",
@@ -301,6 +316,64 @@
               ]
             },
             {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]",
+              "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName')), variables('deployerPrincipalId'), 'foundry-project-manager')]",
+              "properties": {
+                "principalId": "[variables('deployerPrincipalId')]",
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'eadc314b-1a2d-4efa-be10-5d325db5065e')]"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]",
+              "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName')), variables('deployerPrincipalId'), 'foundry-user')]",
+              "properties": {
+                "principalId": "[variables('deployerPrincipalId')]",
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '53ca6127-db72-4b80-b1b0-d745d6d5456d')]"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.CognitiveServices/accounts/projects",
+              "apiVersion": "2026-05-15-preview",
+              "name": "[format('{0}/{1}', parameters('accountName'), parameters('projectName'))]",
+              "location": "[parameters('location')]",
+              "identity": {
+                "type": "SystemAssigned"
+              },
+              "properties": {
+                "description": "[parameters('projectDescription')]",
+                "displayName": "[parameters('projectDisplayName')]"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]",
+                "[resourceId('Microsoft.CognitiveServices/accounts/defenderForAISettings', parameters('accountName'), 'Default')]"
+              ]
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]",
+              "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName')), resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('accountName'), parameters('projectName')), 'project-foundry-user')]",
+              "properties": {
+                "principalId": "[reference(resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('accountName'), parameters('projectName')), '2026-05-15-preview', 'full').identity.principalId]",
+                "principalType": "ServicePrincipal",
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '53ca6127-db72-4b80-b1b0-d745d6d5456d')]"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]",
+                "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('accountName'), parameters('projectName'))]"
+              ]
+            },
+            {
               "type": "Microsoft.CognitiveServices/accounts/deployments",
               "apiVersion": "2026-05-15-preview",
               "name": "[format('{0}/{1}', parameters('accountName'), parameters('modelDeploymentName'))]",
@@ -320,23 +393,9 @@
                 "deploymentState": "Running"
               },
               "dependsOn": [
-                "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]"
-              ]
-            },
-            {
-              "type": "Microsoft.CognitiveServices/accounts/projects",
-              "apiVersion": "2026-05-15-preview",
-              "name": "[format('{0}/{1}', parameters('accountName'), parameters('projectName'))]",
-              "location": "[parameters('location')]",
-              "identity": {
-                "type": "SystemAssigned"
-              },
-              "properties": {
-                "description": "[parameters('projectDescription')]",
-                "displayName": "[parameters('projectDisplayName')]"
-              },
-              "dependsOn": [
-                "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]"
+                "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]",
+                "[extensionResourceId(resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName')), variables('deployerPrincipalId'), 'foundry-project-manager'))]",
+                "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('accountName'), parameters('projectName'))]"
               ]
             }
           ],
@@ -365,22 +424,22 @@
         }
       },
       "dependsOn": [
-        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', parameters('foundryResourceGroupName'))]"
+        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('resolvedEnvironmentResourceGroupName'))]"
       ]
     }
   ],
   "outputs": {
     "AZD_FOUNDRY_RESOURCE_GROUP_ID": {
       "type": "string",
-      "value": "[if(variables('useExistingProject'), variables('resolvedFoundryResourceGroupId'), subscriptionResourceId('Microsoft.Resources/resourceGroups', parameters('foundryResourceGroupName')))]"
+      "value": "[if(variables('useExistingProject'), variables('resolvedFoundryResourceGroupId'), subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('resolvedEnvironmentResourceGroupName')))]"
     },
     "AZURE_FOUNDRY_RESOURCE_GROUP": {
       "type": "string",
-      "value": "[if(variables('useExistingProject'), variables('resolvedFoundryResourceGroupName'), parameters('foundryResourceGroupName'))]"
+      "value": "[if(variables('useExistingProject'), variables('resolvedFoundryResourceGroupName'), variables('resolvedEnvironmentResourceGroupName'))]"
     },
     "AZURE_RESOURCE_GROUP": {
       "type": "string",
-      "value": "[if(variables('useExistingProject'), variables('resolvedFoundryResourceGroupName'), parameters('foundryResourceGroupName'))]"
+      "value": "[variables('resolvedEnvironmentResourceGroupName')]"
     },
     "FOUNDRY_PROJECT_OWNERSHIP": {
       "type": "string",
@@ -388,23 +447,23 @@
     },
     "AZURE_AI_ACCOUNT_NAME": {
       "type": "string",
-      "value": "[if(variables('useExistingProject'), parameters('accountName'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('foundryResourceGroupName')), 'Microsoft.Resources/deployments', 'foundry-resources'), '2025-04-01').outputs.accountName.value)]"
+      "value": "[if(variables('useExistingProject'), variables('resolvedAccountName'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resolvedEnvironmentResourceGroupName')), 'Microsoft.Resources/deployments', 'foundry-resources'), '2025-04-01').outputs.accountName.value)]"
     },
     "AZURE_AI_PROJECT_NAME": {
       "type": "string",
-      "value": "[if(variables('useExistingProject'), parameters('projectName'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('foundryResourceGroupName')), 'Microsoft.Resources/deployments', 'foundry-resources'), '2025-04-01').outputs.projectName.value)]"
+      "value": "[if(variables('useExistingProject'), variables('resolvedProjectName'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resolvedEnvironmentResourceGroupName')), 'Microsoft.Resources/deployments', 'foundry-resources'), '2025-04-01').outputs.projectName.value)]"
     },
     "AZURE_AI_PROJECT_ID": {
       "type": "string",
-      "value": "[if(variables('useExistingProject'), variables('resolvedProjectId'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('foundryResourceGroupName')), 'Microsoft.Resources/deployments', 'foundry-resources'), '2025-04-01').outputs.projectId.value)]"
+      "value": "[if(variables('useExistingProject'), variables('resolvedProjectId'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resolvedEnvironmentResourceGroupName')), 'Microsoft.Resources/deployments', 'foundry-resources'), '2025-04-01').outputs.projectId.value)]"
     },
     "AZURE_OPENAI_ENDPOINT": {
       "type": "string",
-      "value": "[if(variables('useExistingProject'), format('https://{0}.openai.azure.com/', parameters('accountName')), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('foundryResourceGroupName')), 'Microsoft.Resources/deployments', 'foundry-resources'), '2025-04-01').outputs.openAiEndpoint.value)]"
+      "value": "[if(variables('useExistingProject'), format('https://{0}.openai.azure.com/', variables('resolvedAccountName')), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resolvedEnvironmentResourceGroupName')), 'Microsoft.Resources/deployments', 'foundry-resources'), '2025-04-01').outputs.openAiEndpoint.value)]"
     },
     "FOUNDRY_PROJECT_ENDPOINT": {
       "type": "string",
-      "value": "[if(variables('useExistingProject'), variables('resolvedProjectEndpoint'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('foundryResourceGroupName')), 'Microsoft.Resources/deployments', 'foundry-resources'), '2025-04-01').outputs.projectEndpoint.value)]"
+      "value": "[if(variables('useExistingProject'), variables('resolvedProjectEndpoint'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resolvedEnvironmentResourceGroupName')), 'Microsoft.Resources/deployments', 'foundry-resources'), '2025-04-01').outputs.projectEndpoint.value)]"
     },
     "AI_PROJECT_DEPLOYMENTS": {
       "type": "string",
