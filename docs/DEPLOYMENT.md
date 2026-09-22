@@ -155,14 +155,21 @@ environment is no longer needed. For a sample-owned environment, review the
 ownership record and then run:
 
 ```powershell
-azd down --environment demosept22-dev
+pwsh -NoProfile -File .\scripts\Invoke-AzdDown.ps1 `
+    -EnvironmentName demosept22-dev `
+    -Purge
 ```
 
-Do not use `azd down` for an environment bound to a shared existing Foundry
-project until the ownership and cleanup boundaries later in this guide have
-been reviewed. Global Standard is consumption billed rather than fixed PTU
-capacity, but reserving a higher TPM quota permits higher throughput and
-potentially higher usage charges.
+The wrapper confirms once, runs ownership-driven W365/Entra cleanup once, and
+deletes the `viewer`, `state`, and `foundry` layers in reverse dependency order.
+If azd reports that one layer's deployment is already absent, the wrapper
+continues to the remaining layers and then verifies that no resource group
+tagged for the environment remains. Other errors and residual managed resource
+groups still fail teardown. Do not use this command for an environment bound to
+a shared existing Foundry project until the ownership and cleanup boundaries
+later in this guide have been reviewed. Global Standard is consumption billed
+rather than fixed PTU capacity, but reserving a higher TPM quota permits higher
+throughput and potentially higher usage charges.
 
 The viewer is deployed by default. Set these onboarding-supplied values before
 `azd up` to activate live view and take control during the same run:
@@ -936,16 +943,31 @@ do not automatically delete or reparent existing resources. Remove sample-only
 resources/RBAC following [cleanup](W365-SETUP.md#cleanup). Azure resource-group
 deletion does not cancel W365 billing.
 
-`azure.yaml` now runs `scripts/Remove-W365Resources.ps1` as an interactive
-`predown` hook. Teardown order is intentionally reversed from setup:
+Use the repository teardown wrapper for sample-owned environments:
+
+```powershell
+pwsh -NoProfile -File .\scripts\Invoke-AzdDown.ps1 `
+    -EnvironmentName "<azd-environment-name>" `
+    -Purge
+```
+
+The wrapper runs `scripts/Remove-W365Resources.ps1` once and then invokes azd
+for `viewer`, `state`, and `foundry` separately. A missing ARM deployment for
+one layer is treated as already deleted so later layers can still be removed.
+All other azd failures remain fatal, and a final Azure CLI check blocks success
+if a resource group tagged `azd-env-name=<environment>` remains. Direct
+`azd down` still uses `scripts/Remove-W365Resources.ps1` as an interactive
+`predown` hook through `azure.yaml`.
+
+Teardown order is intentionally reversed from setup:
 assignment first, then agent user, then sample-created federated credentials,
 then created permission grants or restored reused grant scopes, then
 sample-created inheritance entries, then blueprint `requiredResourceAccess`,
 then a sample-created W365 pool, followed by any viewer OIDC credential created
 on a reused app, a sample-created viewer service principal, a sample-created
 viewer application, and finally the sample-created Key Vault RBAC assignments
-recorded during viewer live activation. Only after that succeeds does
-`azd down` continue with Azure resource deletion.
+recorded during viewer live activation. Only after that succeeds does Azure
+resource deletion continue.
 
 The cleanup hook fails closed when it cannot prove ownership. If W365 state is
 configured but no ownership manifest exists, `azd down` is blocked. The same

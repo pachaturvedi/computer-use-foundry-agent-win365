@@ -643,10 +643,23 @@ dispatch inputs; it does not require a GitHub Environment.
 
 ## Cleanup
 
-End active sessions first. `azd down` now invokes
-`scripts/Remove-W365Resources.ps1` through the manifest `predown` hook in
-`azure.yaml`, and that script removes W365/Entra artifacts before Azure
-resources. The recorded teardown order is: pool assignment, agent user,
+End active sessions first, then use the repository teardown wrapper:
+
+```powershell
+pwsh -NoProfile -File .\scripts\Invoke-AzdDown.ps1 `
+    -EnvironmentName "<azd-environment-name>" `
+    -Purge
+```
+
+The wrapper invokes `scripts/Remove-W365Resources.ps1` once before Azure
+resources. It then deletes the `viewer`, `state`, and `foundry` layers
+separately. If a layer deployment was already deleted, teardown continues to
+the remaining layers; unrelated azd errors remain fatal. A final Azure CLI
+check fails if a resource group tagged for the environment still exists.
+Direct `azd down` continues to invoke the same cleanup script through the
+manifest `predown` hook in `azure.yaml`.
+
+The recorded teardown order is: pool assignment, agent user,
 sample-created federated credentials, created permission grants or restored
 reused grant scopes, sample-created inheritance entries, blueprint
 `requiredResourceAccess`, a sample-created W365 pool, then any viewer OIDC
