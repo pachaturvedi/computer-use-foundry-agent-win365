@@ -71,7 +71,7 @@ $phaseTwoValues = [ordered]@{
     ENABLE_W365 = 'true'
     DEPLOY_STATE = 'true'
     STATE_AGENT_PRINCIPAL_ID = $agentPrincipalId.ToString()
-    DEPLOY_VIEWER = $DeployViewer.IsPresent.ToString().ToLowerInvariant()
+    DEPLOY_VIEWER = 'false'
     VIEWER_LIVE_ENABLED = 'false'
     W365_BLUEPRINT_CREDENTIAL_MODE = $credentialMode
 }
@@ -116,6 +116,9 @@ try {
     }
 
     if ($DeployViewer) {
+        Set-W365AzdValues -Azd $azd -Values ([ordered]@{
+            DEPLOY_VIEWER = 'true'
+        })
         Write-W365ProvisioningStep 'Provisioning the ACA viewer bootstrap after shared state is ready.'
         try {
             Invoke-W365Azd -Azd $azd -Arguments @(

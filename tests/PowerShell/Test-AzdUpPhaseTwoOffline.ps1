@@ -18,6 +18,7 @@ $profileCallsPath = Join-Path $tempRoot 'profile-calls.json'
 $previousPath = $env:Path
 $previousCallsPath = $env:TEST_AZD_CALLS_PATH
 $previousQuotaBehavior = $env:TEST_AZD_VIEWER_QUOTA_ONCE
+$previousStateMode = $env:TEST_AZD_STATE_MODE
 
 try {
     New-Item -ItemType Directory -Path $binPath -Force | Out-Null
@@ -43,6 +44,16 @@ if ($env:TEST_AZD_VIEWER_QUOTA_ONCE -eq 'true' -and
     }
 }
 if ($CommandArgs[0] -eq 'env' -and $CommandArgs[1] -eq 'get-value') {
+    $storageName = if ($env:TEST_AZD_STATE_MODE -eq 'missing') { '' } else { 'samplestatestorage' }
+    $sessionBlobUri = if ($env:TEST_AZD_STATE_MODE -eq 'inconsistent') {
+        'https://differentstorage.blob.core.windows.net/desktop-state/slot.json'
+    }
+    elseif ($env:TEST_AZD_STATE_MODE -eq 'missing') {
+        ''
+    }
+    else {
+        'https://samplestatestorage.blob.core.windows.net/desktop-state/slot.json'
+    }
     $values = @{
         FOUNDRY_PROJECT_OWNERSHIP = 'managed'
         FOUNDRY_PROJECT_ENDPOINT = 'https://sample.services.ai.azure.com/api/projects/sample-project'
@@ -50,9 +61,9 @@ if ($CommandArgs[0] -eq 'env' -and $CommandArgs[1] -eq 'get-value') {
         AGENT_WIN365_DESKTOP_AGENT_VERSION = '1'
         AZURE_TENANT_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
         DEPLOY_STATE = 'true'
-        STATE_STORAGE_ACCOUNT_NAME = 'samplestatestorage'
+        STATE_STORAGE_ACCOUNT_NAME = $storageName
         STATE_CONTAINER_NAME = 'desktop-state'
-        SESSION_BLOB_URI = 'https://samplestatestorage.blob.core.windows.net/desktop-state/slot.json'
+        SESSION_BLOB_URI = $sessionBlobUri
     }
     Write-Output $values[$CommandArgs[2]]
 }
@@ -118,10 +129,11 @@ param(
         'env set ENABLE_W365 true',
         'env set DEPLOY_STATE true',
         'env set STATE_AGENT_PRINCIPAL_ID cccccccc-cccc-cccc-cccc-cccccccccccc',
-        'env set DEPLOY_VIEWER true',
+        'env set DEPLOY_VIEWER false',
         'env set VIEWER_LIVE_ENABLED false',
         'env set W365_BLUEPRINT_CREDENTIAL_MODE client_secret',
         'provision state --environment sample-dev --no-prompt',
+        'env set DEPLOY_VIEWER true',
         'provision viewer --environment sample-dev --no-prompt'
     )
     foreach ($requiredCall in $requiredCalls) {
@@ -138,6 +150,35 @@ param(
         [array]::IndexOf($calls, 'env get-value SESSION_BLOB_URI') -le $stateIndex) {
         throw 'Phase-two initialization did not reload state outputs before viewer provisioning.'
     }
+    $viewerEnableIndex = [array]::IndexOf($calls, 'env set DEPLOY_VIEWER true')
+    if ($viewerEnableIndex -le [array]::IndexOf($calls, 'env get-value SESSION_BLOB_URI') -or
+        $viewerIndex -le $viewerEnableIndex) {
+        throw 'Phase-two initialization enabled the viewer before state outputs were validated.'
+    }
+
+    foreach ($stateMode in @('missing', 'inconsistent')) {
+        Remove-Item -LiteralPath $callsPath -ErrorAction SilentlyContinue
+        $env:TEST_AZD_STATE_MODE = $stateMode
+        $stateRejected = $false
+        try {
+            & $scriptPath `
+                -Environment 'sample-dev' `
+                -DeployViewer `
+                -IdentityScriptPath $mockIdentityPath
+        }
+        catch {
+            $stateRejected = $_.Exception.Message -match 'Viewer provisioning was not started'
+        }
+        if (!$stateRejected) {
+            throw "Phase-two initialization accepted $stateMode shared-state outputs."
+        }
+        $rejectedCalls = @(Get-Content -LiteralPath $callsPath)
+        if ('env set DEPLOY_VIEWER true' -in $rejectedCalls -or
+            'provision viewer --environment sample-dev --no-prompt' -in $rejectedCalls) {
+            throw "Phase-two initialization enabled or provisioned the viewer for $stateMode shared state."
+        }
+    }
+    $env:TEST_AZD_STATE_MODE = 'valid'
 
     Remove-Item -LiteralPath $callsPath, $profileCallsPath -ErrorAction SilentlyContinue
     $env:TEST_AZD_VIEWER_QUOTA_ONCE = 'true'
@@ -165,6 +206,7 @@ finally {
     $env:Path = $previousPath
     $env:TEST_AZD_CALLS_PATH = $previousCallsPath
     $env:TEST_AZD_VIEWER_QUOTA_ONCE = $previousQuotaBehavior
+    $env:TEST_AZD_STATE_MODE = $previousStateMode
     Remove-Item Env:\TEST_IDENTITY_CALLS_PATH -ErrorAction SilentlyContinue
     Remove-Item Env:\TEST_PROFILE_CALLS_PATH -ErrorAction SilentlyContinue
     if (Test-Path -LiteralPath $tempRoot) {
