@@ -1,4 +1,20 @@
 #Requires -Version 7.4
+<#
+.SYNOPSIS
+Initializes a dedicated azd environment for staged deployment.
+
+.DESCRIPTION
+Creates local azd environment state, applies deterministic names and reviewed defaults, keeps phase-two services disabled for bootstrap, and optionally previews Foundry infrastructure.
+
+
+Key inputs: SubscriptionId and Prefix are required; tenant, environment, location, W365, viewer, preview, and configuration options are optional.
+
+.OUTPUTS
+Local azd environment values and an optional infrastructure preview.
+
+.NOTES
+Creates local configuration and may perform a read-only Azure preview; it does not provision resources by itself.
+#>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]

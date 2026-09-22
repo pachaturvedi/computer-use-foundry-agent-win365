@@ -1,4 +1,20 @@
 #Requires -Version 7.4
+<#
+.SYNOPSIS
+Binds the deployed Foundry identities to Windows 365 and redeploys the agent.
+
+.DESCRIPTION
+Discovers the exact hosted-agent version, verifies Blob state and the selected credential mode, reconciles Entra/W365 setup through Setup-W365.ps1, persists ownership and identifiers, and deploys the enabled agent.
+
+
+Key inputs: Environment and TenantId plus optional agent-user, pool, credential-federation, Graph, billing, confirmation, and packaging settings.
+
+.OUTPUTS
+W365 identifiers, ownership manifest, updated azd environment values, and a new immutable hosted-agent version.
+
+.NOTES
+Tenant-mutating workflow. It requires explicit billing and resource-change confirmation and never creates replacement Foundry identities.
+#>
 [CmdletBinding()]
 param(
     [string]$Environment,

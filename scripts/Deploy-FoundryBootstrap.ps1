@@ -1,4 +1,20 @@
 #Requires -Version 7.4
+<#
+.SYNOPSIS
+Runs the staged Foundry bootstrap deployment workflow.
+
+.DESCRIPTION
+Initializes or selects a managed environment, provisions Foundry, publishes the disabled bootstrap agent, optionally performs approved W365 setup, and can include the viewer bootstrap.
+
+
+Key inputs: Subscription, tenant, prefix, environment, deployment configuration, optional W365 pool/profile values, and explicit mutation switches.
+
+.OUTPUTS
+Deployment progress, azd environment state, ownership manifests, and hosted-agent version outputs.
+
+.NOTES
+Billable and tenant-mutating. Preview is the default unless explicitly skipped and resource changes are confirmed.
+#>
 [CmdletBinding()]
 param(
     [guid]$SubscriptionId,

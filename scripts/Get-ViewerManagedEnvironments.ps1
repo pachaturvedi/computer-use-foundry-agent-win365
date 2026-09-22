@@ -1,4 +1,20 @@
 #Requires -Version 7.4
+<#
+.SYNOPSIS
+Lists Azure Container Apps managed environments eligible for viewer reuse.
+
+.DESCRIPTION
+Queries the selected subscription and returns managed environments, optionally restricted to successfully provisioned resources.
+
+
+Key inputs: SubscriptionId, SucceededOnly, and AsJson.
+
+.OUTPUTS
+A formatted table or JSON array containing non-secret managed-environment metadata and resource IDs.
+
+.NOTES
+Read-only Azure discovery. It never selects or modifies an environment.
+#>
 [CmdletBinding()]
 param(
     [guid]$SubscriptionId,

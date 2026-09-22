@@ -1,5 +1,20 @@
 #Requires -Version 7.4
+<#
+.SYNOPSIS
+Provides shared W365 provisioning and azd helpers.
 
+.DESCRIPTION
+Resolves compatible azd commands, reads/writes non-secret environment values, derives deterministic names and agent-user UPNs, validates approvals/state/credentials, and reports provisioning state.
+
+
+Key inputs: Environment values, tenant/pool/state identifiers, configuration objects, and approval flags supplied to exported functions.
+
+.OUTPUTS
+Validated identifiers, derived names, azd command results, and provisioning-state objects.
+
+.NOTES
+Dot-source library. It does not select credential modes from model input and preserves fail-closed ownership and state checks.
+#>
 Set-StrictMode -Version Latest
 
 . (Join-Path $PSScriptRoot 'DeploymentConfig.ps1')

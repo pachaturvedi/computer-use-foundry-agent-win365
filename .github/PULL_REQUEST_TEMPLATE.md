@@ -34,7 +34,6 @@ Declared gaps, limitations, skipped coverage, and follow-up verification:
 - [ ] Updated docs/W365-SETUP.md for W365, Intune, Entra, pool, billing, or teardown changes.
 - [ ] Updated docs/AUTHENTICATION.md for token, identity, caller binding, or permission changes.
 - [ ] Updated docs/VIEWER.md for viewer, OIDC, federation, or handoff changes.
-- [ ] Updated docs/VALIDATION-REPORT.md when the checked-in validation status changed materially.
 
 If no documentation update was required, explain why:
 

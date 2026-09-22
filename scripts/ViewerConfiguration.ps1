@@ -1,3 +1,19 @@
+<#
+.SYNOPSIS
+Provides viewer configuration validation helpers.
+
+.DESCRIPTION
+Validates Azure CLI prerequisites, exact shared Blob state, ACA managed-environment IDs, supported credential modes, OIDC redirect URIs, and identity-mode requirements.
+
+
+Key inputs: Values and resource identifiers supplied to exported functions.
+
+.OUTPUTS
+Validated values or terminating configuration errors.
+
+.NOTES
+Dot-source library. It performs validation only and does not mutate cloud resources.
+#>
 Set-StrictMode -Version Latest
 
 . (Join-Path $PSScriptRoot 'Logging.ps1')

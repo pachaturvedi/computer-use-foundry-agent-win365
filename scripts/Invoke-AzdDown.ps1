@@ -1,4 +1,20 @@
 #Requires -Version 7.4
+<#
+.SYNOPSIS
+Removes a sample-owned environment with missing-layer recovery.
+
+.DESCRIPTION
+Runs ownership-driven W365/Entra cleanup once, deletes viewer, state, and foundry layers separately, continues only when an ARM deployment is already absent, and verifies that no tagged resource group remains.
+
+
+Key inputs: EnvironmentName plus optional environment/manifest paths, executable overrides, UseDeviceCode, Purge, and Force.
+
+.OUTPUTS
+Layer-by-layer teardown progress and a final residual-resource verification result.
+
+.NOTES
+Destructive workflow. Other azd failures remain fatal, and cleanup fails closed without ownership proof.
+#>
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
 param(
     [Parameter(Mandatory)]

@@ -1,4 +1,20 @@
 #Requires -Version 7.4
+<#
+.SYNOPSIS
+Prints the post-deployment environment summary.
+
+.DESCRIPTION
+Reads the selected azd environment and reports component status, resource names, active agent version, viewer state, and next operator actions without exposing secrets.
+
+
+Key inputs: RepositoryRoot and optional Environment.
+
+.OUTPUTS
+A redacted human-readable deployment summary.
+
+.NOTES
+Read-only. Missing optional components are reported as disabled or incomplete rather than treated as success.
+#>
 [CmdletBinding()]
 param(
     [string]$RepositoryRoot = (Split-Path $PSScriptRoot),

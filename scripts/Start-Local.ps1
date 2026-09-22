@@ -1,4 +1,20 @@
 #Requires -Version 7.4
+<#
+.SYNOPSIS
+Starts the local agent and viewer bootstrap processes.
+
+.DESCRIPTION
+Launches both .NET executables on loopback, waits for their health endpoints, streams process output, and stops both process trees when the operator presses Ctrl+C or startup fails.
+
+
+Key inputs: StartupTimeoutSeconds, AgentPort, and ViewerPort.
+
+.OUTPUTS
+Running local bootstrap endpoints and logs under .local until termination.
+
+.NOTES
+Local-only and unauthenticated. It must not be tunneled or used for enabled live W365 execution.
+#>
 [CmdletBinding()]
 param(
     [ValidateRange(5, 120)]

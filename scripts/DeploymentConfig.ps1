@@ -1,5 +1,20 @@
 #Requires -Version 7.4
+<#
+.SYNOPSIS
+Provides deployment configuration loading and precedence helpers.
 
+.DESCRIPTION
+Reads checked-in defaults and optional ignored local overrides, merges nested settings, converts values, and resolves environment-variable overrides for deployment scripts.
+
+
+Key inputs: Configuration file paths, setting names, defaults, and process environment values supplied to exported functions.
+
+.OUTPUTS
+Merged configuration objects and resolved scalar setting values.
+
+.NOTES
+Dot-source library. It performs no cloud mutation and must not be executed as an operator workflow.
+#>
 Set-StrictMode -Version Latest
 
 . (Join-Path $PSScriptRoot 'Logging.ps1')

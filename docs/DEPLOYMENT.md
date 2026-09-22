@@ -1,617 +1,307 @@
-# Deploy to Foundry and Azure Container Apps
+# Deploy to Microsoft Foundry and Azure
 
-Deployment is explicit and billable. A fresh managed `azd up` orchestrates the
-complete demo after interactive approval; it does not bypass W365 billing,
-Graph consent, credential, or viewer activation checks. Use a dedicated
-resource group and Foundry project. This is a single-operator preview sample,
-not a production multi-user service.
+This guide covers deployment, verification, redeployment, rollback, and
+teardown. The sample is a single-operator preview and creates billable Azure,
+Foundry, and potentially Windows 365 resources.
 
-Deployment has two phases: **bootstrap to obtain Foundry-owned identities**,
-then **bind W365 to those exact identities and enable the runtime**. The direct
-fresh-environment path performs both phases inside one `azd up`; the staged
-path exposes the same boundaries as separate commands.
+For a dedicated environment, use `azd up`. It performs the required two-stage
+sequence:
+
+1. deploy a W365-disabled hosted-agent version so Foundry creates the blueprint
+   and agent identity;
+2. bind those exact identities to state and W365, then deploy an enabled
+   immutable version.
+
+Use the staged path only when reusing a shared Foundry project or when separate
+preview and approval boundaries are required.
 
 ## Prerequisites
 
-Use this guide when you are ready to deploy or redeploy the hosted agent. For
-the shortest operator path, start in [README](../README.md) and come here when
-you need the full staged deployment, rollback, or live-acceptance detail.
+Run from Windows PowerShell 7.4 or later at the repository root.
 
-- Azure CLI and Azure Developer CLI authenticated to the intended subscription and tenant.
-- PowerShell 7.4+ and .NET 10 installed on the Windows operator machine.
-- One Foundry path selected up front: either a fresh environment that will provision a dedicated Foundry project, or an existing Foundry project with a supported model deployment.
-- Windows 365 onboarding, billing, and pool decisions reviewed before enabling phase 2.
-- Viewer deployment is enabled by default for a fresh managed environment.
-  Set `DEPLOY_VIEWER=false` only when the scenario does not need live view or
-  human handoff.
+- .NET 10 SDK and Git.
+- Azure CLI and the Azure Developer CLI versions required by `azure.yaml`.
+- The `microsoft.foundry` azd extension.
+- An Azure subscription and tenant enabled for Microsoft Foundry.
+- Model availability, regional support, and quota for the dedicated path. An
+  existing-project deployment additionally requires a compatible model
+  deployment that supports function calling and image input.
+- For W365: completed tenant onboarding, approved billing, and either an
+  existing agent pool or the inputs required to create one.
+- For the viewer: Azure Container Apps capacity and the tenant-specific
+  screen-share values described in [Viewer](VIEWER.md).
+- Network policy allowing Entra token exchange, the Foundry project/model,
+  private Blob state, and `agent365.svc.cloud.microsoft`. Viewer-enabled
+  environments also need the configured OIDC, Key Vault, and screen-share
+  endpoints.
 
-| Stage | Operation | Current status |
-| --- | --- | --- |
-| Phase 1 | Deploy `win365-desktop-agent` with `W365_ENABLED=false` | Automatic first stage of fresh `azd up` |
-| Binding | Select the W365/ACA profile, discover the version, provision state/viewer, create or reuse the agent user and pool, and persist ownership | Automatic after bootstrap approval |
-| Phase 2 | Enable W365 and redeploy the same service name | Automatic final stage; viewer activation can trigger one additional immutable version |
+The deploying identity needs the Azure and Foundry permissions required for the
+selected project. Reusing a project requires **Foundry Project Manager** at the
+project scope; subscription `Owner` alone does not grant Foundry data-plane
+access. W365 and Graph permissions are listed in
+[Windows 365 setup](W365-SETUP.md#setup-permissions-delegated-not-runtime).
 
-The ACA choice is saved after bootstrap, but `DEPLOY_VIEWER` remains disabled
-until Blob state has been created and its storage account, container, and blob
-URI outputs have been validated. A retry after interrupted onboarding therefore
-re-enters state provisioning instead of deploying the viewer with empty state.
-If validation fails, rerun `azd up` after correcting the reported state output;
-the viewer is not started and no viewer cleanup is required. During onboarding,
-only phase two activates viewer provisioning. After W365 is enabled, later
-`azd up` runs can update the existing viewer normally.
+Authenticate both CLIs to the same tenant and subscription, then run the
+prerequisite check:
 
-The complete W365 lifecycle is validated with explicit `client_secret` mode.
-Blueprint-selected managed identity remains blocked on the tested Responses
-host by Entra `AADSTS700231`; the public reference helper is from an
-activity/autopilot sample, not proof that this host supports chained
-federation. No autopilot publication or hiring workflow is required. See
-[authentication](AUTHENTICATION.md#sdk-and-hosting-boundary).
+```powershell
+az login --tenant "<tenant-id>"
+az account set --subscription "<subscription-id>"
+azd auth login
+azd ext install microsoft.foundry
+pwsh -NoProfile -File .\tests\PowerShell\Test-AzdPrerequisites.ps1 -RequireLogin
+```
+
+If the check reports that an older machine-wide `azd` shadows a supported
+installation, run the printed `$env:Path` correction in the same PowerShell
+window before continuing.
+
+Do not run `azd init` or `azd ai agent init` inside this clone. The checked-in
+`azure.yaml` is already the project manifest.
 
 ## Phase 1: deploy bootstrap
 
-Choose one Foundry path for phase 1:
+### Dedicated environment: recommended path
 
-- reuse an existing Foundry project that already has hosted-agent support and a
-   deployed model that supports function calling and image input
-- create a dedicated Foundry account, project, and model deployment in a fresh
-   azd environment
-
-For a new managed project, the template defaults to `gpt-6-astra`, version
-`2026-09-03`, `GlobalStandard`, and capacity `200` (200K TPM). These defaults
-must be available in the selected subscription and region. Existing-project
-deployments use the actual deployment name already available to that project.
-
-When reusing an existing project, the user must provide **both** the project
-and a deployed model available to that project. An empty project is not
-deployable with this sample because `AZURE_AI_MODEL_DEPLOYMENT_NAME` is
-mandatory. The model may be deployed on the project's parent Foundry account or
-exposed through a project connection, but its deployment name must be known and
-it must support function calling and image input. The developer running azd
-needs **Foundry Project Manager** at the project scope; generic subscription
-`Owner` alone does not grant Foundry data-plane access.
-
-For users without either resource, the checked-in project service declares a
-default GA `gpt-6-astra` deployment using GlobalStandard capacity 200. In a new,
-dedicated environment, azd can create the Foundry account, project, model
-deployment, and the minimum Foundry RBAC required for the deploying developer
-and project managed identity. Defaults are committed in
-`config\deployment.defaults.json`. Existing-project users can override the
-deployment name, model version, SKU, location, viewer image, or project
-endpoint. `config\deployment.local.json` is consumed by the repository
-initializer, W365 setup, and deployment wrappers. Direct `azd up` uses azd
-environment values for infrastructure overrides, while its W365 step can use
-the tenant profile saved in `config\deployment.local.json`. Never run
-provisioning against an unreviewed shared project.
-
-Install .NET 10, PowerShell 7.4+, Azure CLI and Azure Developer CLI. From the
-repository root, verify the exact versions required by `azure.yaml`:
+Create an isolated environment and run the complete deployment:
 
 ```powershell
-az login
-az account set --subscription "<subscription-id>"
-azd ext install microsoft.foundry
-azd auth login
-.\tests\PowerShell\Test-AzdPrerequisites.ps1 -RequireLogin
-```
-
-Use the same intended identity for Azure CLI and azd. Confirm the subscription,
-Foundry project region, project endpoint, and exact model deployment name with
-the resource owner before continuing. A tenant-level Azure CLI login with a
-subscription named `N/A(tenant level account)` is not sufficient for policy,
-quota, or resource validation.
-
-If the check warns that an older machine-wide `azd` shadows a newer user
-installation, run the one-line `$env:Path` command printed by the check in the
-same PowerShell window before continuing with direct `azd` commands.
-
-Choose exactly one project setup path.
-
-**Existing clone (recommended):** the checked-in `azure.yaml` is already the
-project manifest. A new azd environment uses its name as the resource prefix,
-generates the resource group, Foundry account, and project names, and applies
-the reviewed model defaults. For a dedicated managed project it also completes
-state, viewer, and W365 setup after the bootstrap agent identity exists.
-Generic infrastructure prompts are not required.
-
-For example:
-
-```powershell
-azd env new demosept22-dev `
+azd env new "<resource-prefix>-dev" `
     --subscription "<subscription-id>" `
     --location eastus
-azd up --environment demosept22-dev
+
+azd up --environment "<resource-prefix>-dev"
 ```
 
-Before provisioning, the `preup` hook prints the generated names, model
-selection, model capacity, and full-setup plan. Interactive fresh deployments
-do not require tenant-specific W365 values before Foundry exists.
-Non-interactive deployments still fail closed unless `W365_POOL_ID` or
-`W365_POOL_BILLING_PLAN_ID` is supplied. The interactive `postup` hook then:
+Before provisioning, the `preup` hook prints the generated resource names,
+model selection, capacity, and enabled components. Review that plan before
+approving changes.
 
-1. asks whether to reuse an existing W365 pool, create one, or skip W365;
-2. asks whether to create a dedicated ACA managed environment (default), reuse
-   an existing compatible environment, or skip the viewer;
-3. persists these non-secret choices in `.azure\<environment>\.env`;
-4. discovers the exact principal of the W365-disabled bootstrap version;
-5. enables and provisions shared Blob state;
-6. provisions and health-checks the selected ACA viewer bootstrap;
-7. securely stores the existing blueprint credential when required;
-8. runs W365/Entra setup after explicit approval;
-9. redeploys the same hosted-agent name with W365 enabled; and
-10. activates the viewer and redeploys again when the approved screen-share
-   values are available.
+The interactive flow then:
 
-New-pool setup uses the checked-in region and image defaults when the tenant
-advertises them. It derives a billing-plan GUID from existing pools when
-possible; otherwise it asks for the approved GUID. Existing-pool and existing
-ACA selections are explicit and never chosen silently.
+1. provisions the Foundry account, project, model, and disabled bootstrap
+   agent;
+2. asks whether to reuse a W365 pool, create one, or keep a Foundry-only
+   deployment;
+3. asks whether to create a dedicated ACA managed environment, reuse an
+   explicitly selected compatible environment, or skip the viewer;
+4. discovers the bootstrap agent's exact Foundry-owned identity;
+5. provisions private Blob state before viewer infrastructure;
+6. completes approved W365/Entra setup and stores ownership evidence;
+7. deploys the same agent name with W365 enabled; and
+8. activates the viewer when all tenant-specific inputs are available.
 
-Use the staged initializer later in this section when you need separate preview
-and approval boundaries.
+Expected result:
 
-The default `200` capacity means 200K TPM and consumes regional model quota.
-Availability varies by model version, SKU, subscription, and region. To use a
-smaller reviewed capacity before provisioning:
+- `win365-desktop-agent` has an active immutable version;
+- when W365 is selected, its identifiers and ownership evidence are stored
+  under the selected `.azure\<environment>\` directory and private Blob state
+  is configured;
+- the viewer is either active, intentionally skipped, or healthy in bootstrap
+  mode with its missing activation inputs listed.
+
+The reviewed model defaults are `gpt-6-astra`, version `2026-09-03`,
+`GlobalStandard`, and capacity `200` (200K TPM). Availability and quota vary by
+subscription and region. To approve a smaller capacity before deployment:
 
 ```powershell
-azd env set FOUNDRY_MODEL_SKU_CAPACITY "50" --environment demosept22-dev
+azd env set FOUNDRY_MODEL_SKU_CAPACITY "50" `
+    --environment "<resource-prefix>-dev"
 ```
 
-If model validation or deployment fails, no agent version is published. Azure
-may retain resources created before the failure; inspect the deployment and use
-the [operations and rollback workflow](#operations-and-rollback) when the
-environment is no longer needed. For a sample-owned environment, review the
-ownership record and then run:
+To deploy only the Foundry bootstrap:
 
 ```powershell
-pwsh -NoProfile -File .\scripts\Invoke-AzdDown.ps1 `
-    -EnvironmentName demosept22-dev `
-    -Purge
+azd env set ENABLE_W365 false --environment "<resource-prefix>-dev"
+azd up --environment "<resource-prefix>-dev"
 ```
 
-The wrapper confirms once, runs ownership-driven W365/Entra cleanup once, and
-deletes the `viewer`, `state`, and `foundry` layers in reverse dependency order.
-If azd reports that one layer's deployment is already absent, the wrapper
-continues to the remaining layers and then verifies that no resource group
-tagged for the environment remains. Other errors and residual managed resource
-groups still fail teardown. Do not use this command for an environment bound to
-a shared existing Foundry project until the ownership and cleanup boundaries
-later in this guide have been reviewed. Global Standard is consumption billed
-rather than fixed PTU capacity, but reserving a higher TPM quota permits higher
-throughput and potentially higher usage charges.
+Bootstrap is intentionally W365-disabled. `/health` is healthy, while Responses
+requests return a phase-two-required 503. This is not proof of live W365
+readiness.
 
-The viewer is deployed by default. Set these onboarding-supplied values before
-`azd up` to activate live view and take control during the same run:
+If provisioning fails, do not assume that no resources were created. Inspect
+the reported stage. Retry with the same environment after correcting a safe
+prerequisite failure; for an abandoned sample-owned environment, use
+[Operations and rollback](#operations-and-rollback).
+
+### Existing Foundry project
+
+Use this path only when the project owner has approved deployment into the
+shared project and identified a compatible existing model deployment.
+
+Use a fresh azd environment so stale W365, state, or viewer settings cannot be
+published into the shared project. Bind all required project identifiers and
+an isolated sample-owned resource group explicitly:
 
 ```powershell
-azd env set SCREENSHARE_APP_URL "<approved-app-url>" --environment demosept22-dev
-azd env set SCREENSHARE_SDK_URL "<approved-sdk-url>" --environment demosept22-dev
-azd env set SCREENSHARE_FRAME_ORIGINS "<approved-origin-list>" --environment demosept22-dev
+$environment = "<resource-prefix>-dev"
+
+azd env new $environment `
+    --subscription "<subscription-id>" `
+    --location eastus
+azd env set AZURE_RESOURCE_GROUP `
+    "<resource-prefix>-dev-rg" --environment $environment
+azd env set FOUNDRY_PROJECT_ENDPOINT `
+    "<existing-foundry-project-endpoint>" --environment $environment
+azd env set FOUNDRY_PROJECT_OWNERSHIP "existing" --environment $environment
+azd env set AZURE_AI_ACCOUNT_NAME `
+    "<existing-foundry-account-name>" --environment $environment
+azd env set AZURE_AI_PROJECT_NAME `
+    "<existing-foundry-project-name>" --environment $environment
+azd env set AZURE_AI_PROJECT_ID `
+    "<existing-foundry-project-resource-id>" --environment $environment
+azd env set AZD_FOUNDRY_RESOURCE_GROUP_ID `
+    "<existing-foundry-resource-group-id>" --environment $environment
+azd env set AZURE_FOUNDRY_RESOURCE_GROUP `
+    "<existing-foundry-resource-group-name>" --environment $environment
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME `
+    "<existing-model-deployment-name>" --environment $environment
+azd env set ENABLE_W365 false --environment $environment
+azd env set W365_ENABLED false --environment $environment
+azd env set DEPLOY_STATE false --environment $environment
+azd env set DEPLOY_VIEWER false --environment $environment
+azd env set VIEWER_LIVE_ENABLED false --environment $environment
 ```
 
-If they are omitted, the ACA viewer remains in bootstrap mode and the final
-summary lists the missing activation settings. To request only the Foundry
-bootstrap:
+Preview and provision the sample-owned environment boundary. In
+existing-project mode this layer creates the isolated resource group and
+records the supplied project; it does not create or replace the shared Foundry
+account, project, or model:
 
 ```powershell
-azd env set ENABLE_W365 false --environment demosept22-dev
+azd provision foundry --environment $environment --preview --no-prompt
+azd provision foundry --environment $environment --no-prompt
 ```
 
-To reuse an environment that was already initialized for this repository:
+Validate before publishing:
 
 ```powershell
-$env:Path = "$env:LOCALAPPDATA\Programs\Azure Dev CLI;$env:Path"
-azd env list
-azd env select computer-use-foundry-agent-win365-dev
-```
-
-Do **not** run `azd init` or `azd ai agent init -m .\azure.yaml` in a clone.
-Those commands treat the repository as template input and try to copy it into
-itself, causing the overlapping-source or existing-`azure.yaml` errors.
-
-**No-clone template initialization:** from a genuinely empty directory, point the
-Foundry-specific initializer at this repository's raw `azure.yaml` URL:
-
-```powershell
-azd auth login
-azd ai agent init -m "https://raw.githubusercontent.com/pachaturvedi/computer-use-foundry-agent-win365/main/azure.yaml"
-.\tests\PowerShell\Test-AzdPrerequisites.ps1 -RequireLogin
-```
-
-The no-clone command creates a new project directory. Change into that generated
-directory before running subsequent commands. Do not run it from the repository
-clone or target the existing clone directory.
-
-For a staged fresh environment, choose **create a new project** and run the
-initializer below. It creates the azd environment, generates deterministic
-resource names, applies the reviewed model defaults, keeps W365/state/viewer
-disabled for the first publish, and previews the deployment:
-
-| Setting | Source for a fresh environment | Default or generated value |
-| --- | --- | --- |
-| Subscription and tenant | Operator's authenticated Azure context, passed to the initializer | No infrastructure prompt |
-| Prefix and environment | Operator naming choice | `<prefix>-dev` |
-| Resource group | Generated | `<prefix>-dev-rg` |
-| Foundry account | Generated from the first 12 compact prefix characters plus a stable subscription suffix | `<prefix>devai<subscription-suffix>` |
-| Foundry project | Generated | `<prefix>-dev-project` |
-| Model deployment and model | `config\deployment.defaults.json` | `gpt-6-astra` |
-| Model version | `config\deployment.defaults.json` | `2026-09-03` |
-| Model SKU and capacity | `config\deployment.defaults.json` | `GlobalStandard`, 200K TPM |
-| State, viewer, and W365 | Staged bootstrap defaults | Disabled until the operator runs phase 2 |
-
-Override a reviewed default with `config\deployment.local.json` when using the
-initializer, or set the matching azd environment value before direct `azd up`.
-The `preup` hook shows the effective defaults before provisioning.
-
-The generated Foundry account name is deterministic and subscription-qualified,
-not guaranteed globally unique. If Azure reports a name collision, provide an
-explicit name before retrying:
-
-```powershell
-azd env set AZURE_AI_ACCOUNT_NAME "<globally-available-account-name>" `
-    --environment demosept22-dev
-```
-
-```powershell
-pwsh -NoProfile -File .\scripts\Initialize-Greenfield.ps1 `
-   -SubscriptionId "<subscription-id>" `
-   -Prefix "fawin365" `
-   -Environment "dev"
-
-pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
-   -Mode Validate `
-   -Environment "fawin365-dev"
-
-pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
-   -Mode ProvisionFoundry `
-   -Environment "fawin365-dev" `
-   -ConfirmResourceChanges
-
-pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
-   -Mode DeployAgent `
-   -Environment "fawin365-dev" `
-   -ConfirmResourceChanges
-
-azd ai agent doctor --environment fawin365-dev
-```
-
-`Initialize-Greenfield.ps1` creates only local azd environment state and a
-Foundry preview. `ProvisionFoundry` then creates the resource group, Foundry
-account, project, model deployment, and the minimum Foundry roles needed for
-the next step: `Foundry Project Manager` plus `Foundry User` on the new account
-for the deploying principal, and `Foundry User` for the project managed
-identity. `DeployAgent` publishes the first immutable hosted-agent version only
-after the project endpoint and role checks are green.
-
-Do not pass `-EnableW365` to the staged initializer. The first
-hosted-agent version must exist before its principal can be granted access to
-the shared Blob state required by enabled W365 execution. Complete the staged
-bootstrap above, discover the exact agent principal, and continue with
-[phase 2](#phase-2-bind-and-enable). The direct fresh `azd up` path performs
-these same steps through its guarded `postup` orchestration.
-
-Keep `W365_ENABLED=false`, `DEPLOY_STATE=false`, and `DEPLOY_VIEWER=false` for
-this bootstrap pass unless the later phases are explicitly approved. Existing-
-project mode still expects preexisting Foundry access and does not grant roles
-on a shared project for you.
-
-Only when reusing an existing Foundry project in an existing clone, bind the
-existing Foundry project endpoint, set the model deployment name, and keep the
-safe feature gate disabled. These values are not part of the initial fresh
-environment setup:
-
-```powershell
-azd env set FOUNDRY_PROJECT_ENDPOINT "<existing-foundry-project-endpoint>"
-azd env set FOUNDRY_PROJECT_OWNERSHIP "existing"
-azd env set AZURE_AI_ACCOUNT_NAME "<existing-foundry-account-name>"
-azd env set AZURE_AI_PROJECT_NAME "<existing-foundry-project-name>"
-azd env set AZURE_AI_PROJECT_ID "<existing-foundry-project-resource-id>"
-azd env set AZD_FOUNDRY_RESOURCE_GROUP_ID "<existing-foundry-resource-group-id>"
-azd env set AZURE_FOUNDRY_RESOURCE_GROUP "<existing-foundry-resource-group-name>"
-azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME "<existing-model-deployment-name>"
 azd ai agent doctor --local-only
-pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 -Mode Validate
+pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
+    -Environment $environment `
+    -Mode Validate
 ```
 
-The explicit ownership value prevents a project endpoint emitted by a managed
-deployment from silently switching later Bicep runs into existing-project mode.
-Existing-project mode fails closed unless the endpoint, project resource ID, and
-Foundry resource-group ID and name are all supplied.
+Validation checks the local manifest and the remote project, model, roles,
+connections, and hosted-agent capability. It is read-only. Resolve every
+failure before deployment.
 
-For a validation-only review, stop here. Both the local-only doctor command and
-`Invoke-AzdDeployment.ps1 -Mode Validate` are read-only. The first checks the
-local manifest/environment, and the second also checks the remote project,
-role, hosted-agent capability, and configured connections.
-
-Only after the validation output and deployment plan are reviewed:
+Publish the disabled bootstrap only after review:
 
 ```powershell
 pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
+    -Environment $environment `
     -Mode DeployAgent `
     -ConfirmResourceChanges
 ```
 
-The manifest requires the extension's `azure.ai.agents` capability. Preview
-extension names/commands can change; check installed extension help if needed.
-The checked-in manifest follows the current official Foundry hosted-agent shape:
-one `azure.ai.project` service, one `azure.ai.agent` service, pinned minimum
-tool versions, code runtime/entry point, protocol, environment mapping, resource
-limits, and scenario tags.
+The explicit ownership value prevents a managed endpoint from silently
+switching into existing-project mode. Stop if the environment name already
+exists or the preview targets resources outside the approved shared project
+and sample-owned resource group. Do not grant broad subscription roles to work
+around project data-plane failures.
 
-`win365-desktop-agent` sets `codeConfiguration.dependencyResolution: bundled`.
-`Win365Agent.csproj` references the sibling `Win365Shared` project and relies on
-the repo-root `Directory.Packages.props` for central package versions. Foundry's
-default `remote_build` mode zips and restores only the `project:` folder
-(`src/Win365Agent`) on the build server, so it cannot see `Win365Shared` or the
-central package-version file and fails restore with `NU1015` /
-`Win365Shared.csproj ... was not found`. `bundled` makes `azd deploy` build and
-publish locally, where the full repository/solution context is available, and
-upload only the published output.
+### Staged dedicated deployment
 
-`bundled` publishes for the container's target runtime with `dotnet publish -r
-linux-x64 --self-contained false`. A RID-specific publish otherwise implicitly
-builds a native apphost, which needs the `Microsoft.NETCore.App.Host.linux-x64`
-runtime pack; if that pack isn't already cached locally and the machine's
-global NuGet sources are restricted, restore fails with `NU1101`. Because the
-agent always starts as `dotnet Win365Agent.dll` (see `entryPoint` above), no
-native apphost is required, so `Win365Agent.csproj` sets
-`<UseAppHost>false</UseAppHost>` to skip that extra restore entirely.
-
-Do not switch this back to `remote_build`
-without also giving the agent a self-contained build context (for example, a
-container deploy modeled on the viewer's `Dockerfile`, which already copies
-`Directory.Packages.props`, `NuGet.Config`, and `Win365Shared` before
-restoring).
-
-Use direct `azd up` for the dedicated fresh managed path described above. Its
-hooks preserve the bootstrap-first sequence and invoke the guarded deployment
-wrapper after W365 setup. For shared/existing projects or focused
-redeployments, use `Invoke-AzdDeployment.ps1`: it confirms the
-`w365-blueprint-client-secret` and agent Key Vault RBAC before publication,
-runs `azd ai agent doctor`, and can smoke-invoke the active version. Do not
-replace either path with raw `azd deploy win365-desktop-agent`, which skips
-those safeguards.
-
-`W365_ENABLED` defaults to `false` and accepts only `true` or `false`. In phase 1,
-all phase-2 environment values in the manifest may remain empty: **no W365 IDs,
-operator, state or viewer configuration is mandatory yet**. Foundry provisions
-its blueprint and agent identity. Bootstrap starts before any model initialization
-and does not access
-W365, model or state credentials. Healthy readiness and a **503 explaining phase
-2 for Responses requests** are expected, not proof of live W365 readiness.
-
-Hosted agent bootstrap binds `0.0.0.0` on `PORT` (default `8088`), following the
-[hosted-agent contract](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agent-contract).
-Viewer bootstrap respects ACA's configured port `8080`. Local mode stays fixed
-to loopback: agent `8088`, viewer `5050`.
-
-The manifest uses azd expansion `${W365_ENABLED:-false}` and `${VAR:-}` for
-empty phase-2 fallbacks. These defaults are intentional; do not replace them
-with required phase-2 values just to complete bootstrap.
-
-Foundry injects the project endpoint and hosting identity configuration. Never
-set reserved platform variables, including `FOUNDRY_AGENT_BLUEPRINT_CLIENT_ID`,
-yourself. Keep `SAMPLE_LOCAL_MODE=false` in Azure. Local mode is loopback-only
-bootstrap/offline; enabling W365 on a local desktop is refused.
-
-## Discover the Foundry identity
-
-Record the actual deployed **agent name and version** from the deployment.
-`-AgentVersion` is required; discovery does not silently choose a latest version.
-The default manifest name is `win365-desktop-agent`; use the name actually
-deployed if initialization changed it.
+Use this path when separate preview, provision, and publish approvals are
+required:
 
 ```powershell
-az login --tenant "<Foundry-tenant-GUID>"
-.\scripts\Get-FoundryIdentity.ps1 `
-    -ProjectEndpoint "https://<account>.services.ai.azure.com/api/projects/<project>" `
-    -AgentName "<deployed-agent-name>" `
-    -TenantId "<Foundry-tenant-GUID>" `
-    -AgentVersion "<deployed-version>"
-```
-
-This helper is **read-only**. It uses
-`az rest --method get --resource https://ai.azure.com` to read the selected version with Foundry
-`GET /agents/<name>/versions/<version>?api-version=2025-11-15-preview`, relative
-to the project endpoint. Azure CLI handles the bearer internally; the helper
-does not explicitly print or persist tokens, provision or mutate identities.
-Do not enable CLI debug dumps or paste tokens into issues.
-
-For stale desktop state, use the explicit recovery helper documented in
-[Architecture: fail-closed recovery](ARCHITECTURE.md#fail-closed-recovery).
-It is read-only unless `-Apply` is supplied and approved; `-Apply -WhatIf`
-does not mutate. The helper binds session inspection to
-`FOUNDRY_AGENT_NAME` from the selected azd environment and checks every hosted
-session for that agent across versions because they share the same state Blob.
-It requires the exact W365 no-session sentence documented there and validates
-persisted operator ownership before lease break. Never
-automatically rerun `-Apply` after an ambiguous acquire, upload, or release
-outcome—run read-only inspection again first.
-
-The helper accepts only public-cloud HTTPS project URLs on
-`*.services.ai.azure.com`, with path `/api/projects/<project>`. Arbitrary hosts
-and sovereign-cloud endpoints are not supported; do not bypass endpoint
-validation to send credentials to another host.
-
-| Discovery output | Response field / use |
-| --- | --- |
-| `BlueprintId` | `blueprint.client_id`: blueprint **app/client ID**, passed to setup as `-BlueprintId`. |
-| `AgentIdentityId` | `instance_identity.principal_id`: agent **object/principal ID**, passed as `-AgentIdentityId`. |
-| `TenantId` | Tenant used for discovery/setup; must match Foundry and W365. |
-
-An object-ID field is not an app-ID field. Setup resolves the agent app/client
-ID from the existing agent object and emits both `W365_AGENT_ID` and
-`W365_AGENT_OBJECT_ID`. Foundry may currently return the same GUID value for
-both fields, but callers must still use each value according to its documented
-role rather than infer one from the other. If discovery does not return the required fields
-or the actual host cannot provide a matching blueprint identity endpoint, stop
-and investigate the preview hosting contract; do not create a substitute identity.
-
-`Invoke-W365SetupFlow.ps1` can repeat discovery automatically, run setup,
-persist the returned `W365_*` values and ownership manifest, and redeploy the
-same agent name. Do not invoke it yet: it fails before W365 or Entra mutation
-unless the phase-2 Blob state, operator binding, and selected credential are
-already configured as described below.
-
-If `W365_POOL_ID` is already persisted in the azd environment, reruns update
-that pool instead of creating another one. If no pool ID is present, the setup
-script can create a pool when you supply the billing, geography, region, image,
-and scaling inputs.
-
-The setup script prints `W365_OWNERSHIP_MANIFEST=<path>` after it records the
-created or reused pool, assignment, agent user, grants, inheritance entries,
-federated credentials, and the blueprint's prior `requiredResourceAccess`.
-`azd down` uses that manifest to prove what the sample is allowed to remove.
-
-## Optional phase-1 viewer bootstrap
-
-The viewer is a separate `src\Win365Viewer` executable and ACA container. It
-references shared identity/state contracts from `Win365Agent` but has an
-independent startup path and cannot expose the hosted Responses endpoint.
-Until `VIEWER_LIVE_ENABLED=true`, the hosted agent suppresses viewer links even
-if `VIEWER_PUBLIC_URL` already contains the provisioned ACA hostname.
-Deploy it in bootstrap mode first so ACA can establish the public origin, UAMI,
-and ACR without requiring live W365 or OIDC settings. The shared W365
-credential vault is provisioned separately by the state layer.
-
-The viewer reuses the agent's existing `SESSION_BLOB_URI`; it does not create a
-second Storage account or session container. It also accepts an existing
-Container Apps managed-environment resource ID, which is the recommended path
-when the subscription is at the managed-environment quota. The foundation
-creates a managed environment and Log Analytics only when that ID is empty.
-It always creates the viewer ACR. The state-access module grants
-the viewer UAMI Blob Data Contributor on the exact existing state container.
-
-For a new Foundry project and viewer, initialize the complete environment:
-
-```powershell
-az containerapp show --help
-az containerapp update --help
-az containerapp registry set --help
 pwsh -NoProfile -File .\scripts\Initialize-Greenfield.ps1 `
     -SubscriptionId "<subscription-id>" `
-    -Prefix "fawin365" `
-    -Environment "dev" `
-    -DeployViewer
+    -Prefix "<resource-prefix>" `
+    -Environment "dev"
+
 pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
-    -Mode DeployAll `
+    -Environment "<resource-prefix>-dev" `
+    -Mode Validate
+
+pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
+    -Environment "<resource-prefix>-dev" `
+    -Mode ProvisionFoundry `
+    -ConfirmResourceChanges
+
+pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
+    -Environment "<resource-prefix>-dev" `
+    -Mode DeployAgent `
     -ConfirmResourceChanges
 ```
 
-The three Azure CLI checks must succeed when the viewer is enabled. Upgrade
-Azure CLI if they are unavailable; install or upgrade the `containerapp`
-extension only when the upgraded CLI still does not provide them.
+The initializer creates local azd state and previews the Foundry layer. It does
+not enable W365, state, or the viewer. The first hosted-agent version must exist
+before phase two can grant its exact principal access.
 
-`-TenantId` is optional and should be supplied only to override the tenant
-selected by `azd auth login`. Omit `-DeployViewer` unless the dedicated viewer
-resources have been approved. Put the full ID of an approved existing
-environment in `config\deployment.local.json` as
-`viewer.managedEnvironmentResourceId`; use
-`.\scripts\Get-ViewerManagedEnvironments.ps1` to list candidates. Leaving it
-empty is the normal/default path and creates a dedicated managed environment.
-Supplying the resource ID is an optional reuse path for quota-constrained or
-shared-infrastructure environments. The approved environment may be in another
-Azure region; the viewer Container App and its managed identity are created in
-that environment's region while the remaining sample-owned resources stay in
-`AZURE_RESOURCE_GROUP`. When `DEPLOY_VIEWER=false`, neither path is evaluated.
-New managed environments default to `VIEWER_LOG_ANALYTICS_ENABLED=false`, which
-uses the ACA `none` log destination and avoids creating a Log Analytics
-workspace for the demo. Set it to `true` when retained application logs are
-required. Reused environments keep their existing logging configuration.
-During fresh interactive `azd up`, the default is a new dedicated managed
-environment. If creation fails specifically because of ACA managed-environment
-quota or capacity, the hook lists successfully provisioned environments,
-requires an explicit selection, and retries only the viewer layer. Other
-viewer, RBAC, networking, image, or health failures do not trigger fallback.
-The initializer uses reusable config helpers in `scripts/DeploymentConfig.ps1`
-so later hosted and cleanup workflows can consume the same defaults and
-override precedence without duplicating parsing logic.
+## Discover the Foundry identity
 
-For an environment already bound to a Foundry project, set the viewer layer
-explicitly. All sample-owned Azure resources use `AZURE_RESOURCE_GROUP`;
-`STATE_RESOURCE_GROUP_NAME` and `VIEWER_RESOURCE_GROUP_NAME` are compatibility
-outputs with that same value:
+Identity discovery is read-only and version-specific. Never silently select a
+latest version.
 
 ```powershell
-$resourcePrefix = "fawin365-dev"
-azd env set RESOURCE_PREFIX $resourcePrefix
-azd env set DEPLOY_VIEWER true
-azd env set VIEWER_IMAGE_NAME "win365-sample:v1"
-azd env set VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID `
-  "/subscriptions/<subscription>/resourceGroups/<rg>/providers/Microsoft.App/managedEnvironments/<name>"
-pwsh -NoProfile -File .\scripts\Initialize-AzdUpPhaseTwo.ps1 `
-  -Environment "<env>" `
-  -DeployViewer
+pwsh -NoProfile -File .\scripts\Get-FoundryIdentity.ps1 `
+    -ProjectEndpoint "https://<account>.services.ai.azure.com/api/projects/<project>" `
+    -AgentName "win365-desktop-agent" `
+    -AgentVersion "<deployed-version>" `
+    -TenantId "<tenant-guid>"
 ```
 
-The viewer bootstrap calculates a `build-<hash>` image tag from the Dockerfile,
-NuGet configuration, and viewer source. It reuses that ACR image on unchanged
-`azd up` runs instead of repeating the remote SDK pull, restore, build, and
-push. The hash changes monthly even when the source does not, allowing the
-floating .NET base-image tags to pick up servicing and security updates.
+| Output | Use |
+| --- | --- |
+| `BlueprintId` | Blueprint app/client ID; passed as `-BlueprintId`. |
+| `AgentIdentityId` | Agent object/principal ID; passed as `-AgentIdentityId` and used for Azure RBAC. |
+| `TenantId` | Tenant shared by Foundry, W365, and the viewer Azure identity. |
 
-The viewer consumes the existing state outputs
-`AZURE_RESOURCE_GROUP`, `STATE_STORAGE_ACCOUNT_NAME`,
-`STATE_CONTAINER_NAME`, and `SESSION_BLOB_URI`. Any account, container, path,
-query, fragment, or protocol mismatch fails before deployment.
+App/client IDs and object/principal IDs are different identifier types even
+when a service currently returns the same GUID for both. If discovery cannot
+return the documented fields, stop instead of creating replacement identities.
 
-`azd up` creates one environment resource group in the core Foundry layer and
-reuses it for the shared W365 credential Key Vault, optional Blob state, and
-optional viewer resources. Blob session state remains conditional on
-`DEPLOY_STATE`, and
-the ACA viewer remains conditional on `DEPLOY_VIEWER`. The command prints a
-pre-provision table showing which components will be created, reused, or
-skipped, deploys the Foundry agent, then
-runs the Windows `postup` hook. The hook builds
-the repository image in the newly created ACR, waits for `AcrPull` role
-propagation, switches the Container App to that image, and verifies `/health`.
-ACR names remove hyphens, use lowercase alphanumerics, include a deterministic
-suffix, and stay within service-specific length limits.
+## Optional phase-1 viewer bootstrap
 
-Before enabling `DEPLOY_VIEWER`, preview the state and viewer layers separately:
+The viewer is a separate ACA application that references `Win365Shared`; it
+does not host the model or Responses endpoint. Direct W365 execution does not
+require it.
 
-```powershell
-azd provision state --preview --no-prompt
-$env:VIEWER_PROVISIONING_ACTIVE = "true"
-try {
-  azd provision viewer --preview --no-prompt
-}
-finally {
-  Remove-Item Env:\VIEWER_PROVISIONING_ACTIVE -ErrorAction SilentlyContinue
-}
-```
+For the dedicated `azd up` path, viewer bootstrap is automatic after private
+state has been created and validated. Until `VIEWER_LIVE_ENABLED=true`,
+`/health` is available, other viewer routes return 503, and the hosted agent
+does not advertise viewer links.
 
-Layered projects do not support a combined `azd provision --preview`. If the
-preview reports `MaxNumberOfGlobalEnvironmentsInSubExceeded`, select an
-approved existing environment by full resource ID or request a quota increase.
-The deployment never silently chooses an environment. Never persist
-`VIEWER_PROVISIONING_ACTIVE`; it is an internal process-only guard.
+The viewer can:
 
-The [parameter example](../infra/viewer.parameters.example.json) contains only
-identifiers and URLs, never secret values. Its phase-2 placeholders are not
-requirements for bootstrap. Keep your copy untracked. Prefer an immutable image
-digest for releases. The template defaults `w365Enabled` to `false`, creates
-the viewer UAMI with ACR pull, grants Blob access through the state-resource
-group module, and runs one
-HTTPS-only replica. `/health` is healthy and other routes return 503; no OIDC
-configuration is needed until active.
+- create a dedicated ACA managed environment;
+- reuse an explicitly selected compatible managed environment; or
+- remain disabled with `DEPLOY_VIEWER=false`.
 
-Phase-2 identity, operator, viewer and SDK parameters default to empty strings
-in Bicep. The state layer creates the shared vault; no secret value or
-reference is needed in viewer bootstrap.
+It never silently adopts shared ACA infrastructure. If a new managed
+environment fails specifically because of quota or capacity, the interactive
+flow can offer existing environments for explicit selection. Other viewer,
+RBAC, image, networking, or health failures remain fatal.
 
-Record `viewerHostname`, `viewerIdentityClientId` and
-`viewerIdentityPrincipalId` from the deployment outputs. The **principal/object
-ID** is the optional setup FIC subject; the **client ID** selects the UAMI as
-`AZURE_CLIENT_ID` in the viewer. Do not exchange these identifiers.
+For OIDC, Key Vault, screen-share values, viewer federation, and activation,
+follow [Viewer](VIEWER.md). Do not substitute `SCREENSHARE_APP_URL` for the
+companion viewer's `VIEWER_PUBLIC_URL`.
+
+For a staged deployment, record these non-secret bootstrap outputs:
+
+| Output | Use |
+| --- | --- |
+| `viewerIdentityClientId` | Selects the viewer UAMI through `AZURE_CLIENT_ID`. |
+| `viewerIdentityPrincipalId` | Viewer object/principal ID used for RBAC and optional federation. |
+| `viewerHostname` | Default ACA hostname used to configure the public viewer origin and OIDC callback. |
 
 ## Phase 2: bind and enable
 
-Confirm Intune pool, licensing and billing prerequisites; setup does not
-purchase capacity. Prepare state, operator binding, and the selected credential
-before running [W365 setup](W365-SETUP.md). Review inherited blueprint grants
-on sibling agents. For an optional viewer FIC, obtain explicit administrator
-approval for **blueprint impersonation**, not merely ARI access.
+The direct dedicated `azd up` path performs this phase automatically. Use the
+steps below only for a staged or existing-project deployment.
+
+Before W365 or Entra mutation:
+
+1. discover the exact phase-one identity;
+2. provision private Blob state and container-scoped RBAC;
+3. configure the hosted operator;
+4. explicitly select and prepare one blueprint credential mode;
+5. confirm W365 billing and pool inputs; and
+6. review inherited blueprint grants, especially for shared projects.
 
 Prepare private shared Blob state before enabling; live runtime requires Blob.
 `FileSessionStore` is an offline-test helper, not a local live backend.
@@ -647,29 +337,29 @@ and `.azure`; store it only through the secure
 rotate it under tenant policy, and revoke it after validation. Explicitly set
 `W365_BLUEPRINT_CREDENTIAL_MODE`; never fall back between credential modes.
 
-For the existing-project two-phase workflow, enable the dedicated azd state
-layer after phase-1 identity discovery:
+Credential modes and their current validation status are documented in
+[Authentication](AUTHENTICATION.md). The checked-in default is
+`key_vault_certificate`. There is no automatic fallback between
+credential modes.
+
+### Provision shared state
 
 ```powershell
 $environment = "<azd-environment-name>"
+
 azd env set DEPLOY_STATE true --environment $environment
-azd env set STATE_AGENT_PRINCIPAL_ID "<Foundry-agent-object-principal-GUID>" `
+azd env set STATE_AGENT_PRINCIPAL_ID `
+    "<Foundry-agent-object-principal-guid>" `
     --environment $environment
+
 azd provision state --environment $environment --preview --no-prompt
 azd provision state --environment $environment --no-prompt
 ```
 
-The core layer creates the sample-owned environment resource group once. The
-state layer references that group and creates one shared W365 credential Key
-Vault, emitting `W365_KEY_VAULT_NAME`. When
-`DEPLOY_STATE=true`, it also derives a globally unique Storage account name,
-creates the private `desktop-state` container, grants the supplied agent
-principal Storage Blob Data Contributor only on that container, and emits
-`SESSION_BLOB_URI`. The initial greenfield infrastructure pass uses
-`DEPLOY_STATE=false` because the agent principal does not exist yet. Direct
-fresh `azd up` discovers that principal in `postup`, persists
-`DEPLOY_STATE=true`, and provisions state before W365 setup. The staged path
-leaves this step to the operator. Neither path skips the credential vault.
+The state layer creates the shared W365 Key Vault and private
+`desktop-state` Blob container, grants the exact agent principal
+`Storage Blob Data Contributor` on that container, and emits
+`SESSION_BLOB_URI`. Live runtime does not support local file state.
 
 In the fresh `key_vault_certificate` path, the first state pass deliberately
 omits certificate/key RBAC. `postup` then creates or reuses the certificate,
@@ -705,35 +395,13 @@ Only use this section to deliberately migrate or validate legacy
 Configure the hosted operator and legacy credential before W365 mutation:
 
 ```powershell
-$environment = "<azd-environment-name>"
-azd env set OPERATOR_TENANT_ID "<operator-tenant-guid>" --environment $environment
-azd env set OPERATOR_OBJECT_ID "<operator-object-guid>" --environment $environment
+azd env set OPERATOR_TENANT_ID `
+    "<operator-tenant-guid>" --environment $environment
+azd env set OPERATOR_OBJECT_ID `
+    "<operator-object-guid>" --environment $environment
 azd env set HOSTED_ALLOWED_USER_ID pending --environment $environment
-azd env set W365_BLUEPRINT_CREDENTIAL_MODE client_secret --environment $environment
-pwsh -NoProfile -File .\scripts\Set-ViewerSecrets.ps1 `
-    -Environment $environment `
-    -BlueprintOnly
-```
-
-`HOSTED_ALLOWED_USER_ID=pending` denies W365 access while exposing only a
-correlatable hash for the first intended caller; finish the binding below.
-For `managed_identity_federation`, omit the secret command and complete the
-explicit hosted-runtime federation approval, understanding that this mode is
-blocked on the tested host by `AADSTS700231`.
-
-After all prerequisites above are present, client-secret mode uses:
-
-```powershell
 azd env set W365_BLUEPRINT_CREDENTIAL_MODE client_secret `
-    --environment "<azd-environment-name>"
-pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
-   -Environment "<azd-environment-name>" `
-   -TenantId "<Foundry-and-W365-tenant-guid>" `
-   -PoolIdOrUrl "<existing-pool-guid-or-intune-url>" `
-   -BillingConfirmed `
-   -ConfirmResourceChanges `
-   -UseDeviceCode
-```
+    --environment $environment
 
 Managed-identity mode requires explicit authorization for the exact discovered
 agent principal and remains blocked on the tested host:
@@ -837,132 +505,183 @@ certificate/key-scoped roles and never prompts for a blueprint secret.
 `managed_identity_federation` also omits the blueprint secret, but fails unless
 the exact viewer UAMI federation is present in the W365 ownership manifest.
 
-For a dedicated managed environment, routine `azd up` reruns are supported.
-The `postup` hook reuses the guarded deployment wrapper after W365 or viewer
-configuration changes; it does not publish an enabled agent directly. For a
-focused agent-only redeploy, use `Invoke-AzdDeployment.ps1 -Mode DeployAgent`.
-Set `SAMPLE_LOG_LEVEL` to `summary` (default), `verbose`, or `debug`:
+### Run W365 setup and deploy the enabled version
 
 ```powershell
-$environment = "<azd-environment-name>"
-azd env set SAMPLE_LOG_LEVEL verbose --environment $environment
-azd up --environment $environment
-```
-
-All Windows scripts also support PowerShell's common `-Verbose` and `-Debug`
-parameters. Use `-Verbose` for phase and command progress. Add `-Debug` for
-sanitized decisions, resource IDs, and parameter context; secret, token,
-password, credential, and certificate values are always redacted.
-
-```powershell
-pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
+pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
     -Environment $environment `
-    -Mode DeployAgent `
+    -TenantId "<Foundry-and-W365-tenant-guid>" `
+    -PoolIdOrUrl "<existing-pool-guid-or-intune-url>" `
+    -BillingConfirmed `
     -ConfirmResourceChanges `
-    -Verbose `
-    -Debug
+    -UseDeviceCode
 ```
 
-Agent and enabled viewer must use **exactly the same W365 identities and state
-Blob**. Their compute identities remain different. Viewer `AZURE_CLIENT_ID`
-selects its UAMI; never overwrite Foundry's credential selection.
+The wrapper verifies state, RBAC, operator binding, credential readiness, and
+the exact Foundry identity before mutation. It then reconciles W365/Entra,
+persists the ownership manifest and non-secret IDs, and redeploys the same agent
+name. Do not immediately deploy it a second time.
+
+For a new pool, omit `-PoolIdOrUrl` only after saving a reviewed pool profile as
+described in [Windows 365 setup](W365-SETUP.md).
+
+Expected result:
+
+- `W365_ENABLED=true`;
+- `W365_TENANT_ID`, `W365_BLUEPRINT_ID`, `W365_AGENT_ID`,
+  `W365_AGENT_OBJECT_ID`, `W365_AGENT_USER_ID`, and `W365_POOL_ID` are present;
+- `.azure\<environment>\w365-ownership.json` exists;
+- an enabled immutable agent version is active.
+
+If W365 setup succeeds but final agent deployment fails, fix the reported
+deployment prerequisite and rerun only:
 
 ```powershell
-# All phase-2 values above must already be set.
-azd ai agent doctor --environment $environment
 pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
     -Environment $environment `
     -Mode DeployAgent `
     -ConfirmResourceChanges
 ```
 
-Use the **same Foundry agent name**, deploying a new version rather than a new
-agent. `W365_AGENT_USER_ID` selects the correctly parented W365 agent user; it
-is not a secret and does not replace the Foundry runtime identity. Rerun
-discovery for the new version and compare all IDs with phase 1.
-Reject unexpected identity replacement before permitting tasks; do not silently
-rebind users, consent or FICs to replacements. A rollback must also preserve
-the accepted identity binding.
+## Bind the hosted operator
 
-After successful phase-2 redeployment and active-version verification, begin
-the first task with a **fresh hosted-agent session pinned to that immutable
-version**. Hosted sessions stay pinned to the version that created them; reusing
-a bootstrap session can return `w365_not_configured`.
+`x-agent-user-id` is a Foundry-injected opaque caller partition. It is not the
+human operator's Entra object ID and not the W365 agent-user ID.
+
+When the partition is unknown:
+
+1. deploy with `HOSTED_ALLOWED_USER_ID=pending`;
+2. have only the intended operator issue one identifiable invocation;
+3. correlate the denied request's `sha256:` fingerprint;
+4. bind that fingerprint and redeploy.
+
+```powershell
+azd env set HOSTED_ALLOWED_USER_ID "sha256:<fingerprint>" `
+    --environment $environment
+
+pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
+    -Environment $environment `
+    -Mode DeployAgent `
+    -ConfirmResourceChanges
+```
+
+Never enroll an uncorrelated caller. If the platform header is missing, stop
+and confirm hosted-ingress support rather than disabling the gate.
+
+## Verify the deployment
+
+Verify the exact active version:
 
 ```powershell
 $environment = "<azd-environment-name>"
-$version = azd env get-value AGENT_WIN365_DESKTOP_AGENT_VERSION `
-    --environment $environment
-azd ai agent invoke win365-desktop-agent `
+
+azd ai agent doctor --environment $environment
+azd ai agent show win365-desktop-agent `
     --environment $environment `
-    --version $version `
-    --new-session "<task>"
+    --output json
 ```
 
-Network policies must allow Entra exchange, Blob, the Foundry project/model
-and `agent365.svc.cloud.microsoft`; an enabled viewer additionally needs its OIDC
-authority and Key Vault. The browser needs onboarding screen-share/WebRTC
-endpoints. On RBAC propagation delays, wait/restart the affected revision;
-do not substitute storage keys or embedded tokens.
+Confirm:
 
-## Bind the hosted operator
+- deployment status is `active`;
+- the version matches `AGENT_WIN365_DESKTOP_AGENT_VERSION`;
+- the project and blueprint IDs match the accepted phase-one identities;
+- the Responses endpoint is HTTPS under the intended Foundry project.
 
-`x-agent-user-id` is a **platform-injected opaque partition**, not necessarily the
-operator's Entra object ID. `OPERATOR_OBJECT_ID` independently controls OIDC.
-Do not copy one into the other without confirming the platform contract.
-
-Binding is a phase-2 operation, not a bootstrap prerequisite. If the partition
-is unknown, use `HOSTED_ALLOWED_USER_ID=pending` for the enabled deployment and
-have only the intended operator issue one identifiable invocation. It is denied
-before W365 access. The warning includes a `sha256:` partition fingerprint and
-correlation ID in both the structured 403 response and server log, not the raw
-user identity or tokens. Have the administrator
-correlate the invocation and set
-`azd env set HOSTED_ALLOWED_USER_ID "sha256:<fingerprint>" --environment
-$environment`, then redeploy with the same name and check identities again.
-Never enroll an uncorrelated caller.
-If the header is `missing`, stop and confirm platform support; do not disable
-the gate.
-
-This gate is trustworthy **only behind Foundry's platform ingress**, which owns
-the headers. Agent mode refuses ordinary nonlocal hosting without the Foundry
-hosting marker. A marker is not authentication: do not expose the agent
-container as an independent public ACA endpoint with spoofable headers.
+Start the first task after redeployment with a fresh hosted session pinned to
+that immutable version. Use the invoice command in
+[README](../README.md#verify-live-behavior). A build, health check, or successful
+`doctor` command does not prove live W365 acceptance. If invocation has an
+unknown outcome, do not retry automatically; use
+[fail-closed recovery](ARCHITECTURE.md#fail-closed-recovery).
 
 ## Operations and rollback
 
-> **Always publish `win365-desktop-agent` through the guarded deployment
-> wrapper.** A full managed-environment `azd up` calls that wrapper from
-> `Complete-AzdUp.ps1`; focused operators can call
-> `scripts/Invoke-AzdDeployment.ps1 -Mode DeployAgent -Environment <env>
-> -ConfirmResourceChanges` directly. In `client_secret` mode the agent fetches
-> its own blueprint client secret directly from Key Vault at startup using its
-> runtime identity (see "Blueprint client secret delivery" in
-> `docs/AUTHENTICATION.md`). Do not replace either supported path with a raw
-> `azd deploy win365-desktop-agent`: the wrapper confirms
-> `w365-blueprint-client-secret` exists and the
-> agent's Key Vault RBAC is in place before packaging/publishing, then runs
-> `azd ai agent doctor` and an optional smoke invocation afterward — checks a
-> raw deploy skips.
+### Redeploy
 
-Keep one active revision/replica per component. Stop/drain tasks before
-deployment or identity changes. Do not clear a slot to make a deployment appear
-healthy: follow [recovery](ARCHITECTURE.md#fail-closed-recovery) after resolving
-the remote session. Health probes confirm process readiness, not W365/model
-access. Switching to bootstrap does not end a previously allocated session.
+Use the guarded wrapper for hosted-agent publication:
 
-Pin image digests and retain a rollback release. Rotate the viewer OIDC secret
-independently and review/revoke unneeded viewer FIC trust under administrator
-policy. Keep request content, screenshots, tokens and token-exchange bodies out
-of Application Insights/content traces. Logs include safe status/type/correlation
-metadata and explicit critical cleanup failures.
+```powershell
+$environment = "<azd-environment-name>"
 
-For old deployments, follow [migration](W365-SETUP.md#migration-from-standalone-identities);
-do not automatically delete or reparent existing resources. Remove sample-only
-resources/RBAC following [cleanup](W365-SETUP.md#cleanup). Azure resource-group
-deletion does not cancel W365 billing.
+pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
+    -Environment $environment `
+    -Mode DeployAgent `
+    -ConfirmResourceChanges
+```
 
-Use the repository teardown wrapper for sample-owned environments:
+Do not replace it with raw `azd deploy win365-desktop-agent`. The wrapper
+checks credential readiness and Key Vault RBAC, packages the complete local
+solution context, runs Foundry doctor, and can perform a smoke invocation.
+
+For a complete dedicated-environment update, rerun:
+
+```powershell
+$environment = "<azd-environment-name>"
+
+azd up --environment $environment
+```
+
+Stop or drain active tasks before deployment or identity changes. Preserve the
+same Foundry agent name and reject unexpected blueprint or agent identity
+replacement.
+
+### Logging
+
+Set sanitized operational verbosity in the selected environment:
+
+```powershell
+$environment = "<azd-environment-name>"
+
+azd env set SAMPLE_LOG_LEVEL verbose --environment $environment
+```
+
+Supported values are `summary`, `verbose`, and `debug`. PowerShell scripts also
+support `-Verbose` and `-Debug`. Secret, token, password, assertion,
+certificate, and private session values remain redacted.
+
+### Rollback
+
+Rollback means republishing a previously accepted code/configuration state as a
+new immutable version under the same agent name. Stop or drain active tasks,
+ensure the worktree is clean, and record the current version before selecting
+the known-good commit:
+
+```powershell
+$environment = "<azd-environment-name>"
+$currentVersion = azd env get-value AGENT_WIN365_DESKTOP_AGENT_VERSION `
+    --environment $environment
+
+git status --short
+git switch --detach "<known-good-commit>"
+
+pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
+    -Environment $environment `
+    -Mode DeployAgent `
+    -ConfirmResourceChanges
+
+$rollbackVersion = azd env get-value AGENT_WIN365_DESKTOP_AGENT_VERSION `
+    --environment $environment
+azd ai agent doctor --environment $environment
+azd ai agent show win365-desktop-agent `
+    --environment $environment `
+    --output json
+```
+
+Confirm that `$rollbackVersion` is new, the active project and blueprint IDs
+still match the accepted binding, and a fresh hosted session is pinned to that
+version before allowing tasks. Return to the working branch with `git switch -`
+after collecting evidence. If publication or verification fails, leave tasks
+drained, preserve the last known active version, and resolve the reported
+deployment stage before another attempt.
+
+Do not clear private state merely to make a deployment appear healthy. Resolve
+the remote session and use the guarded recovery workflow. Switching to
+bootstrap does not end an already allocated W365 session.
+
+### Teardown
+
+End known active sessions, review the ownership manifests, then run:
 
 ```powershell
 pwsh -NoProfile -File .\scripts\Invoke-AzdDown.ps1 `
@@ -970,90 +689,93 @@ pwsh -NoProfile -File .\scripts\Invoke-AzdDown.ps1 `
     -Purge
 ```
 
-The wrapper runs `scripts/Remove-W365Resources.ps1` once and then invokes azd
-for `viewer`, `state`, and `foundry` separately. A missing ARM deployment for
-one layer is treated as already deleted so later layers can still be removed.
-All other azd failures remain fatal, and a final Azure CLI check blocks success
-if a resource group tagged `azd-env-name=<environment>` remains. Direct
-`azd down` still uses `scripts/Remove-W365Resources.ps1` as an interactive
-`predown` hook through `azure.yaml`.
+The wrapper:
 
-Teardown order is intentionally reversed from setup:
-assignment first, then agent user, then sample-created federated credentials,
-then created permission grants or restored reused grant scopes, then
-sample-created inheritance entries, then blueprint `requiredResourceAccess`,
-then a sample-created W365 pool, followed by any viewer OIDC credential created
-on a reused app, a sample-created viewer service principal, a sample-created
-viewer application, and finally the sample-created Key Vault RBAC assignments
-recorded during viewer live activation. Only after that succeeds does Azure
-resource deletion continue.
+1. runs W365/Entra ownership cleanup once;
+2. removes `viewer`, `state`, and `foundry` in reverse dependency order;
+3. treats only an exact missing ARM deployment as already absent;
+4. propagates every other azd failure; and
+5. fails if a resource group tagged for the environment remains.
 
-The cleanup hook fails closed when it cannot prove ownership. If W365 state is
-configured but no ownership manifest exists, `azd down` is blocked. The same
-guard applies to environments bound to an existing Foundry project: cleanup
-stops before any mutation unless you explicitly set
-`ALLOW_EXISTING_FOUNDRY_CLEANUP=true` or pass
-`-AllowExistingProjectCleanup` to the script after confirming the target
-project resource group is disposable. Cleanup also verifies that reused shared
-grants and reused inheritance entries are still
-present before it deletes any sample-owned W365 or Entra objects.
+Cleanup is ownership-driven, not name-driven. If W365 state exists without its
+ownership manifest, teardown stops before mutation. Reused grants and
+inheritance are preserved or restored to their prior scope.
 
-Viewer-only cleanup is stricter. When `viewer-ownership.json` exists without a
-matching W365 ownership manifest, the script requires
-`W365_CLEANUP_CONFIRMED=true` before it removes viewer OIDC or Key Vault RBAC
-artifacts. `-Confirm:$false` alone is not treated as sufficient approval for
-that viewer-only path.
+Do not tear down an environment bound to a shared or pre-existing Foundry
+project until the owner has reviewed every target. The explicit
+`ALLOW_EXISTING_FOUNDRY_CLEANUP=true` override is only for a dedicated
+disposable project whose entire boundary is approved for removal.
 
-Do not run `azd down` against an environment bound to a shared or pre-existing
-Foundry project unless you have deliberately reviewed that override. Even with
-the W365 predown hook, remove only resources created specifically for this
-sample, review role assignments and viewer federation separately, and cancel
-W365 capacity through its owning service when applicable.
+Azure resource deletion does not cancel W365 billing. Confirm pool retirement
+in the owning service. Certificate-mode blueprint credentials and any operator
+certificate-management role created outside the ownership manifest require the
+additional cleanup documented in
+[Windows 365 setup](W365-SETUP.md#key_vault_certificate-mode-cleanup).
 
 ## Live acceptance
 
-Offline compilation/tests cannot prove tenant, preview SDK or service
-compatibility. As recorded in the
-[validation report](VALIDATION-REPORT.md), hosted version `15` completed the
-bounded W365 lifecycle with the explicitly selected `client_secret` mode. The
-temporary secret was then revoked and removed, and a clean version `16`
-restored `managed_identity_federation`. That federation mode remains blocked on
-the tested host by Entra `AADSTS700231`; it never falls back to the validated
-secret mode.
+Offline tests cannot prove tenant, preview SDK, model, or W365 compatibility.
+Before real workloads, complete these authorized live checks in an isolated
+environment:
 
-1. Deploy phase 1 without W365/operator/state/OIDC configuration. Confirm healthy
-   readiness, phase-2 503 responses and no W365/model/state credential access.
-2. Discover the actual agent version's IDs. Confirm ordinary Responses hosting
-   injects the matching blueprint client ID. Select only an explicitly approved
-   credential mode; do not add an automatic certificate, secret, managed
-   identity, or CLI fallback.
-3. Run setup twice against the supplied identities. Confirm parent mismatches
-   and existing grant/inheritance ambiguity fail before mutations, identity IDs
-   stay unchanged, unrelated scopes/grants/
-   policies are preserved and pool assignment is not duplicated.
-4. Redeploy the same agent name, rediscover the new version and reject
-   unexpected identity replacement. Confirm model availability, image inputs
-   and live allowlisted tool discovery. Confirm the selected mode completes
-   T1 -> T2 -> agent-user T3 and only T3 is sent to W365.
-5. Start a benign task: Ready, screenshot, action, explicit end. Confirm release
-   and absence of `/storage/responses` payload-size failures. Deny a second
-   hosted caller.
-6. If the optional viewer is approved, confirm its FIC has the exact UAMI
-   object-ID subject, tenant issuer and audience. Deny another viewer account
-   even when it possesses an opaque link. Inspect watch permissions: See-only,
-   not Control. Take control during an action; verify pause ordering, explicit
-   resume and no auto-resume on disconnect/token-refresh failure.
-7. Cancel/expire tasks and inspect cleanup. Crash a test worker, verify the
-   slot/lease blocks takeover and perform documented recovery. Validate actual
-   ACA OIDC callback, PKCE, CSRF, no-store tokens, CSP/frame origins, refresh,
-   and screenshot scaling only when the viewer is enabled.
+1. verify the active immutable agent version and unchanged Foundry identities;
+2. verify the selected credential mode completes T1, T2, and agent-user T3
+   without fallback;
+3. run one benign desktop task through readiness, a catalog refresh, an
+   allowlisted action, and `EndSession`;
+4. verify the operator partition denies another caller;
+5. test viewer OIDC, See-only observation, pause, take control, and explicit
+   resume only when the viewer is enabled;
+6. test cancellation and fail-closed stale-state recovery; and
+7. prove ownership-driven teardown and W365 capacity cleanup.
 
-[Foundry deployment reference](https://learn.microsoft.com/azure/foundry/agents/how-to/deploy-hosted-agent),
-[Foundry agent identity](https://learn.microsoft.com/azure/foundry/agents/concepts/agent-identity),
-[public token helper](https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/csharp/foundry-autopilot-agent/src/hello_world_a365_agent/Services/AgentTokenHelper.cs).
+The isolated Windows driver automates deployment, identity and ownership
+validation, a stable rerun, and teardown attempts. It does not automate the
+desktop task, caller-denial, viewer handoff, cancellation, or stale-state
+recovery checks above; perform those manually and record their sanitized
+evidence.
+
+The driver requires explicit billing approval:
+
+```powershell
+azd auth login
+Install-Module Microsoft.Graph.Authentication -Scope CurrentUser
+
+pwsh -NoProfile -File .\scripts\Invoke-W365LiveAcceptance.ps1 `
+    -SubscriptionId "<subscription-guid>" `
+    -TenantId "<tenant-guid>" `
+    -Location "eastus" `
+    -Prefix "w365accept" `
+    -PoolBillingPlanId "<tenant-billing-plan-guid>"
+```
+
+The driver previews changes, requires the exact approval phrase shown by the
+script, deploys an isolated environment, verifies ownership and a stable rerun,
+and attempts teardown in `finally`. Use `-Resume` only after reviewing a
+retained failed environment.
+
+## Troubleshooting
+
+| Symptom | Safe action |
+| --- | --- |
+| Prerequisite check finds an older `azd` first | Apply the printed `$env:Path` correction in the current PowerShell process and rerun the check. |
+| Foundry returns 403 | Verify project-scoped Foundry data-plane roles and wait for RBAC propagation; do not grant broad roles blindly. |
+| Model validation or deployment fails | Confirm the exact deployment name, supported capabilities, SKU, quota, version, and region. No agent version is published until validation succeeds. |
+| Viewer managed-environment quota is exhausted | Explicitly select an approved existing ACA environment or request quota. The deployment never selects one automatically. |
+| Viewer remains in bootstrap mode | Obtain the approved screen-share values, complete OIDC/Key Vault setup in [Viewer](VIEWER.md), and rerun `azd up`. |
+| W365 setup is blocked | Follow the exact prerequisite or ownership error in [Windows 365 setup](W365-SETUP.md); do not bypass parent, consent, billing, or manifest checks. |
+| Agent deployment fails after W365 setup | Rerun only the guarded `DeployAgent` command after fixing the reported deployment prerequisite. |
+| Invocation is disconnected or ambiguous | Do not replay. Inspect sanitized logs and follow [fail-closed recovery](ARCHITECTURE.md#fail-closed-recovery). |
+| Teardown reports a missing layer deployment | Use `Invoke-AzdDown.ps1`; it continues to remaining layers and verifies residual resource groups. |
+| Teardown reports any other error | Stop and resolve the exact authentication, authorization, ownership, provider, or residual-resource failure. |
 
 ## Next steps
 
-- Use [W365 setup](W365-SETUP.md) for delegated Graph permissions, identity binding, pool creation or reuse, and cleanup ownership.
-- Use [Viewer](VIEWER.md) only after the core hosted-agent and W365 path is working and viewer federation has been explicitly approved.
-- Use [Architecture](ARCHITECTURE.md) when rollback or live validation points to slot recovery, ownership, or session lifecycle behavior.
+- Use [Windows 365 setup](W365-SETUP.md) for Graph permissions, agent users,
+  pools, billing, ownership manifests, and tenant cleanup.
+- Use [Authentication](AUTHENTICATION.md) for credential modes, token
+  exchanges, Key Vault delivery, and blueprint trust.
+- Use [Viewer](VIEWER.md) for ACA topology, OIDC, screen sharing, live
+  activation, and human handoff.
+- Use [Architecture](ARCHITECTURE.md) for request flow, state ownership,
+  lifecycle guarantees, and recovery.

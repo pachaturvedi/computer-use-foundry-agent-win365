@@ -23,7 +23,10 @@ agent-only deployment.
 - The default non-exportable Key Vault blueprint certificate. A blueprint
   client secret is required only for explicit legacy `client_secret` mode;
   viewer federation is required only for `managed_identity_federation`.
-- Approved W365 screen-share values available from onboarding: `SCREENSHARE_APP_URL`, `SCREENSHARE_SDK_URL`, and `SCREENSHARE_FRAME_ORIGINS`.
+- Approved W365 screen-share values available from onboarding:
+  `SCREENSHARE_APP_URL`, `SCREENSHARE_SDK_URL`, and
+  `SCREENSHARE_FRAME_ORIGINS`. These are required only for live viewer
+  activation, not agent-only execution or viewer bootstrap.
 - A shared W365 Key Vault, provisioned independently of the viewer, and a
   single-tenant Entra web application for the viewer OIDC sign-in flow.
 
@@ -50,18 +53,12 @@ inconsistent outputs stop before ACA provisioning. Fix the reported state
 configuration and rerun `azd up`; the onboarding retry re-enters phase two, and
 no viewer cleanup is required for a failure before viewer provisioning.
 
-Set the W365 onboarding values after `azd env new` and before `azd up`:
-
-```powershell
-azd env set SCREENSHARE_APP_URL "<approved-app-url>" --environment "<env>"
-azd env set SCREENSHARE_SDK_URL "<approved-sdk-url>" --environment "<env>"
-azd env set SCREENSHARE_FRAME_ORIGINS "<approved-origin-list>" --environment "<env>"
-```
-
 The one-command deployment provisions the ACA/ACR/UAMI bootstrap after shared
 state, builds and health-checks the viewer image, completes W365 setup,
-configures OIDC and Key Vault secrets, enables live mode, and republishes the
-hosted agent so it advertises viewer links.
+configures OIDC and Key Vault secrets, enables live mode when the approved
+screen-share values are available, and republishes the hosted agent so it
+advertises viewer links. Values already present in the selected azd environment
+or ignored `config\deployment.local.json` are carried through automatically.
 
 If the onboarding values are absent, the ACA viewer still deploys and reports
 healthy bootstrap status, but live-view and take-control routes remain disabled.
@@ -253,9 +250,9 @@ Its prompt forbids pause, takeover, or human handoff because the basic scenario
 needs no authentication or sensitive action. If an unexpected page requires
 human action, the agent reports failure instead of waiting. Each run uses a
 locally generated run GUID in the Notepad filename; it does not expose or reuse
-the hosted session ID. Follow the complete
-[live invoice demo workflow](LIVE-INVOICE-DEMO.md) for endpoint verification,
-expected evidence, retry behavior, and cleanup checks.
+the hosted session ID. Use the direct invocation in [README](../README.md#verify-live-behavior). Treat
+an ambiguous result as unresolved and follow
+[fail-closed recovery](ARCHITECTURE.md#fail-closed-recovery) before retrying.
 
 Live-view links enter through the authenticated `/live/<id>` route and then
 redirect into the W365-hosted view-only app. Take-control links stay on the
