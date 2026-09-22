@@ -115,8 +115,20 @@ Create the environment and deploy:
 azd env new demosept22-dev `
     --subscription "<subscription-id>" `
     --location eastus
-azd up --environment demosept22-dev
+pwsh -NoProfile -File .\scripts\Invoke-AzdUp.ps1 `
+    -Environment "demosept22-dev" `
+    -ConfirmResourceChanges
 ```
+
+The wrapper runs `azd up` and streams its progress, prompts, and errors. It
+suppresses the Foundry extension's generic service-level next steps because
+they are emitted after the bootstrap agent deploys, before Windows 365 and the
+optional viewer finish. One scenario-specific `Next` section is printed only
+after the full workflow completes. It also replaces azd's core-only elapsed
+time with an end-to-end installation time and verifies the persisted final
+state, so canceling an interactive setup step cannot be reported as a
+successful complete installation. The final deployment table and next commands
+are the last output from a successful wrapper run.
 
 The command deploys the Foundry bootstrap first. It then asks whether to reuse
 an existing W365 agent pool, create a new pool, or keep a Foundry-only
@@ -150,13 +162,17 @@ For a Foundry-only bootstrap:
 
 ```powershell
 azd env set ENABLE_W365 false --environment demosept22-dev
-azd up --environment demosept22-dev
+pwsh -NoProfile -File .\scripts\Invoke-AzdUp.ps1 `
+    -Environment "demosept22-dev" `
+    -ConfirmResourceChanges
 ```
 
 Do not run `azd init` or `azd ai agent init` inside this clone. Direct `azd up`
-is the complete path for a new, dedicated managed environment. Use the
-[deployment guide](docs/DEPLOYMENT.md) when reusing a shared Foundry project or
-when separate previews and approvals are required.
+remains supported, but the Foundry extension prints its generic next steps
+before this sample's `postup` installation finishes. Use the wrapper above for
+the customer-facing one-command experience. Use the [deployment
+guide](docs/DEPLOYMENT.md) when reusing a shared Foundry project or when
+separate previews and approvals are required.
 
 ## Verify live behavior
 

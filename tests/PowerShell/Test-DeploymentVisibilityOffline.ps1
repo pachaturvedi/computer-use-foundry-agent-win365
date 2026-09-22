@@ -98,8 +98,13 @@ try {
     if ($summary -notmatch 'sample-dev-kv' -or
         $summary -notmatch 'samplestorage' -or
         $summary -notmatch 'ACA viewer.+Skipped' -or
-        $summary -notmatch 'fresh hosted-agent session pinned to active version 42' -or
-        $summary -notmatch 'azd ai agent invoke win365-desktop-agent --environment sample-dev --version 42 --new-session' -or
+        $summary -notmatch 'Verify the active hosted-agent deployment' -or
+        $summary -notmatch 'azd ai agent show win365-desktop-agent --environment sample-dev' -or
+        $summary -notmatch 'Run the repository invoice scenario in a fresh session' -or
+        $summary -notmatch [regex]::Escape('$task = Get-Content .\samples\prompts\invoice-processing-direct.txt -Raw') -or
+        $summary -notmatch 'azd ai agent invoke win365-desktop-agent --environment sample-dev --version 42 --new-session --new-conversation --timeout 1200 \$task' -or
+        $summary -notmatch 'Optional after the smoke test succeeds' -or
+        $summary -notmatch 'azd ai agent eval generate --agent win365-desktop-agent --environment sample-dev' -or
         $summary -match '(?i)secret-value|access-token') {
         throw "Deployment summary was incomplete or unsafe: $summary"
     }

@@ -119,7 +119,9 @@ For example:
 azd env new demosept22-dev `
     --subscription "<subscription-id>" `
     --location eastus
-azd up --environment demosept22-dev
+pwsh -NoProfile -File .\scripts\Invoke-AzdUp.ps1 `
+    -Environment "demosept22-dev" `
+    -ConfirmResourceChanges
 ```
 
 Before provisioning, the `preup` hook prints the generated names, model
@@ -140,6 +142,18 @@ Non-interactive deployments still fail closed unless `W365_POOL_ID` or
 9. redeploys the same hosted-agent name with W365 enabled; and
 10. activates the viewer and redeploys again when the approved screen-share
    values are available.
+
+The wrapper streams the underlying `azd up` output without changing deployment
+behavior. It removes only the Foundry extension's generic service-level
+guidance, which otherwise appears after the bootstrap deploy while `postup` is
+still installing Windows 365 and the viewer. After all phases succeed, the
+repository summary prints the active-version check, the invoice smoke command,
+and optional evaluation-suite generation. The wrapper replaces azd's
+core-phase elapsed time with the full end-to-end duration and verifies the
+persisted agent, state, viewer, and W365 completion flags before reporting
+success. If an interactive prompt is canceled, the wrapper reports the
+installation as incomplete and preserves the environment for a safe retry.
+On success, the final deployment table and next commands are printed last.
 
 New-pool setup uses the checked-in region and image defaults when the tenant
 advertises them. It derives a billing-plan GUID from existing pools when
@@ -843,7 +857,9 @@ Set `SAMPLE_LOG_LEVEL` to `summary` (default), `verbose`, or `debug`:
 ```powershell
 $environment = "<azd-environment-name>"
 azd env set SAMPLE_LOG_LEVEL verbose --environment $environment
-azd up --environment $environment
+pwsh -NoProfile -File .\scripts\Invoke-AzdUp.ps1 `
+    -Environment $environment `
+    -ConfirmResourceChanges
 ```
 
 All Windows scripts also support PowerShell's common `-Verbose` and `-Debug`

@@ -366,7 +366,7 @@ if (![string]::IsNullOrWhiteSpace($env:AZURE_ENV_NAME)) {
             [string]::IsNullOrWhiteSpace([string]$updatedValues[$_])
         })
         if ($missing.Count -gt 0) {
-            Write-Warning "Viewer remains in bootstrap mode. Set these values and rerun azd up: $($missing -join ', ')."
+            Write-Warning "Viewer remains in bootstrap mode. Set these values and rerun .\scripts\Invoke-AzdUp.ps1 -Environment '$environmentName' -ConfirmResourceChanges: $($missing -join ', ')."
         }
         else {
             Write-SampleVerbose -Component 'postup' -Message 'All live viewer prerequisites are present; requesting activation approval.'
@@ -392,7 +392,7 @@ if (![string]::IsNullOrWhiteSpace($env:AZURE_ENV_NAME)) {
             [string]::IsNullOrWhiteSpace([string]$updatedValues[$_])
         })
         if ($agentMissing.Count -gt 0) {
-            Write-Warning "Skipping hosted-agent redeploy: the running container would crash on startup without $($agentMissing -join ', '). Set these values (see 'Bind the hosted operator' in docs/DEPLOYMENT.md) and rerun azd up."
+            Write-Warning "Skipping hosted-agent redeploy: the running container would crash on startup without $($agentMissing -join ', '). Set these values (see 'Bind the hosted operator' in docs/DEPLOYMENT.md) and rerun .\scripts\Invoke-AzdUp.ps1 -Environment '$environmentName' -ConfirmResourceChanges."
         }
         else {
             $redeployReason = if ($viewerLiveActivated -and $w365SetupRan) {
@@ -423,8 +423,10 @@ if (![string]::IsNullOrWhiteSpace($env:AZURE_ENV_NAME)) {
         }
     }
 
-    & $DeploymentSummaryScriptPath -RepositoryRoot $RepositoryRoot -Environment $environmentName
-    if (!$?) {
-        throw 'Deployment summary failed.'
+    if (!(Test-EnabledValue -Value $env:W365_AZD_UP_WRAPPER)) {
+        & $DeploymentSummaryScriptPath -RepositoryRoot $RepositoryRoot -Environment $environmentName
+        if (!$?) {
+            throw 'Deployment summary failed.'
+        }
     }
 }
