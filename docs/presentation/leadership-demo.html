@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Foundry + Windows 365 Computer-Use Agent — Leadership Demo</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #0b0f14;
+    --panel: #121821;
+    --accent: #4fd1c5;
+    --accent2: #f6ad55;
+    --text: #e6edf3;
+    --muted: #9fb0c0;
+    --danger: #f56565;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    scroll-snap-type: y proximity;
+  }
+  section {
+    min-height: 100vh;
+    padding: 48px 8vw;
+    scroll-snap-align: start;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    border-bottom: 1px solid #1e2a36;
+  }
+  h1 { font-size: 2.6em; margin: 0 0 8px 0; }
+  h2 { font-size: 2.1em; color: var(--accent); margin-top: 0; }
+  h3 { color: var(--accent2); }
+  .tag {
+    display: inline-block;
+    background: #1e2a36;
+    color: var(--accent);
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 0.85em;
+    margin-bottom: 16px;
+    letter-spacing: 0.5px;
+  }
+  .subtitle { color: var(--muted); font-size: 1.2em; }
+  .quote {
+    background: var(--panel);
+    border-left: 4px solid var(--accent);
+    padding: 20px 28px;
+    border-radius: 6px;
+    font-size: 1.25em;
+    line-height: 1.6;
+    margin: 20px 0;
+  }
+  .quote em { color: var(--accent2); font-style: normal; font-weight: 600; }
+  .grid3 {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 20px;
+    margin-top: 20px;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid #1e2a36;
+    border-radius: 10px;
+    padding: 20px;
+  }
+  .card h4 { margin-top: 0; color: var(--accent); }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 20px;
+    font-size: 0.95em;
+  }
+  th, td {
+    border: 1px solid #1e2a36;
+    padding: 10px 14px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th { background: #1e2a36; color: var(--accent); }
+  .mermaid { background: var(--panel); border-radius: 10px; padding: 20px; }
+  .timebar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 20px;
+    font-size: 0.9em;
+    color: var(--muted);
+  }
+  .timebar span {
+    background: #1e2a36;
+    padding: 4px 10px;
+    border-radius: 6px;
+  }
+  .nav {
+    position: fixed;
+    right: 16px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    z-index: 10;
+  }
+  .nav a {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #2a3844;
+    display: block;
+  }
+  .nav a:hover, .nav a:focus { background: var(--accent); }
+  .highlight { color: var(--accent2); font-weight: 600; }
+  .ask {
+    background: linear-gradient(135deg, #16323a, #12212b);
+    border: 1px solid var(--accent);
+    border-radius: 10px;
+    padding: 24px 28px;
+    font-size: 1.15em;
+    margin-top: 20px;
+  }
+  .stepnum {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #05201d;
+    font-weight: 700;
+    margin-right: 10px;
+  }
+  footer-note { color: var(--muted); font-size: 0.85em; }
+</style>
+</head>
+<body>
+
+<nav class="nav" aria-label="Slide navigation">
+  <a href="#title"></a>
+  <a href="#question"></a>
+  <a href="#scenario"></a>
+  <a href="#build1"></a>
+  <a href="#build2"></a>
+  <a href="#demo"></a>
+  <a href="#painpoints"></a>
+  <a href="#ask"></a>
+</nav>
+
+<section id="title">
+  <span class="tag">LEADERSHIP DEMO · 3 MIN</span>
+  <h1>Foundry + Windows 365<br/>Computer-Use Agent</h1>
+  <p class="subtitle">An end-to-end agent that operates a real Windows desktop —
+  what it takes to build today, and where native integration removes the tax.</p>
+</section>
+
+<section id="question">
+  <span class="tag">THE QUESTION</span>
+  <h2>Not "can a customer build this" — <span class="highlight">how hard is it?</span></h2>
+  <div class="quote">
+    "We already know a customer <em>can</em> build an end-to-end computer-use
+    agent on Foundry and Windows 365 — that's not in question. What we wanted
+    to understand is how easy or hard that actually is today, and where
+    Microsoft has a real opportunity to close the gap with native
+    integration."
+  </div>
+</section>
+
+<section id="scenario">
+  <span class="tag">THE SCENARIO</span>
+  <h2>One instruction. A real desktop. A human watching.</h2>
+  <p class="subtitle">A Foundry-hosted agent opens a browser on a real Windows 365
+  Cloud PC, reads an invoice visually off the screen the way a person would,
+  and writes a structured summary into Notepad — with a live, authenticated
+  viewer link a human can watch or take over at any time.</p>
+  <div class="mermaid">
+flowchart TD
+    A[Business instruction] --> B[Foundry hosted agent]
+    B -->|MCP| C[Agent 365 W365 tools]
+    C --> D[Windows 365 Cloud PC]
+    D -->|screen-share URL| E[Authenticated live viewer]
+    E -->|watch or take control| F[Human operator]
+    D --> G[Notepad summary saved]
+  </div>
+</section>
+
+<section id="build1">
+  <span class="tag">WHAT IT TOOK · PART 1</span>
+  <div class="timebar"><span>0:25 – 1:10</span></div>
+  <h2>Identity was the biggest piece of engineering</h2>
+  <div class="quote">
+    "Think of it like getting a visitor badge for a secure building, except
+    you need <em>three badges, one after another</em> — each one only gets
+    you the next. The agent's own credential gets badge one. We hand that
+    back to Microsoft Entra and get badge two: proof this is a real agent
+    identity. Hand back both, and we get badge three — the only one Windows
+    365 actually lets through the door. We had to build that whole handoff
+    ourselves."
+  </div>
+  <div class="quote">
+    "And it's not just badges. We also had to <em>set up a dedicated W365
+    user account for the agent, license it, and put it in the right Cloud PC
+    pool</em> — separate from the agent's own identity. Three things to
+    register and wire together before any badge handoff even starts."
+  </div>
+</section>
+
+<section id="build2">
+  <span class="tag">WHAT IT TOOK · PART 2</span>
+  <h2>Three things to set up, one badge handoff</h2>
+  <div class="mermaid">
+sequenceDiagram
+    participant Setup as One-time identity setup
+    participant Blueprint as Agent credential
+    participant AgentId as Agent identity
+    participant AgentUser as W365 agent-user account
+    Setup->>Blueprint: Register the agent's credential
+    Setup->>AgentId: Create a dedicated agent identity
+    Setup->>AgentUser: Create, license, and assign to a Cloud PC pool
+    Note over Blueprint,AgentUser: All three set up by hand today
+
+    participant Runtime as Foundry hosted agent
+    participant Entra as Microsoft Entra ID
+    participant MCP as Agent 365 W365 connection
+    Runtime->>Entra: Badge 1 - prove who the agent is
+    Runtime->>Entra: Badge 1 in, badge 2 out - "real agent identity"
+    Runtime->>Entra: Badges 1 and 2 in, badge 3 out - the one W365 accepts
+    Runtime->>MCP: Attach badge 3 to every call
+    MCP-->>Runtime: Available desktop actions for this session
+  </div>
+  <div class="grid3">
+    <div class="card">
+      <h4>Connecting to the desktop tools</h4>
+      We attach the final badge to every call to Windows 365, and check what
+      desktop actions are available fresh each session — nothing hardcoded.
+    </div>
+    <div class="card">
+      <h4>Keeping the session safe</h4>
+      We track who owns a session before we start it, so a flaky start never
+      leaves an abandoned or duplicate desktop. If anything comes back
+      unclear, we treat it as unresolved — never as success. Always cleaned
+      up.
+    </div>
+    <div class="card">
+      <h4>Honest caveat</h4>
+      We wanted this to run on the agent's built-in identity alone, no stored
+      secret. One handoff step hit a limitation on the Microsoft Entra side,
+      so we added a plain fallback just for that step. A stopgap, not the
+      design we actually want.
+    </div>
+  </div>
+</section>
+
+<section id="demo">
+  <span class="tag">LIVE DEMO</span>
+  <div class="timebar"><span>1:10 – 2:15</span></div>
+  <h2>Let's just run it</h2>
+  <div class="quote">
+    "One instruction: process this invoice, save a summary. It immediately
+    returns a live viewer link and a take-control link — the
+    human-in-the-loop piece. Anyone can watch the agent work in real time, or
+    take the mouse if something needs correcting."
+  </div>
+  <ol>
+    <li><span class="stepnum">1</span>Invoke the deployed agent with the invoice-processing prompt.</li>
+    <li><span class="stepnum">2</span>Open the authenticated live viewer — watch Edge load the invoice and Notepad get filled in.</li>
+    <li><span class="stepnum">3</span>Wait for the terminal's completion marker — file saved, path confirmed.</li>
+  </ol>
+  <div class="quote">
+    "One instruction in, a watchable session, a verified result out."
+  </div>
+</section>
+
+<section id="painpoints">
+  <span class="tag">HONEST PAIN POINTS</span>
+  <div class="timebar"><span>2:15 – 3:00</span></div>
+  <h2>Identity touches four things today — all built by hand</h2>
+  <table>
+    <tr><th>Responsibility</th><th>Today (this sample)</th><th>With native integration</th></tr>
+    <tr><td>The three-step identity badge handoff (credential → agent identity → W365 user token)</td><td>Hand-built in application code</td><td>Handled automatically by the platform</td></tr>
+    <tr><td>Setting up the W365 user account, license, and Cloud PC pool for the agent</td><td>Manual one-time setup</td><td>Automated when the agent is deployed</td></tr>
+    <tr><td>Keeping tokens fresh and attaching them securely to every call</td><td>Application code</td><td>Platform-owned</td></tr>
+    <tr><td>Making sure a session isn't duplicated or abandoned, and always cleaning up</td><td>Application code</td><td>Remains the app's job either way</td></tr>
+    <tr><td>The human-in-the-loop viewer (watch / take control)</td><td>Application code</td><td>Remains the app's job either way</td></tr>
+  </table>
+</section>
+
+<section id="ask">
+  <span class="tag">THE ASK</span>
+  <h2>Make the plumbing a platform guarantee</h2>
+  <div class="ask">
+    "If Windows 365 becomes something Foundry supports out of the box — where
+    Foundry does that badge handoff for us and sets up the W365 user account
+    automatically, the same way it already smooths over other tool
+    connections — most of that identity setup just goes away. What's left is
+    the actual business logic and the safety checks around the desktop
+    session, which we'd want to keep either way.
+    <br/><br/>
+    It works today. It's just more plumbing than a customer should have to
+    build themselves — and that's a solvable gap for the platform to close."
+  </div>
+  <p class="subtitle" style="margin-top:32px;">End of demo.</p>
+</section>
+
+<script>
+  mermaid.initialize({ startOnLoad: true, theme: "dark" });
+</script>
+</body>
+</html>
