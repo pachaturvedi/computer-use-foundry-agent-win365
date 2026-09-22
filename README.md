@@ -15,6 +15,21 @@ at a time. Transport-level conversation metadata from `azd` is accepted, while
 `previous_response_id` and background execution are rejected. The optional
 viewer adds authenticated live view and human control.
 
+## Scenario and code map
+
+| Area | Responsibility | Main path |
+| --- | --- | --- |
+| Hosted agent | Runs the Foundry Responses loop and invokes only live, allowlisted W365 tools | `src\Win365Agent` |
+| Shared contracts | Owns configuration, identity exchanges, and durable session state | `src\Win365Shared` |
+| Viewer | Provides authenticated live view, pause, take control, and resume | `src\Win365Viewer` |
+| Deployment | Provisions Foundry, state, viewer, W365 binding, and immutable agent versions | `azure.yaml`, `infra`, `scripts` |
+| Tests | Mirrors production projects and exercises deployment workflows offline | `tests` |
+
+The primary demo is invoice processing. The same bounded desktop lifecycle also
+supports observation-only automation and explicit human handoff. See
+[architecture](docs/ARCHITECTURE.md) for the request, identity, state, and
+cleanup flows.
+
 ## Choose a path
 
 | Goal | Path | Azure or W365 changes |
@@ -60,12 +75,11 @@ unauthenticated and loopback-only; never publish or tunnel them.
 
 ## Bring up a fresh environment
 
-Choose one phase-1 bootstrap path:
-
-- use direct `azd up` for a new, dedicated Foundry environment with W365,
-  shared state, and the viewer disabled;
-- use the staged scripts when you need a preview and explicit approval before
-  each mutation, are reusing a Foundry project, or are continuing to W365.
+A fresh managed environment defaults to the complete demo: Foundry project and
+model, bootstrap agent, shared Blob state, W365 setup, ACA viewer, and the final
+enabled hosted-agent version. `azd up` performs the required two internal
+phases because the first agent version must exist before its identity can
+receive state and W365 access.
 
 Authenticate both CLIs to the same tenant and subscription:
 
@@ -77,7 +91,19 @@ azd ext install microsoft.foundry
 pwsh -NoProfile -File .\tests\PowerShell\Test-AzdPrerequisites.ps1 -RequireLogin
 ```
 
-For the shortest fresh-environment path:
+Before the first deployment, select an existing W365 pool or save the approved
+billing plan, region, and image profile. This is tenant-specific and cannot be
+invented by the sample:
+
+```powershell
+Install-Module Microsoft.Graph.Authentication -Scope CurrentUser
+pwsh -NoProfile -File .\scripts\Get-W365DiscoveryOptions.ps1 `
+    -TenantId "<tenant-id>" `
+    -UseDeviceCode `
+    -Configure
+```
+
+Then create the environment and deploy:
 
 ```powershell
 azd env new demosept22-dev `
@@ -86,18 +112,42 @@ azd env new demosept22-dev `
 azd up --environment demosept22-dev
 ```
 
-The environment name drives the generated resource names. The reviewed model
-defaults are `gpt-6-astra`, version `2026-09-03`, `GlobalStandard`, and capacity
-`200` (200K TPM). The `preup` hook displays the effective values before Azure
-changes begin. Confirm regional model availability, quota, and expected cost
-first. A failed deployment can leave partially created resources.
+The interactive run asks for W365 resource approval, delegated Graph sign-in,
+and the existing blueprint credential through a secure prompt. It deploys the
+bootstrap agent, discovers its exact principal, provisions state and the viewer,
+configures W365, and redeploys the same agent name. The reviewed model defaults
+are `gpt-6-astra`, version `2026-09-03`, `GlobalStandard`, and capacity `200`
+(200K TPM).
 
-See the [phase-1 deployment guidance](docs/DEPLOYMENT.md#phase-1-deploy-bootstrap)
-for defaults, quota, cost, existing-project rules, and overrides, and
+The ACA viewer is deployed by default. To activate live view and take control
+in the same run, set the three non-secret screen-share values supplied during
+W365 onboarding before `azd up`:
+
+```powershell
+azd env set SCREENSHARE_APP_URL "<approved-app-url>" --environment demosept22-dev
+azd env set SCREENSHARE_SDK_URL "<approved-sdk-url>" --environment demosept22-dev
+azd env set SCREENSHARE_FRAME_ORIGINS "<approved-origin-list>" --environment demosept22-dev
+```
+
+Without those values, W365 and the ACA viewer still deploy, but the viewer
+remains in healthy bootstrap mode and the final summary identifies the missing
+activation settings.
+
+See the [deployment guidance](docs/DEPLOYMENT.md#phase-1-deploy-bootstrap)
+for prerequisites, defaults, quota, cost, existing-project rules, and opt-out
+settings, and
 [operations and rollback](docs/DEPLOYMENT.md#operations-and-rollback) for
 partial deployments and teardown.
 
-For preview and approval boundaries, initialize a dedicated environment:
+For a Foundry-only bootstrap:
+
+```powershell
+azd env set ENABLE_W365 false --environment demosept22-dev
+azd up --environment demosept22-dev
+```
+
+Use the staged workflow below when you need separate previews and approvals,
+or when reusing a shared Foundry project:
 
 ```powershell
 pwsh -NoProfile -File .\scripts\Initialize-Greenfield.ps1 `
@@ -124,7 +174,7 @@ pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
 azd ai agent doctor --environment "<resource-prefix>-dev"
 ```
 
-The bootstrap is not desktop-capable. Continue with
+The staged bootstrap is not desktop-capable. Continue with
 [phase 2](docs/DEPLOYMENT.md#phase-2-bind-and-enable) to discover its exact
 principal, provision shared Blob state, configure the approved W365 pool,
 perform W365 setup, and redeploy the same agent name.
@@ -135,9 +185,9 @@ Never place it in source, JSON, `.azure`, logs, or command history. See
 [authentication](docs/AUTHENTICATION.md) for supported modes and cleanup.
 
 Do not run `azd init` or `azd ai agent init` inside this clone. Direct `azd up`
-is supported only for the reviewed, dedicated phase-1 bootstrap above. Use the
-[deployment guide](docs/DEPLOYMENT.md) for staged changes, phase 2,
-existing-project configuration, rollback, teardown, and recovery.
+is the complete path only for a new, dedicated managed environment. Use the
+[deployment guide](docs/DEPLOYMENT.md) for shared-project safeguards, staged
+changes, rollback, teardown, and recovery.
 
 ## Verify live behavior
 

@@ -112,6 +112,8 @@ try {
     $viewerAppBicep = Get-Content -LiteralPath (Join-Path $root 'infra\viewer.bicep') -Raw
     $azureYaml = Get-Content -LiteralPath (Join-Path $root 'azure.yaml') -Raw
     $upContextScript = Get-Content -LiteralPath (Join-Path $root 'scripts\Show-AzdUpContext.ps1') -Raw
+    $postUpScript = Get-Content -LiteralPath (Join-Path $root 'scripts\Complete-AzdUp.ps1') -Raw
+    $phaseTwoScript = Get-Content -LiteralPath (Join-Path $root 'scripts\Initialize-AzdUpPhaseTwo.ps1') -Raw
     $planScript = Get-Content -LiteralPath (Join-Path $root 'scripts\Show-DeploymentPlan.ps1') -Raw
     $viewerDeployScript = Get-Content -LiteralPath (Join-Path $root 'scripts\Deploy-ViewerBootstrap.ps1') -Raw
     $deploymentScriptPath = Join-Path $root 'scripts\Invoke-AzdDeployment.ps1'
@@ -138,14 +140,22 @@ try {
         $viewerAppBicep -notmatch "name: 'VIEWER_LIVE_ENABLED', value: viewerLiveEnabled \? 'true' : 'false'" -or
         $azureYaml -notmatch 'VIEWER_LIVE_ENABLED: \$\{VIEWER_LIVE_ENABLED:-false\}' -or
         $azureYaml -notmatch '(?ms)^\s{2}preup:\s+windows:.*Show-AzdUpContext\.ps1' -or
+        $azureYaml -notmatch '(?ms)^\s{2}postup:\s+windows:.*Complete-AzdUp\.ps1' -or
         $upContextScript -notmatch 'Resolved deployment defaults' -or
         $upContextScript -notmatch 'Model capacity' -or
-        $upContextScript -notmatch 'Disabled for bootstrap' -or
-        $upContextScript -match 'Get-DeploymentConfig\s+-' -or
+        $upContextScript -notmatch 'Enabled after Foundry identity discovery' -or
+        $upContextScript -notmatch 'W365_POOL_BILLING_PLAN_ID' -or
         $upContextScript -notmatch 'Read-DeploymentConfigFile' -or
+        $upContextScript -notmatch 'Get-DeploymentConfig\s+-RepositoryRoot' -or
         $upContextScript -notmatch 'Existing-project mode requires these azd environment values' -or
         $upContextScript -notmatch '\$generatedProjectName\.Substring\(0, 64\)' -or
         $upContextScript -notmatch 'informational, not failures' -or
+        $postUpScript -notmatch 'Initialize-AzdUpPhaseTwo\.ps1' -or
+        $postUpScript -notmatch 'viewerLiveActivated -or' -or
+        $phaseTwoScript -notmatch 'STATE_AGENT_PRINCIPAL_ID = \$agentPrincipalId\.ToString\(\)' -or
+        $phaseTwoScript -notmatch "'provision', 'state'" -or
+        $phaseTwoScript -notmatch "'provision', 'viewer'" -or
+        $phaseTwoScript.IndexOf("'provision', 'state'") -gt $phaseTwoScript.IndexOf("'provision', 'viewer'") -or
         $planScript -notmatch 'Assert-ViewerAzureCliPrerequisites' -or
         $viewerDeployScript -notmatch 'Assert-ViewerAzureCliPrerequisites' -or
         $viewerDeployScript -notmatch 'Waiting up to five minutes for the ACA viewer to become healthy' -or

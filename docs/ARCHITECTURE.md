@@ -73,30 +73,36 @@ portable assumption.
 
 ## Provisioning and binding flow
 
-The two-phase deployment avoids manufacturing replacement identities. Phase 1
+The two-phase lifecycle avoids manufacturing replacement identities. Phase 1
 lets Foundry create its supported blueprint and agent identity. Only after their
 exact IDs are discovered does an administrator authorize W365 relationships.
+For a fresh managed environment, one `azd up` orchestrates both phases; staged
+scripts expose the same boundaries as separate commands.
 
 ```mermaid
 sequenceDiagram
    autonumber
    actor Admin as Developer / tenant administrator
    participant AZD as Azure Developer CLI (azd)
+   participant Hook as Complete-AzdUp.ps1
    participant Foundry as Microsoft Foundry
    participant Discovery as Get-FoundryIdentity.ps1
    participant Setup as Setup-W365.ps1
    participant Entra as Microsoft Entra / Graph
    participant W365 as Windows 365 / Intune
 
-   Admin->>AZD: Deploy phase 1 with W365_ENABLED=false
+   Admin->>AZD: azd up for a fresh managed environment
+   AZD->>Foundry: Provision project/model
    AZD->>Foundry: Deploy hosted agent version 1
    Foundry->>Entra: Provision blueprint and agent identity
-   Admin->>Discovery: Read exact agent name and version
+   AZD->>Hook: Run guarded postup
+   Hook->>Discovery: Read exact agent name and version
    Discovery->>Foundry: Read blueprint client ID and instance principal ID
    Foundry-->>Discovery: Blueprint ID and agent object ID
-   Discovery-->>Admin: Non-secret identity IDs
+   Discovery-->>Hook: Non-secret identity IDs
+   Hook->>AZD: Provision shared state and viewer bootstrap
 
-   Admin->>Setup: Supply tenant, blueprint, agent object, UPN, and pool
+   Hook->>Setup: Supply tenant, blueprint, agent object, and approved pool profile
    Setup->>Entra: Validate parent chain and resolve agent client ID
    Setup->>Entra: Reconcile W365 consent and inherited scopes
    Setup->>Entra: Create/reuse agent user parented to agent identity
@@ -108,12 +114,15 @@ sequenceDiagram
    end
    Setup->>W365: Validate existing agent pool
    Setup->>W365: Assign agent-user object ID to pool
-   Setup-->>Admin: Return W365_* IDs
+   Setup-->>Hook: Persist W365_* IDs and ownership
 
-   Admin->>AZD: Set IDs/state/operator and enable W365
-   AZD->>Foundry: Deploy same agent name as version N+1
-   Admin->>Discovery: Rediscover version N+1
-   Discovery-->>Admin: Reject unexpected identity replacement
+   Hook->>AZD: Deploy same agent name as version N+1
+   AZD->>Foundry: Publish enabled immutable version
+   opt Screen-share prerequisites configured
+      Hook->>AZD: Activate viewer and deploy version N+2
+   end
+   Hook->>Discovery: Rediscover active version
+   Discovery-->>Hook: Reject unexpected identity replacement
 ```
 
 Relevant implementation: [`azure.yaml`](../azure.yaml),
@@ -122,10 +131,12 @@ Relevant implementation: [`azure.yaml`](../azure.yaml),
 
 ## Request path
 
-`W365_ENABLED` defaults to `false` and is strictly `true`/`false`. Bootstrap
+`W365_ENABLED` starts as `false` and is strictly `true`/`false`. Bootstrap
 serves Foundry Responses with a phase-2-required 503 and healthy readiness,
 starting before any model initialization and without accessing W365, model or
-state credentials. The dedicated `Win365Viewer` executable owns viewer bootstrap and live routes.
+state credentials. For a fresh managed environment, `postup` enables W365 only
+after state, credential, operator, and W365 setup checks complete. The dedicated
+`Win365Viewer` executable owns viewer bootstrap and live routes.
 Viewer bootstrap has `/health` and viewer-specific 503 routes, requiring no
 OIDC configuration. The hosted agent receives the viewer hostname separately
 but advertises links only after `VIEWER_LIVE_ENABLED=true`. Local mode is

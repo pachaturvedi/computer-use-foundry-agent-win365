@@ -5,6 +5,11 @@ This is **phase 2**: first [deploy bootstrap and discover the Foundry
 identity](DEPLOYMENT.md#phase-1-deploy-bootstrap). Setup reuses the exact
 Foundry-provisioned blueprint and agent identity; it does not create replacements.
 
+For a new dedicated managed environment, `azd up` performs this phase
+automatically after the bootstrap version is active. The staged commands later
+in this guide remain available for shared projects, custom credential modes,
+and operators who require separate approval boundaries.
+
 ## Prerequisites
 
 | Requirement | Action |
@@ -16,7 +21,7 @@ Foundry-provisioned blueprint and agent identity; it does not create replacement
 | Foundry identities | Record the discovered blueprint app/client ID and agent object/principal ID. W365, Foundry and viewer Azure identities must share the tenant. |
 | Administrator | Verify current tenant roles and consent policy for blueprint updates, agent users, grants and pool assignment. Use PIM where required. |
 | Tooling | PowerShell 7.4+ and Microsoft.Graph.Authentication. |
-| Optional viewer | Existing deployed UAMI, explicit administrator approval for blueprint federation, and the SDK URL/frame origins from W365 onboarding. |
+| Viewer | Deployed by default for a fresh managed environment. Live activation additionally needs the SDK URL, app URL, and frame origins supplied by W365 onboarding. |
 
 W365 for Agents does not require a per-user Windows 365 Cloud PC seat for this
 consumption model. Pool capacity can incur charges while the sample is idle.
@@ -25,6 +30,40 @@ A task timeout is not a billing cap. Stop/delete unneeded pools in Intune.
 [Official prerequisites](https://github.com/microsoft/windows-365-for-agents/blob/main/docs/getting-started.md),
 [billing](https://learn.microsoft.com/windows-365/agents/billing-w365a),
 [pool creation](https://github.com/microsoft/windows-365-for-agents/blob/main/docs/cloud-pc-pools.md).
+
+## Fresh `azd up` prerequisites
+
+Before creating the environment, save either an existing W365 agent pool or an
+approved billing-plan profile:
+
+```powershell
+pwsh -NoProfile -File .\scripts\Get-W365DiscoveryOptions.ps1 `
+    -TenantId "<tenant-guid>" `
+    -UseDeviceCode `
+    -Configure
+```
+
+The helper writes only non-secret pool, region, image, and capacity settings to
+ignored `config\deployment.local.json`. Alternatively, after `azd env new`, set
+an approved billing-plan GUID directly:
+
+```powershell
+azd env set W365_POOL_BILLING_PLAN_ID "<billing-plan-guid>" `
+    --environment "<azd-environment-name>"
+```
+
+The `preup` hook fails before Azure changes when neither an existing pool nor a
+valid billing-plan GUID is configured. During `postup`, the operator must:
+
+1. approve W365/Entra resource changes;
+2. complete delegated Graph device-code sign-in;
+3. provide the existing blueprint client secret through the secure prompt when
+   using `client_secret`; and
+4. approve viewer OIDC activation when screen-share prerequisites are present.
+
+The hook then creates or reuses the agent user and W365 pool, persists the
+ownership manifest and non-secret identifiers, and redeploys the same hosted
+agent name. It never creates a replacement Foundry blueprint or agent identity.
 
 ## Setup permission summary
 

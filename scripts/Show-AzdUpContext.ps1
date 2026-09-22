@@ -1,6 +1,7 @@
 #Requires -Version 7.4
 [CmdletBinding()]
 param(
+    [string]$RepositoryRoot = (Split-Path $PSScriptRoot),
     [string]$ConfigPath
 )
 
@@ -9,9 +10,50 @@ Set-StrictMode -Version Latest
 
 . (Join-Path $PSScriptRoot 'Logging.ps1')
 . (Join-Path $PSScriptRoot 'DeploymentConfig.ps1')
+. (Join-Path $PSScriptRoot 'W365OwnershipManifest.ps1')
 Initialize-SampleScriptLogging -ScriptName $MyInvocation.MyCommand.Name -Parameters $PSBoundParameters
 
-$root = Split-Path $PSScriptRoot
+function Resolve-AzdUpFlag {
+    param(
+        [Parameter(Mandatory)][System.Collections.IDictionary]$EnvironmentValues,
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][bool]$DefaultValue,
+        [switch]$AllowProcessValue
+    )
+
+    if ($EnvironmentValues.Contains($Name) -and
+        ![string]::IsNullOrWhiteSpace([string]$EnvironmentValues[$Name])) {
+        $value = [string]$EnvironmentValues[$Name]
+    }
+    elseif ($AllowProcessValue -and
+        ![string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($Name, 'Process'))) {
+        $value = [Environment]::GetEnvironmentVariable($Name, 'Process')
+    }
+    else {
+        return $DefaultValue
+    }
+
+    if ($value -notin @('true', 'false')) {
+        throw "Expected $Name to be true or false; received '$value'."
+    }
+    return $value -eq 'true'
+}
+
+function Get-AzdUpValue {
+    param(
+        [Parameter(Mandatory)][System.Collections.IDictionary]$EnvironmentValues,
+        [Parameter(Mandatory)][string]$Name
+    )
+
+    if ($EnvironmentValues.Contains($Name) -and
+        ![string]::IsNullOrWhiteSpace([string]$EnvironmentValues[$Name])) {
+        return [string]$EnvironmentValues[$Name]
+    }
+
+    return [string][Environment]::GetEnvironmentVariable($Name, 'Process')
+}
+
+$root = $RepositoryRoot
 $resolvedConfigPath = if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
     Join-Path $root 'config\deployment.defaults.json'
 }
@@ -24,6 +66,12 @@ $environmentName = if (![string]::IsNullOrWhiteSpace($env:AZURE_ENV_NAME)) {
 }
 else {
     '<azd-environment>'
+}
+$environmentValues = @{}
+$environmentPath = Join-Path $root ".azure\$environmentName\.env"
+if ($environmentName -ne '<azd-environment>' -and
+    (Test-Path -LiteralPath $environmentPath -PathType Leaf)) {
+    $environmentValues = Read-AzdEnvironmentFile -Path $environmentPath
 }
 $resourcePrefix = [string](Get-DeploymentConfiguredValue -EnvironmentName 'RESOURCE_PREFIX' -DefaultValue $environmentName)
 $resourceGroupName = [string](Get-DeploymentConfiguredValue -EnvironmentName 'AZURE_RESOURCE_GROUP' -DefaultValue "$resourcePrefix-$($config.foundry.resourceGroupSuffix)")
@@ -68,6 +116,57 @@ if ($projectOwnership -eq 'existing') {
         throw "Existing-project mode requires these azd environment values: $($missingExistingProjectValues -join ', ')."
     }
 }
+$freshManagedEnvironment = $projectOwnership -eq 'managed'
+$enableW365 = Resolve-AzdUpFlag `
+    -EnvironmentValues $environmentValues `
+    -Name 'ENABLE_W365' `
+    -DefaultValue ($freshManagedEnvironment -and [bool]$config.freshDeployment.enableW365) `
+    -AllowProcessValue
+$deployViewer = Resolve-AzdUpFlag `
+    -EnvironmentValues $environmentValues `
+    -Name 'DEPLOY_VIEWER' `
+    -DefaultValue ($enableW365 -and [bool]$config.freshDeployment.deployViewer)
+$deployState = Resolve-AzdUpFlag `
+    -EnvironmentValues $environmentValues `
+    -Name 'DEPLOY_STATE' `
+    -DefaultValue $false
+$w365Enabled = Resolve-AzdUpFlag `
+    -EnvironmentValues $environmentValues `
+    -Name 'W365_ENABLED' `
+    -DefaultValue $false
+if ($enableW365 -and !$w365Enabled) {
+    $setupConfig = (Get-DeploymentConfig -RepositoryRoot $root -ConfigPath $resolvedConfigPath).Values
+    $w365Config = if ($setupConfig.ContainsKey('w365') -and $setupConfig.w365 -is [hashtable]) {
+        $setupConfig.w365
+    }
+    else {
+        @{}
+    }
+    $existingPool = Get-AzdUpValue -EnvironmentValues $environmentValues -Name 'W365_POOL_ID'
+    if ([string]::IsNullOrWhiteSpace($existingPool) -and $w365Config.ContainsKey('poolId')) {
+        $existingPool = [string]$w365Config.poolId
+    }
+    if ([string]::IsNullOrWhiteSpace($existingPool) -and $w365Config.ContainsKey('poolIdOrUrl')) {
+        $existingPool = [string]$w365Config.poolIdOrUrl
+    }
+    $billingPlanId = Get-AzdUpValue -EnvironmentValues $environmentValues -Name 'W365_POOL_BILLING_PLAN_ID'
+    if ([string]::IsNullOrWhiteSpace($billingPlanId) -and $w365Config.ContainsKey('poolBillingPlanId')) {
+        $billingPlanId = [string]$w365Config.poolBillingPlanId
+    }
+    $parsedBillingPlanId = [guid]::Empty
+    if ([string]::IsNullOrWhiteSpace($existingPool) -and
+        (![guid]::TryParse($billingPlanId, [ref]$parsedBillingPlanId) -or
+            $parsedBillingPlanId -eq [guid]::Empty)) {
+        throw @"
+Fresh Windows 365 setup requires an existing pool or a tenant billing-plan GUID before Azure changes begin.
+Run:
+  pwsh -NoProfile -File .\scripts\Get-W365DiscoveryOptions.ps1 -TenantId "<tenant-guid>" -UseDeviceCode -Configure
+or set:
+  azd env set W365_POOL_BILLING_PLAN_ID "<billing-plan-guid>" --environment "$environmentName"
+Set ENABLE_W365=false to deploy only the Foundry bootstrap.
+"@
+    }
+}
 
 Write-Host ''
 Write-Host 'Starting azd up for this sample.'
@@ -84,9 +183,9 @@ Write-Host 'Resolved deployment defaults:'
     [pscustomobject]@{ Setting = 'Model'; Value = "$modelName ($modelVersion)" }
     [pscustomobject]@{ Setting = 'Model SKU'; Value = $modelSkuName }
     [pscustomobject]@{ Setting = 'Model capacity'; Value = "$($modelSkuCapacity)K TPM" }
-    [pscustomobject]@{ Setting = 'Blob session state'; Value = $(if ($env:DEPLOY_STATE -eq 'true') { 'Enabled' } else { 'Disabled for bootstrap; credential vault still created' }) }
-    [pscustomobject]@{ Setting = 'Viewer'; Value = $(if ($env:DEPLOY_VIEWER -eq 'true') { 'Enabled' } else { 'Disabled for bootstrap' }) }
-    [pscustomobject]@{ Setting = 'Windows 365'; Value = $(if ($env:W365_ENABLED -eq 'true') { 'Enabled' } else { 'Disabled for bootstrap' }) }
+    [pscustomobject]@{ Setting = 'Blob session state'; Value = $(if ($deployState) { 'Enabled' } elseif ($enableW365) { 'Enabled after Foundry identity discovery' } else { 'Disabled; credential vault still created' }) }
+    [pscustomobject]@{ Setting = 'Viewer'; Value = $(if ($deployViewer) { 'Enabled after shared state is ready' } else { 'Disabled' }) }
+    [pscustomobject]@{ Setting = 'Windows 365'; Value = $(if ($w365Enabled) { 'Enabled' } elseif ($enableW365) { 'Set up after bootstrap approval' } else { 'Disabled' }) }
 ) | Format-Table -AutoSize | Out-String | Write-Host
 
 Write-Host 'azd may print unlabeled "Skipped: Didn''t find new changes" rows while it checks'

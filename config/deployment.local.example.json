@@ -28,7 +28,7 @@
     "blueprintCredentialMode": "client_secret",
     "poolDisplayName": "su-cua-test-clone",
     "poolDescription": "Cloned from the su-cua-test pool template.",
-    "poolBillingPlanName": "w365a-billingplan",
+    "poolBillingPlanId": "YOUR-W365-BILLING-PLAN-GUID",
     "poolBillingType": "payAsYouGo",
     "poolGeographicLocationType": "usCentral",
     "poolRegionGroup": "usCentral",
