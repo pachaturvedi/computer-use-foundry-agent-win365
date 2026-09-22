@@ -45,8 +45,11 @@ param screenShareSdkUrl string = ''
 param screenShareFrameOrigins string = ''
 param screenShareAppUrl string = ''
 
-var stateReady = toLower(deployState) == 'true' && !empty(stateStorageAccountName) && !empty(stateContainerName) && !empty(sessionBlobUri)
-var viewerEnabled = toLower(deployViewer) == 'true' && stateReady
+var expectedSessionBlobUri = 'https://${stateStorageAccountName}.blob.${environment().suffixes.storage}/${stateContainerName}/slot.json'
+var stateReady = toLower(deployState) == 'true' && !empty(stateStorageAccountName) && !empty(stateContainerName) && sessionBlobUri == expectedSessionBlobUri
+var viewerEnabled = toLower(deployViewer) == 'true'
+  ? (stateReady ? true : fail('DEPLOY_VIEWER=true requires validated shared Blob state outputs.'))
+  : false
 var liveViewerEnabled = viewerEnabled && toLower(viewerLiveEnabled) == 'true'
 var resolvedResourcePrefix = !empty(resourcePrefix) ? resourcePrefix : environmentName
 var resolvedResourceGroupName = !empty(resourceGroupName) ? resourceGroupName : '${resolvedResourcePrefix}-rg'

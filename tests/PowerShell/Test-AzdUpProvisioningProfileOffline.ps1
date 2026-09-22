@@ -126,17 +126,20 @@ param(
     throw 'Existing W365 pool and pending ACA managed-environment choices were not persisted safely.'
     }
 
+    Set-AzdEnvironmentFileValues -Path $environmentPath -Values ([ordered]@{
+        DEPLOY_VIEWER = 'true'
+    })
     & $scriptPath `
-    -Environment $environmentName `
-    -RepositoryRoot $tempRoot `
-    -ConfigPath (Join-Path $root 'config\deployment.defaults.json') `
-    -ViewerDiscoveryScriptPath $viewerDiscoveryPath `
-    -ViewerOnly `
-    -ViewerMode existing
+        -Environment $environmentName `
+        -RepositoryRoot $tempRoot `
+        -ConfigPath (Join-Path $root 'config\deployment.defaults.json') `
+        -ViewerDiscoveryScriptPath $viewerDiscoveryPath `
+        -ViewerOnly `
+        -ViewerMode existing
     $viewerRetryValues = Read-AzdEnvironmentFile -Path $environmentPath
     if ($viewerRetryValues['DEPLOY_VIEWER'] -ne 'true' -or
-    $viewerRetryValues['VIEWER_HOSTING_MODE'] -ne 'existing') {
-    throw 'Viewer-only ACA quota recovery did not activate the viewer after shared state was ready.'
+        $viewerRetryValues['VIEWER_HOSTING_MODE'] -ne 'existing') {
+        throw 'Viewer-only ACA quota recovery changed the phase-two-owned viewer activation state.'
     }
 
     Write-EnvironmentFile

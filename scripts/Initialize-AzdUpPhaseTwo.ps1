@@ -110,8 +110,12 @@ try {
             [UriKind]::Absolute,
             [ref]$sessionBlobUri) -or
         $sessionBlobUri.Scheme -ne [Uri]::UriSchemeHttps -or
+        !$sessionBlobUri.IsDefaultPort -or
         $sessionBlobUri.Host -ne "$($stateValues.STATE_STORAGE_ACCOUNT_NAME).blob.core.windows.net" -or
-        $sessionBlobUri.AbsolutePath -ne "/$($stateValues.STATE_CONTAINER_NAME)/slot.json") {
+        $sessionBlobUri.AbsolutePath -ne "/$($stateValues.STATE_CONTAINER_NAME)/slot.json" -or
+        ![string]::IsNullOrEmpty($sessionBlobUri.UserInfo) -or
+        ![string]::IsNullOrEmpty($sessionBlobUri.Query) -or
+        ![string]::IsNullOrEmpty($sessionBlobUri.Fragment)) {
         throw 'Shared state provisioning returned inconsistent STATE_STORAGE_ACCOUNT_NAME, STATE_CONTAINER_NAME, and SESSION_BLOB_URI values. Viewer provisioning was not started.'
     }
 

@@ -45,14 +45,14 @@ if ($env:TEST_AZD_VIEWER_QUOTA_ONCE -eq 'true' -and
 }
 if ($CommandArgs[0] -eq 'env' -and $CommandArgs[1] -eq 'get-value') {
     $storageName = if ($env:TEST_AZD_STATE_MODE -eq 'missing') { '' } else { 'samplestatestorage' }
-    $sessionBlobUri = if ($env:TEST_AZD_STATE_MODE -eq 'inconsistent') {
-        'https://differentstorage.blob.core.windows.net/desktop-state/slot.json'
-    }
-    elseif ($env:TEST_AZD_STATE_MODE -eq 'missing') {
-        ''
-    }
-    else {
-        'https://samplestatestorage.blob.core.windows.net/desktop-state/slot.json'
+    $sessionBlobUri = switch ($env:TEST_AZD_STATE_MODE) {
+        'inconsistent' { 'https://differentstorage.blob.core.windows.net/desktop-state/slot.json' }
+        'missing' { '' }
+        'query' { 'https://samplestatestorage.blob.core.windows.net/desktop-state/slot.json?sig=unexpected' }
+        'fragment' { 'https://samplestatestorage.blob.core.windows.net/desktop-state/slot.json#unexpected' }
+        'port' { 'https://samplestatestorage.blob.core.windows.net:8443/desktop-state/slot.json' }
+        'userinfo' { 'https://unexpected@samplestatestorage.blob.core.windows.net/desktop-state/slot.json' }
+        default { 'https://samplestatestorage.blob.core.windows.net/desktop-state/slot.json' }
     }
     $values = @{
         FOUNDRY_PROJECT_OWNERSHIP = 'managed'
@@ -156,7 +156,7 @@ param(
         throw 'Phase-two initialization enabled the viewer before state outputs were validated.'
     }
 
-    foreach ($stateMode in @('missing', 'inconsistent')) {
+    foreach ($stateMode in @('missing', 'inconsistent', 'query', 'fragment', 'port', 'userinfo')) {
         Remove-Item -LiteralPath $callsPath -ErrorAction SilentlyContinue
         $env:TEST_AZD_STATE_MODE = $stateMode
         $stateRejected = $false
