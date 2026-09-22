@@ -100,6 +100,26 @@ finally {
     }
 }
 
+$previousPredownState = $env:W365_PREDOWN_ALREADY_COMPLETED
+try {
+    $env:W365_PREDOWN_ALREADY_COMPLETED = 'true'
+    $alreadyCompletedOutput = @(
+        & $cleanupScriptPath `
+            -EnvironmentName 'already-completed-test' `
+            -EnvironmentFilePath 'missing-environment-file' `
+            -OwnershipManifestPath 'missing-ownership-file' `
+            -Confirm:$false
+    )
+    $expectedAlreadyCompletedOutput = 'W365 pre-teardown cleanup was already completed by Invoke-AzdDown.ps1. Azure resource deletion can continue.'
+    if ($alreadyCompletedOutput.Count -ne 1 -or
+        $alreadyCompletedOutput[0] -ne $expectedAlreadyCompletedOutput) {
+        throw "Repeated predown cleanup emitted unexpected output: [$($alreadyCompletedOutput -join ' | ')]"
+    }
+}
+finally {
+    [Environment]::SetEnvironmentVariable('W365_PREDOWN_ALREADY_COMPLETED', $previousPredownState, 'Process')
+}
+
 $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
     $script:tenant = '01eed126-9f96-4d2d-a127-dc2e786a898b'
     $script:scopes = @()

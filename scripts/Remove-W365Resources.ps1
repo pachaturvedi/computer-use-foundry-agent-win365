@@ -520,6 +520,11 @@ function Resolve-EnvironmentContext {
     }
 }
 
+if (Test-TrueString -Value $env:W365_PREDOWN_ALREADY_COMPLETED) {
+    Write-Output 'W365 pre-teardown cleanup was already completed by Invoke-AzdDown.ps1. Azure resource deletion can continue.'
+    return
+}
+
 $context = Resolve-EnvironmentContext
 if ([string]::IsNullOrWhiteSpace($context.EnvironmentFilePath) -and
     [string]::IsNullOrWhiteSpace($context.OwnershipManifestPath)) {
