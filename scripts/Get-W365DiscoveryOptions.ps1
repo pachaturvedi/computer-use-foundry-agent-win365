@@ -134,6 +134,7 @@ if (!$hasRequiredContext) {
     }
     if ($UseDeviceCode) {
         $connectParameters.UseDeviceCode = $true
+        $connectParameters.InformationAction = 'Continue'
     }
 
     try {

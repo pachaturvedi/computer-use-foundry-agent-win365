@@ -17,6 +17,7 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
     $script:timeoutFailuresRemaining = 1
     $script:lastContextScope = ''
     $script:lastUseDeviceCode = $false
+    $script:lastInformationAction = ''
     $script:ledger = @{
         Blueprint = @{ id = 'blueprint-object'; appId = $script:blueprintId; keyCredentials = @('untouched-key'); requiredResourceAccess = @(
             @{ resourceAppId = 'unrelated-resource'; resourceAccess = @(@{ id = 'unrelated-scope'; type = 'Scope' }) }
@@ -43,10 +44,11 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
         User = $null; Grants = @(); Inheritance = @(); Assignments = @(); Fics = @(); Creates = 0; Writes = 0
     }
     function Connect-MgGraph {
-        param($TenantId, $Scopes, $ContextScope, $ClientTimeout, [switch]$NoWelcome, [switch]$UseDeviceCode)
+        param($TenantId, $Scopes, $ContextScope, $ClientTimeout, [switch]$NoWelcome, [switch]$UseDeviceCode, $InformationAction)
         $script:connectCalls++
         $script:lastContextScope = $ContextScope
         $script:lastUseDeviceCode = $UseDeviceCode.IsPresent
+        $script:lastInformationAction = [string]$InformationAction
         if ($script:timeoutFailuresRemaining -gt 0) {
             $script:timeoutFailuresRemaining--
             throw 'Authentication timed out after 120 seconds due to inactivity. Please try again.'
@@ -136,6 +138,7 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
             Calls = $script:connectCalls
             ContextScope = $script:lastContextScope
             UseDeviceCode = $script:lastUseDeviceCode
+            InformationAction = $script:lastInformationAction
         }
     }
     Export-ModuleMember -Function Connect-MgGraph, Get-MgContext, Invoke-MgGraphRequest, Get-ConnectState
@@ -166,8 +169,9 @@ try {
     $connectState = Get-ConnectState
     if ($connectState.Calls -ne 2 -or
         $connectState.ContextScope -ne 'Process' -or
-        !$connectState.UseDeviceCode) {
-        throw 'W365 setup did not retry device-code authentication with a process-scoped Graph context.'
+        !$connectState.UseDeviceCode -or
+        $connectState.InformationAction -ne 'Continue') {
+        throw 'W365 setup did not retry device-code authentication with a visible, process-scoped Graph context.'
     }
     if ('W365_AGENT_ID=33333333-3333-3333-3333-333333333333' -notin $output -or
         'W365_AGENT_OBJECT_ID=22222222-2222-2222-2222-222222222222' -notin $output) { throw 'Client and object IDs were conflated.' }

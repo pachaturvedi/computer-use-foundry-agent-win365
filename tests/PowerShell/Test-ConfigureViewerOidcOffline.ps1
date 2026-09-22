@@ -47,7 +47,9 @@ function az {
     throw "Unexpected az call: $($arguments -join ' ')"
 }
 
-function Connect-MgGraph {}
+function Connect-MgGraph {
+    param($TenantId, $Scopes, $ContextScope, [switch]$NoWelcome, [switch]$UseDeviceCode, $InformationAction)
+}
 
 function Get-MgContext {
     return [pscustomobject]@{

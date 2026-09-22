@@ -163,7 +163,7 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
     }
 
     function Connect-MgGraph {
-        param($TenantId, $Scopes, $ContextScope, [switch]$NoWelcome, [switch]$UseDeviceCode)
+        param($TenantId, $Scopes, $ContextScope, [switch]$NoWelcome, [switch]$UseDeviceCode, $InformationAction)
         $script:tenant = $TenantId.ToString()
         $script:scopes = $Scopes
     }
