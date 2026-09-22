@@ -252,6 +252,14 @@ cause: certificate creation and Graph registration are idempotent. If the
 diagnostic reports residual temporary RBAC, remove only the reported role
 assignment before retrying; do not delete the certificate or unrelated roles.
 
+Certificate/key-scoped agent RBAC is applied only when the orchestration-owned
+readiness gate is active or `W365_ENABLED` is already persisted as `true`. If
+setup fails after the certificate is registered but before `W365_ENABLED`
+becomes `true`, do not run `azd provision state` on its own: that pass would
+revoke the roles just granted. `Invoke-AzdDeployment.ps1` detects this window
+and fails closed. Complete setup so `W365_ENABLED=true` is persisted, then
+reprovision state and redeploy.
+
 For repeatable no-`PoolId` creates, store reusable pool settings in
 `config\deployment.local.json`. `Setup-W365.ps1` now reads the `w365` section
 automatically when the corresponding command-line argument is omitted.

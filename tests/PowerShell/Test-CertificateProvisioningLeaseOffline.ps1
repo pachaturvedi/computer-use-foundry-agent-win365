@@ -43,6 +43,10 @@ function az {
                 $global:LASTEXITCODE = 1
                 return 'Network connection refused.'
             }
+            'terminal-permission' {
+                $global:LASTEXITCODE = 1
+                return 'Forbidden: Caller is not authorized to list certificates.'
+            }
             'timeout' {
                 $global:LASTEXITCODE = 1
                 return 'AuthorizationFailed: RBAC propagation is pending.'
@@ -108,7 +112,7 @@ try {
         throw 'Cancellation did not stop propagation and clean up the temporary role.'
     }
 
-    foreach ($behavior in @('terminal', 'timeout')) {
+    foreach ($behavior in @('terminal', 'terminal-permission', 'timeout')) {
         $global:probeCalls = 0
         $global:deleteCalls = 0
         $global:probeBehavior = $behavior
@@ -126,7 +130,7 @@ try {
         catch {
             $failed = $true
         }
-        $expectedCalls = if ($behavior -eq 'terminal') { 1 } else { 3 }
+        $expectedCalls = if ($behavior -in @('terminal', 'terminal-permission')) { 1 } else { 3 }
         if (!$failed -or $global:probeCalls -ne $expectedCalls -or $global:deleteCalls -ne 1) {
             throw "$behavior propagation failure was not terminal/bounded with cleanup."
         }

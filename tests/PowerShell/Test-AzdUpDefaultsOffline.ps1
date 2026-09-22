@@ -29,6 +29,7 @@ $tracked = @(
     'W365_ENABLED',
     'W365_POOL_BILLING_PLAN_ID',
     'VIEWER_PROVISIONING_ACTIVE',
+    'W365_CERTIFICATE_PROVISIONING_ACTIVE',
     'AZD_NON_INTERACTIVE'
 )
 $saved = @{}
@@ -83,20 +84,22 @@ try {
 
     $persistedEnvironmentDirectory = Join-Path $tempRoot '.azure\sample-dev'
     New-Item -ItemType Directory -Path $persistedEnvironmentDirectory -Force | Out-Null
-    Set-Content -LiteralPath (Join-Path $persistedEnvironmentDirectory '.env') -Value @(
-        'VIEWER_PROVISIONING_ACTIVE="true"'
-    )
-    $persistedActivationRejected = $false
-    try {
-        & $scriptPath `
-            -RepositoryRoot $tempRoot `
-            -ConfigPath (Join-Path $root 'config\deployment.defaults.json') 6>&1 | Out-Null
-    }
-    catch {
-        $persistedActivationRejected = $_.Exception.Message -match 'internal process-only value'
-    }
-    if (!$persistedActivationRejected) {
-        throw 'Direct azd up accepted persisted VIEWER_PROVISIONING_ACTIVE=true.'
+    foreach ($processOnlyKey in @('VIEWER_PROVISIONING_ACTIVE', 'W365_CERTIFICATE_PROVISIONING_ACTIVE')) {
+        Set-Content -LiteralPath (Join-Path $persistedEnvironmentDirectory '.env') -Value @(
+            "$processOnlyKey=`"true`""
+        )
+        $persistedActivationRejected = $false
+        try {
+            & $scriptPath `
+                -RepositoryRoot $tempRoot `
+                -ConfigPath (Join-Path $root 'config\deployment.defaults.json') 6>&1 | Out-Null
+        }
+        catch {
+            $persistedActivationRejected = $_.Exception.Message -match 'internal process-only value'
+        }
+        if (!$persistedActivationRejected) {
+            throw "Direct azd up accepted persisted $processOnlyKey=true."
+        }
     }
 
     New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null

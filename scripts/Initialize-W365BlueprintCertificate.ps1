@@ -92,6 +92,9 @@ if ($ownsCertificateOfficerLease) {
         return
     }
 }
+elseif ($CertificateOfficerLease.AcquisitionSkipped) {
+    throw 'The supplied certificate officer lease was never acquired, so certificate provisioning cannot continue.'
+}
 elseif ([string]$CertificateOfficerLease.SubscriptionId -ne $subscriptionId -or
     [string]$CertificateOfficerLease.VaultName -ne $vaultName -or
     [string]$CertificateOfficerLease.OperatorObjectId -ne $operatorObjectId) {

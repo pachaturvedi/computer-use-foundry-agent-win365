@@ -198,6 +198,34 @@ function Assert-LiveViewerConfiguration {
     Write-DeploymentEvent DECISION 'Live viewer prerequisites and Key Vault OIDC secret are present.'
 }
 
+function Assert-CertificateStateReprovisionSafe {
+    # infra/state/keyvault.bicep applies certificate/key-scoped RBAC only when the orchestration-owned
+    # readiness gate is active or W365_ENABLED is already persisted as 'true'. If the blueprint
+    # certificate already exists but setup has not yet persisted W365_ENABLED=true, reprovisioning the
+    # state layer here would silently remove role assignments the certificate flow just granted. Fail
+    # closed instead of reporting success for a deployment that revoked the agent's signing access.
+    if ((Get-AzdOptionalValue 'W365_BLUEPRINT_CREDENTIAL_MODE') -ne 'key_vault_certificate' -or
+        (Get-AzdOptionalValue 'W365_ENABLED') -eq 'true') {
+        return
+    }
+
+    $vaultName = Get-W365KeyVaultName
+    if ([string]::IsNullOrWhiteSpace($vaultName)) {
+        return
+    }
+    & az keyvault certificate show `
+        --subscription (Get-AzdValue 'AZURE_SUBSCRIPTION_ID') `
+        --vault-name $vaultName `
+        --name 'w365-blueprint-certificate' `
+        --query id `
+        --output none 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        return
+    }
+
+    throw "Blueprint certificate 'w365-blueprint-certificate' already exists in '$vaultName', but W365_ENABLED is not yet 'true'. Reprovisioning the state layer now would revoke the agent's certificate- and key-scoped Key Vault roles. Complete Windows 365 setup first (scripts\Complete-AzdUp.ps1 or scripts\Invoke-W365SetupFlow.ps1) so W365_ENABLED is persisted as 'true', then re-run this deployment."
+}
+
 function Assert-W365AgentKeyVaultAccessConfigured {
     # The hosted agent now fetches the blueprint client secret directly from Key Vault using its
     # own runtime identity (KeyVaultBlueprintSecretResolver) instead of receiving it as an
@@ -309,7 +337,7 @@ function Assert-W365AgentCertificateKeyVaultAccessConfigured {
         --query "length([?roleDefinitionId.ends_with(@, '$certificateUserRoleId')])" `
         --output tsv 2>$null | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or $hasCertificateRole -eq '0' -or [string]::IsNullOrWhiteSpace($hasCertificateRole)) {
-        throw "Agent principal '$agentPrincipalId' does not have Key Vault Certificate User on certificate '$certificateName' in '$vaultName'. Run 'azd provision state --environment <env> --no-prompt' after the certificate exists so infra/state/keyvault.bicep grants this role, then redeploy the hosted agent."
+        throw "Agent principal '$agentPrincipalId' does not have Key Vault Certificate User on certificate '$certificateName' in '$vaultName'. Complete Windows 365 setup so W365_ENABLED is persisted as 'true' and the certificate is registered, then run 'azd provision state --environment <env> --no-prompt' so infra/state/keyvault.bicep grants this role, and redeploy the hosted agent."
     }
 
     $hasCryptoRole = (& az role assignment list `
@@ -320,7 +348,7 @@ function Assert-W365AgentCertificateKeyVaultAccessConfigured {
         --query "length([?roleDefinitionId.ends_with(@, '$cryptoUserRoleId')])" `
         --output tsv 2>$null | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or $hasCryptoRole -eq '0' -or [string]::IsNullOrWhiteSpace($hasCryptoRole)) {
-        throw "Agent principal '$agentPrincipalId' does not have Key Vault Crypto User on the backing key of certificate '$certificateName' in '$vaultName'. Run 'azd provision state --environment <env> --no-prompt' after the certificate exists so infra/state/keyvault.bicep grants this role, then redeploy the hosted agent."
+        throw "Agent principal '$agentPrincipalId' does not have Key Vault Crypto User on the backing key of certificate '$certificateName' in '$vaultName'. Complete Windows 365 setup so W365_ENABLED is persisted as 'true' and the certificate is registered, then run 'azd provision state --environment <env> --no-prompt' so infra/state/keyvault.bicep grants this role, and redeploy the hosted agent."
     }
     Write-DeploymentEvent DECISION "Confirmed certificate '$certificateName' exists in '$vaultName' and agent principal '$agentPrincipalId' has Key Vault Certificate User and Key Vault Crypto User on it."
 }
@@ -515,6 +543,7 @@ try {
             }
 
             if ($stateEnabled -eq 'true') {
+                Assert-CertificateStateReprovisionSafe
                 Write-DeploymentEvent STEP 'Provisioning the explicitly enabled state layer.'
                 Invoke-Azd @('provision', 'state', '--no-prompt')
             }

@@ -23,6 +23,7 @@ function Enter-W365CertificateOfficerLease {
         --subscription $SubscriptionId `
         --scope $VaultId `
         --assignee-object-id $OperatorObjectId `
+        --include-inherited `
         --query "[?roleDefinitionId=='$roleDefinitionId'].id" `
         --output tsv 2>$null
     if ($LASTEXITCODE -ne 0) {
@@ -75,8 +76,11 @@ function Enter-W365CertificateOfficerLease {
                 if ($LASTEXITCODE -eq 0) {
                     break
                 }
-                $isPropagationDelay = $probeOutput -match
-                    'Forbidden|AuthorizationFailed|AccessDenied|Caller is not authorized|does not have certificates list permission|RBAC'
+                $isAuthorizationFailure = $probeOutput -match
+                    '(?i)(^|\W)(403|Forbidden|AuthorizationFailed|AccessDenied)(\W|$)|Caller is not authorized'
+                $hasPropagationHint = $probeOutput -match
+                    '(?i)RBAC propagation|role assignments?.*(changed recently|propagat)|observe propagation time'
+                $isPropagationDelay = $isAuthorizationFailure -and $hasPropagationHint
                 if (!$isPropagationDelay) {
                     throw "Key Vault certificate access probe failed with a terminal error for '$VaultName'."
                 }

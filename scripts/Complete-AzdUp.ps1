@@ -257,6 +257,9 @@ if ($enableW365 -and !$w365AlreadyEnabled -and $credentialMode -eq 'key_vault_ce
         -VaultId $certificateVaultId `
         -OperatorObjectId ([guid]$certificateOperatorObjectId) `
         -ConfirmResourceChanges
+    if ($certificateOfficerLease.AcquisitionSkipped) {
+        throw 'Temporary Key Vault Certificates Officer access was not acquired, so certificate provisioning cannot continue.'
+    }
     $certificatePrimaryError = $null
     try {
         Write-SampleVerbose -Component 'postup' -Message 'Creating or reusing the non-exportable Key Vault blueprint certificate.'
