@@ -539,9 +539,9 @@ azd env set DEPLOY_VIEWER true
 azd env set VIEWER_IMAGE_NAME "win365-sample:v1"
 azd env set VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID `
   "/subscriptions/<subscription>/resourceGroups/<rg>/providers/Microsoft.App/managedEnvironments/<name>"
-pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
-    -Mode DeployAll `
-    -ConfirmResourceChanges
+pwsh -NoProfile -File .\scripts\Initialize-AzdUpPhaseTwo.ps1 `
+  -Environment "<env>" `
+  -DeployViewer
 ```
 
 The viewer bootstrap calculates a `build-<hash>` image tag from the Dockerfile,
@@ -572,13 +572,20 @@ Before enabling `DEPLOY_VIEWER`, preview the state and viewer layers separately:
 
 ```powershell
 azd provision state --preview --no-prompt
-azd provision viewer --preview --no-prompt
+$env:VIEWER_PROVISIONING_ACTIVE = "true"
+try {
+  azd provision viewer --preview --no-prompt
+}
+finally {
+  Remove-Item Env:\VIEWER_PROVISIONING_ACTIVE -ErrorAction SilentlyContinue
+}
 ```
 
 Layered projects do not support a combined `azd provision --preview`. If the
 preview reports `MaxNumberOfGlobalEnvironmentsInSubExceeded`, select an
 approved existing environment by full resource ID or request a quota increase.
-The deployment never silently chooses an environment.
+The deployment never silently chooses an environment. Never persist
+`VIEWER_PROVISIONING_ACTIVE`; it is an internal process-only guard.
 
 The [parameter example](../infra/viewer.parameters.example.json) contains only
 identifiers and URLs, never secret values. Its phase-2 placeholders are not

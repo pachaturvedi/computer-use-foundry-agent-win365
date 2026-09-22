@@ -28,6 +28,7 @@ $tracked = @(
     'ENABLE_W365',
     'W365_ENABLED',
     'W365_POOL_BILLING_PLAN_ID',
+    'VIEWER_PROVISIONING_ACTIVE',
     'AZD_NON_INTERACTIVE'
 )
 $saved = @{}
@@ -79,6 +80,24 @@ try {
         throw "Show-AzdUpContext.ps1 did not honor the explicit fresh-deployment opt-out: $disabledOutput"
     }
     $env:ENABLE_W365 = $null
+
+    $persistedEnvironmentDirectory = Join-Path $tempRoot '.azure\sample-dev'
+    New-Item -ItemType Directory -Path $persistedEnvironmentDirectory -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $persistedEnvironmentDirectory '.env') -Value @(
+        'VIEWER_PROVISIONING_ACTIVE="true"'
+    )
+    $persistedActivationRejected = $false
+    try {
+        & $scriptPath `
+            -RepositoryRoot $tempRoot `
+            -ConfigPath (Join-Path $root 'config\deployment.defaults.json') 6>&1 | Out-Null
+    }
+    catch {
+        $persistedActivationRejected = $_.Exception.Message -match 'internal process-only value'
+    }
+    if (!$persistedActivationRejected) {
+        throw 'Direct azd up accepted persisted VIEWER_PROVISIONING_ACTIVE=true.'
+    }
 
     New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
     $defaultsPath = Join-Path $tempRoot 'deployment.defaults.json'

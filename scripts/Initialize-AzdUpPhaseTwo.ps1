@@ -105,6 +105,7 @@ try {
     }
 
     $sessionBlobUri = $null
+    $expectedSessionBlobUri = "https://$($stateValues.STATE_STORAGE_ACCOUNT_NAME).blob.core.windows.net/$($stateValues.STATE_CONTAINER_NAME)/slot.json"
     if (![uri]::TryCreate(
             [string]$stateValues.SESSION_BLOB_URI,
             [UriKind]::Absolute,
@@ -115,7 +116,8 @@ try {
         $sessionBlobUri.AbsolutePath -cne "/$($stateValues.STATE_CONTAINER_NAME)/slot.json" -or
         ![string]::IsNullOrEmpty($sessionBlobUri.UserInfo) -or
         ![string]::IsNullOrEmpty($sessionBlobUri.Query) -or
-        ![string]::IsNullOrEmpty($sessionBlobUri.Fragment)) {
+        ![string]::IsNullOrEmpty($sessionBlobUri.Fragment) -or
+        [string]::CompareOrdinal([string]$stateValues.SESSION_BLOB_URI, $expectedSessionBlobUri) -ne 0) {
         throw 'Shared state provisioning returned inconsistent STATE_STORAGE_ACCOUNT_NAME, STATE_CONTAINER_NAME, and SESSION_BLOB_URI values. Viewer provisioning was not started.'
     }
 

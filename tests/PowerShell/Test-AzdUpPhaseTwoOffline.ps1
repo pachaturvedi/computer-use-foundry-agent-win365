@@ -70,6 +70,8 @@ if ($CommandArgs[0] -eq 'env' -and $CommandArgs[1] -eq 'get-value') {
         'http' { 'http://samplestatestorage.blob.core.windows.net/desktop-state/slot.json' }
         'wrongpath' { 'https://samplestatestorage.blob.core.windows.net/desktop-state/other.json' }
         'casepath' { 'https://samplestatestorage.blob.core.windows.net/Desktop-State/slot.json' }
+        'dotsegment' { 'https://samplestatestorage.blob.core.windows.net/desktop-state/extra/../slot.json' }
+        'encoded' { 'https://samplestatestorage.blob.core.windows.net/desktop-state/%73lot.json' }
         default { 'https://samplestatestorage.blob.core.windows.net/desktop-state/slot.json' }
     }
     $values = @{
@@ -174,7 +176,7 @@ param(
         throw 'Phase-two initialization enabled the viewer before state outputs were validated.'
     }
 
-    foreach ($stateMode in @('missing', 'inconsistent', 'query', 'fragment', 'port', 'userinfo', 'http', 'wrongpath', 'casepath')) {
+    foreach ($stateMode in @('missing', 'inconsistent', 'query', 'fragment', 'port', 'userinfo', 'http', 'wrongpath', 'casepath', 'dotsegment', 'encoded')) {
         Remove-Item -LiteralPath $callsPath -ErrorAction SilentlyContinue
         $env:TEST_AZD_STATE_MODE = $stateMode
         $stateRejected = $false

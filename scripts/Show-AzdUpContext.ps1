@@ -73,6 +73,9 @@ if ($environmentName -ne '<azd-environment>' -and
     (Test-Path -LiteralPath $environmentPath -PathType Leaf)) {
     $environmentValues = Read-AzdEnvironmentFile -Path $environmentPath
 }
+if ([string]$environmentValues['VIEWER_PROVISIONING_ACTIVE'] -eq 'true') {
+    throw "VIEWER_PROVISIONING_ACTIVE is an internal process-only value and must not be persisted. Run: azd env set VIEWER_PROVISIONING_ACTIVE false --environment `"$environmentName`""
+}
 $resourcePrefix = [string](Get-DeploymentConfiguredValue -EnvironmentName 'RESOURCE_PREFIX' -DefaultValue $environmentName)
 $resourceGroupName = [string](Get-DeploymentConfiguredValue -EnvironmentName 'AZURE_RESOURCE_GROUP' -DefaultValue "$resourcePrefix-$($config.foundry.resourceGroupSuffix)")
 $generatedProjectName = "$resourcePrefix-$($config.foundry.projectNameSuffix)"
