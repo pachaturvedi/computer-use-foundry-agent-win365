@@ -245,7 +245,20 @@ try {
 
     [Environment]::SetEnvironmentVariable('W365_CLEANUP_CONFIRMED', 'true', 'Process')
     Write-ViewerManifest -ApplicationDisposition 'created' -CredentialDisposition 'created' -ServicePrincipalDisposition 'created'
-    & "$scriptsRoot\Remove-W365Resources.ps1" -EnvironmentName $envName -EnvironmentFilePath $envFilePath -OwnershipManifestPath (Join-Path $envDir 'w365-ownership.json') -Confirm:$false | Out-Null
+    $viewerCleanupOutput = @(
+        & "$scriptsRoot\Remove-W365Resources.ps1" -EnvironmentName $envName -EnvironmentFilePath $envFilePath -OwnershipManifestPath (Join-Path $envDir 'w365-ownership.json') -Confirm:$false
+    )
+    $rbacPlan = "Deleting Azure RBAC role assignment 'Key Vault Secrets User' for principal 'viewer-principal' at scope '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.KeyVault/vaults/w365-vault' (assignment '/subscriptions/sub/providers/Microsoft.Authorization/roleAssignments/viewer')."
+    $rbacResult = 'Removed viewer role assignment Key Vault Secrets User.'
+    $rbacPlanIndex = $viewerCleanupOutput.IndexOf($rbacPlan)
+    $rbacResultIndex = $viewerCleanupOutput.IndexOf($rbacResult)
+    if ($rbacPlanIndex -lt 0 -or $rbacResultIndex -lt 0 -or $rbacPlanIndex -ge $rbacResultIndex) {
+        throw 'Viewer cleanup did not log Azure RBAC assignment details before deletion.'
+    }
+    $expectedCompletion = "Pre-teardown cleanup completed for '$envName': no configured W365 state remains. Azure resource deletion can continue."
+    if ($viewerCleanupOutput[-1] -ne $expectedCompletion) {
+        throw "Viewer-only cleanup did not defer the Azure deletion continuation message until cleanup completed. Last output: [$($viewerCleanupOutput[-1])]"
+    }
 
     $state = Get-MockViewerGraphState
     if ($null -ne $state.Application -or $state.ServicePrincipals.Count -ne 0) {

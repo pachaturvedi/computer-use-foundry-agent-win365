@@ -350,6 +350,7 @@ function Remove-ViewerArtifacts {
             $credentialKeyId = [string](Get-OptionalObjectValue -Object $viewerCredential -Name 'keyId')
             $currentCredential = SingleOrNone @(@($currentApplication.passwordCredentials) | Where-Object { [string]$_.keyId -eq $credentialKeyId }) 'viewer application credential'
             if ($currentCredential) {
+                Write-Output "Deleting viewer application credential '$credentialKeyId' from application '$viewerAppObjectId'."
                 Graph POST "v1.0/applications/$viewerAppObjectId/removePassword" @{ keyId = $credentialKeyId } | Out-Null
                 Write-Output "Removed viewer application credential $credentialKeyId."
             }
@@ -375,6 +376,7 @@ function Remove-ViewerArtifacts {
             }
 
             if ($currentServicePrincipal) {
+                Write-Output "Deleting viewer service principal '$([string]$currentServicePrincipal.id)' for application '$viewerAppId'."
                 Graph DELETE "v1.0/servicePrincipals/$([string]$currentServicePrincipal.id)" | Out-Null
                 Write-Output "Removed viewer service principal $([string]$currentServicePrincipal.id)."
             }
@@ -389,6 +391,7 @@ function Remove-ViewerArtifacts {
                     throw 'The current viewer application does not match the recorded ownership manifest.'
                 }
 
+                Write-Output "Deleting viewer application '$viewerAppObjectId' with app ID '$viewerAppId'."
                 Graph DELETE "v1.0/applications/$viewerAppObjectId" | Out-Null
                 Write-Output "Removed viewer application $viewerAppObjectId."
             }
@@ -426,6 +429,7 @@ function Remove-ViewerArtifacts {
                 continue
             }
 
+            Write-Output "Deleting Azure RBAC role assignment '$([string]$entry.roleName)' for principal '$([string]$entry.principalId)' at scope '$([string]$entry.scope)' (assignment '$currentAssignmentId')."
             & az role assignment delete --ids $currentAssignmentId --output none 2>$null
             if ($LASTEXITCODE -ne 0) {
                 throw "Unable to remove viewer role assignment '$([string]$entry.roleName)'."
@@ -542,16 +546,17 @@ else {
 }
 
 if ($null -eq $manifest) {
-    $hasW365State = Test-TrueString ([string]$envValues['W365_ENABLED']) -or
+    $hasW365State = (Test-TrueString -Value ([string]$envValues['W365_ENABLED'])) -or
         ![string]::IsNullOrWhiteSpace([string]$envValues['W365_POOL_ID']) -or
         ![string]::IsNullOrWhiteSpace([string]$envValues['W365_AGENT_USER_ID'])
     if ($hasW365State) {
         throw 'No W365 ownership manifest was found for this environment. Cleanup cannot prove ownership, so azd down is blocked.'
     }
 
-    Write-Output 'No W365 ownership manifest was found and no W365 state is configured. Nothing to clean before azd down.'
+    $cleanupEnvironmentName = $context.EnvironmentName ?? 'current azd environment'
 
     if ($viewerManifest) {
+        Write-Output "No Windows 365 ownership manifest or configured W365 state was found for '$cleanupEnvironmentName'. Evaluating viewer-owned artifacts before Azure resource deletion."
         Assert-CleanupApproved -TargetName ($context.EnvironmentName ?? 'current azd environment') -RequireProtectedApproval
         $viewerTenantId = [guid](Resolve-CleanupTenantId -EnvironmentValues $envValues -W365Manifest $manifest -ViewerManifest $viewerManifest)
         Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
@@ -559,6 +564,7 @@ if ($null -eq $manifest) {
         Remove-ViewerArtifacts -Manifest $viewerManifest -EnvironmentValues $envValues -ManifestPath $viewerManifestPath
     }
 
+    Write-Output "Pre-teardown cleanup completed for '$cleanupEnvironmentName': no configured W365 state remains. Azure resource deletion can continue."
     return
 }
 
@@ -649,6 +655,7 @@ if ($assignmentManifest -and [string]$assignmentManifest.disposition -eq 'create
             throw 'The current pool assignment ID does not match the ownership manifest.'
         }
 
+        Write-Output "Deleting W365 pool assignment '$assignmentId' from pool '$poolId' for principal '$([string]$assignmentManifest.userPrincipalId)'."
         Graph DELETE "beta/deviceManagement/virtualEndpoint/cloudPcPools/$poolId/assignments/$assignmentId" | Out-Null
         Write-Output "Removed pool assignment $assignmentId."
     }
@@ -664,6 +671,7 @@ if ($agentUserManifest -and [string]$agentUserManifest.disposition -eq 'created'
             throw 'The current agent user does not match the recorded ownership manifest.'
         }
 
+        Write-Output "Deleting W365 agent user '$agentUserId' owned by parent agent '$([string]$agentUserManifest.parentAgentObjectId)'."
         Graph DELETE "beta/users/$agentUserId" | Out-Null
         Write-Output "Removed agent user $agentUserId."
     }
@@ -685,6 +693,7 @@ foreach ($credential in $federatedCredentials | Where-Object { [string]$_.dispos
             throw "Federated credential '$($credential.name)' does not match the ownership manifest ID."
         }
 
+        Write-Output "Deleting federated credential '$($credential.name)' (ID '$credentialId') from blueprint '$blueprintObjectId'."
         Graph DELETE "$ficPath/$credentialId" | Out-Null
         Write-Output "Removed federated credential $($credential.name)."
     }
@@ -703,6 +712,7 @@ foreach ($grant in $permissionGrants) {
     }
     if ([string]$grant.disposition -eq 'created') {
         if ($currentGrant) {
+            Write-Output "Deleting delegated permission grant '$([string]$currentGrant.id)' for resource application '$($grant.resourceAppId)'."
             Graph DELETE "v1.0/oauth2PermissionGrants/$([string]$currentGrant.id)" | Out-Null
             Write-Output "Removed permission grant for $($grant.resourceAppId)."
         }
@@ -717,6 +727,7 @@ foreach ($grant in $permissionGrants) {
 
         $previousScope = [string]$grant.previousScope
         if ([string]$currentGrant.scope -ne $previousScope) {
+            Write-Output "Restoring delegated permission grant '$([string]$currentGrant.id)' for resource application '$($grant.resourceAppId)' to its recorded scope."
             Graph PATCH "v1.0/oauth2PermissionGrants/$([string]$currentGrant.id)" @{ scope = $previousScope } | Out-Null
             Write-Output "Restored permission grant scope for $($grant.resourceAppId)."
         }
@@ -735,6 +746,7 @@ foreach ($inheritance in $inheritablePermissions | Where-Object { [string]$_.dis
             throw "Inheritance entry for $($inheritance.resourceAppId) does not match the ownership manifest ID."
         }
 
+        Write-Output "Deleting inheritable-permission entry '$inheritanceId' for resource application '$($inheritance.resourceAppId)'."
         Graph DELETE "$inheritPath/$inheritanceId" | Out-Null
         Write-Output "Removed inheritance entry for $($inheritance.resourceAppId)."
     }
@@ -774,6 +786,7 @@ foreach ($currentEntry in $currentRequiredResourceAccess) {
     }
 }
 if ($requiredResourceAccessChanged) {
+    Write-Output "Removing setup-added requiredResourceAccess entries from blueprint '$blueprintObjectId'."
     Graph PATCH $bpPath @{ requiredResourceAccess = $restoredRequiredResourceAccess } | Out-Null
     Write-Output 'Removed the blueprint requiredResourceAccess entries added by setup.'
 }
@@ -793,6 +806,7 @@ if ($poolManifest -and [string]$poolManifest.disposition -eq 'created') {
     }
 
     if ($currentPool) {
+        Write-Output "Deleting sample-owned W365 pool '$poolId'."
         Graph DELETE "beta/deviceManagement/virtualEndpoint/cloudPcPools/$poolId" | Out-Null
         Write-Output "Removed sample-owned pool $poolId."
     }

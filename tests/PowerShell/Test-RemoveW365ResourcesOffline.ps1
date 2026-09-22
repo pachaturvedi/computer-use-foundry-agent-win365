@@ -61,6 +61,33 @@ finally {
     }
 }
 
+$noStateTempRoot = Join-Path ([IO.Path]::GetTempPath()) ("w365-no-state-{0}" -f ([guid]::NewGuid()))
+$noStateEnvironmentPath = Join-Path $noStateTempRoot '.env'
+try {
+    New-Item -ItemType Directory -Path $noStateTempRoot -Force | Out-Null
+    Set-Content -LiteralPath $noStateEnvironmentPath -Value @(
+        'AZURE_SUBSCRIPTION_ID="00000000-0000-0000-0000-000000000000"'
+        'W365_ENABLED="false"'
+    )
+
+    $noStateOutput = @(
+        & $cleanupScriptPath `
+            -EnvironmentName 'no-state-test' `
+            -EnvironmentFilePath $noStateEnvironmentPath `
+            -OwnershipManifestPath (Join-Path $noStateTempRoot 'missing-ownership.json') `
+            -Confirm:$false
+    )
+    $expectedNoStateOutput = "Pre-teardown cleanup completed for 'no-state-test': no configured W365 state remains. Azure resource deletion can continue."
+    if ($noStateOutput.Count -ne 1 -or $noStateOutput[0] -ne $expectedNoStateOutput) {
+        throw "No-state cleanup emitted unexpected output: [$($noStateOutput -join ' | ')]"
+    }
+}
+finally {
+    if (Test-Path -LiteralPath $noStateTempRoot) {
+        Remove-Item -LiteralPath $noStateTempRoot -Recurse -Force
+    }
+}
+
 $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
     $script:tenant = '01eed126-9f96-4d2d-a127-dc2e786a898b'
     $script:scopes = @()
@@ -321,8 +348,28 @@ try {
     Write-TestManifest
 
     $env:W365_CLEANUP_CONFIRMED = 'true'
-    & "$scriptsRoot\Remove-W365Resources.ps1" -EnvironmentName $envName -EnvironmentFilePath $envFilePath -OwnershipManifestPath $manifestPath
+    $cleanupOutput = @(
+        & "$scriptsRoot\Remove-W365Resources.ps1" -EnvironmentName $envName -EnvironmentFilePath $envFilePath -OwnershipManifestPath $manifestPath
+    )
     $env:W365_CLEANUP_CONFIRMED = ''
+    $assignmentPlan = "Deleting W365 pool assignment 'assignment-created' from pool '55555555-5555-5555-5555-555555555555' for principal 'agent-user'."
+    $assignmentResult = 'Removed pool assignment assignment-created.'
+    $rolePlan = "Deleting delegated permission grant 'grant-created-tools' for resource application 'da81128c-e5b5-4f9e-8d89-50d906f107c5'."
+    $roleResult = 'Removed permission grant for da81128c-e5b5-4f9e-8d89-50d906f107c5.'
+    $poolPlan = "Deleting sample-owned W365 pool '55555555-5555-5555-5555-555555555555'."
+    $poolResult = 'Removed sample-owned pool 55555555-5555-5555-5555-555555555555.'
+    foreach ($pair in @(
+        @($assignmentPlan, $assignmentResult),
+        @($rolePlan, $roleResult),
+        @($poolPlan, $poolResult)
+    )) {
+        $planIndex = $cleanupOutput.IndexOf($pair[0])
+        $resultIndex = $cleanupOutput.IndexOf($pair[1])
+        if ($planIndex -lt 0 -or $resultIndex -lt 0 -or $planIndex -ge $resultIndex) {
+            throw "Cleanup did not log '$($pair[0])' before '$($pair[1])'."
+        }
+    }
+
     $state = Get-MockGraphState
     if ($null -ne $state.Pool -or $null -ne $state.AgentUser) {
         throw 'Created pool or agent user was not deleted.'
