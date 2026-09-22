@@ -6,6 +6,56 @@ param()
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+$repoRoot = Split-Path (Split-Path $PSScriptRoot)
+$scriptsRoot = Join-Path $repoRoot 'scripts'
+$cleanupScriptPath = Join-Path $scriptsRoot 'Remove-W365Resources.ps1'
+$cleanupScriptText = Get-Content -LiteralPath $cleanupScriptPath -Raw
+$tokens = $null
+$parseErrors = $null
+$cleanupAst = [System.Management.Automation.Language.Parser]::ParseInput(
+    $cleanupScriptText,
+    [ref]$tokens,
+    [ref]$parseErrors)
+if ($parseErrors.Count -gt 0) {
+    throw "Remove-W365Resources.ps1 failed to parse: $($parseErrors[0].Message)"
+}
+
+$getAzdCommandAst = $cleanupAst.FindAll({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'Get-AzdCommand'
+}, $true) | Select-Object -First 1
+if (!$getAzdCommandAst) {
+    throw "Unable to locate function 'Get-AzdCommand' in Remove-W365Resources.ps1 for isolated testing."
+}
+
+$commandDiscoveryTempRoot = Join-Path ([IO.Path]::GetTempPath()) ("w365-azd-discovery-{0}" -f ([guid]::NewGuid()))
+$fakeAzdPath = Join-Path $commandDiscoveryTempRoot 'azd.cmd'
+$previousPath = $env:PATH
+try {
+    New-Item -ItemType Directory -Path $commandDiscoveryTempRoot -Force | Out-Null
+    Set-Content -LiteralPath $fakeAzdPath -Value '@echo azd version 9.99.9 (commit offline-test)'
+    $env:PATH = "$commandDiscoveryTempRoot;$previousPath"
+
+    $commandDiscoveryModule = New-Module -Name W365AzdCommandDiscovery -ScriptBlock ([scriptblock]::Create(@"
+$($getAzdCommandAst.Extent.Text)
+function azd { 'profile shadow' }
+"@))
+    $azd = & $commandDiscoveryModule { Get-AzdCommand }
+    if ($null -eq $azd -or $azd.Path -ne $fakeAzdPath -or $azd.Version -ne ([version]'9.99.9')) {
+        throw 'Cleanup azd discovery did not ignore a non-application command shadow or select the highest supported executable.'
+    }
+}
+finally {
+    $env:PATH = $previousPath
+    if ($commandDiscoveryModule) {
+        Remove-Module $commandDiscoveryModule
+    }
+    if (Test-Path -LiteralPath $commandDiscoveryTempRoot) {
+        Remove-Item -LiteralPath $commandDiscoveryTempRoot -Recurse -Force
+    }
+}
+
 $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
     $script:tenant = '01eed126-9f96-4d2d-a127-dc2e786a898b'
     $script:scopes = @()
@@ -172,8 +222,6 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
 
 $module | Import-Module -Global
 
-$repoRoot = Split-Path (Split-Path $PSScriptRoot)
-$scriptsRoot = Join-Path $repoRoot 'scripts'
 $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("w365-cleanup-{0}" -f ([guid]::NewGuid()))
 $envName = 'cleanup-test'
 $envDir = Join-Path $tempRoot $envName
