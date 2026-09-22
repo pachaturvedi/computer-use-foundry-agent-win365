@@ -57,6 +57,16 @@ if (!$PSCmdlet.ShouldProcess(
     return
 }
 
+$environmentPath = Join-Path $RepositoryRoot ".azure\$Environment\.env"
+if (!(Test-Path -LiteralPath $environmentPath -PathType Leaf)) {
+    throw "Azd environment '$Environment' has no persisted .env file. Run 'azd env new $Environment' before this command."
+}
+$runId = [guid]::NewGuid().ToString('N')
+Set-AzdEnvironmentFileValues -Path $environmentPath -Values @{
+    W365_AZD_UP_POSTUP_RUN_ID = ''
+    W365_AZD_UP_COMPLETED_RUN_ID = ''
+}
+
 $startInfo = [Diagnostics.ProcessStartInfo]::new()
 $extension = [IO.Path]::GetExtension($resolvedAzd.Path)
 if ($extension -in @('.cmd', '.bat')) {
@@ -77,6 +87,7 @@ $startInfo.RedirectStandardOutput = $true
 $startInfo.RedirectStandardError = $false
 $startInfo.RedirectStandardInput = $false
 $startInfo.Environment['W365_AZD_UP_WRAPPER'] = 'true'
+$startInfo.Environment['W365_AZD_UP_RUN_ID'] = $runId
 
 $process = [Diagnostics.Process]::new()
 $process.StartInfo = $startInfo
@@ -85,38 +96,86 @@ if (!$process.Start()) {
     throw "Unable to start '$($resolvedAzd.Path)'."
 }
 
-$foundryGuidanceSeen = $false
-$suppressNextBlock = $false
-while (($line = $process.StandardOutput.ReadLine()) -ne $null) {
+function Write-FilteredAzdLine {
+    param([AllowEmptyString()][string]$Line)
+
     $plainLine = [regex]::Replace($line, "`e\[[0-9;?]*[ -/]*[@-~]", '')
     $trimmedLine = $plainLine.Trim()
 
     if ($trimmedLine -like 'For information on invoking the agent, see *' -or
         $trimmedLine -like 'Set up an evaluation suite to measure quality and impact in one step with *') {
-        $foundryGuidanceSeen = $true
-        continue
+        $script:foundryGuidanceSeen = $true
+        return
     }
 
-    if ($foundryGuidanceSeen -and $trimmedLine -eq 'Next:') {
-        $suppressNextBlock = $true
-        continue
+    if ($script:foundryGuidanceSeen -and $trimmedLine -eq 'Next:') {
+        $script:suppressNextBlock = $true
+        return
     }
 
-    if ($suppressNextBlock) {
+    if ($script:suppressNextBlock) {
         if ([string]::IsNullOrWhiteSpace($plainLine) -or
             [char]::IsWhiteSpace($plainLine[0])) {
-            continue
+            return
         }
-        $suppressNextBlock = $false
-        $foundryGuidanceSeen = $false
+        $script:suppressNextBlock = $false
+        $script:foundryGuidanceSeen = $false
     }
 
     if ($trimmedLine -like 'SUCCESS: Your application was provisioned and deployed to Azure in *' -or
         $trimmedLine -match '^(Provisioning|Deploying):\s+') {
-        continue
+        return
     }
 
     Write-Host $line
+}
+
+function Test-InteractivePromptFragment {
+    param([Parameter(Mandatory)][string]$Text)
+
+    $plainText = [regex]::Replace($Text, "`e\[[0-9;?]*[ -/]*[@-~]", '')
+    $trimmedText = $plainText.TrimStart()
+    if ($trimmedText.StartsWith('?')) {
+        return $true
+    }
+
+    return $trimmedText.EndsWith(':') -and (
+        $trimmedText.StartsWith('Type ') -or
+        $trimmedText.StartsWith('Enter ') -or
+        $trimmedText.StartsWith('Blueprint client secret') -or
+        $trimmedText.StartsWith('Viewer OIDC client secret'))
+}
+
+$script:foundryGuidanceSeen = $false
+$script:suppressNextBlock = $false
+$lineBuffer = [Text.StringBuilder]::new()
+$promptPassthrough = $false
+while (($nextCharacter = $process.StandardOutput.Read()) -ne -1) {
+    $character = [char]$nextCharacter
+    if ($promptPassthrough) {
+        Write-Host -NoNewline $character
+        if ($character -eq "`n") {
+            $promptPassthrough = $false
+        }
+        continue
+    }
+
+    if ($character -eq "`n") {
+        $line = $lineBuffer.ToString().TrimEnd("`r")
+        [void]$lineBuffer.Clear()
+        Write-FilteredAzdLine -Line $line
+        continue
+    }
+
+    [void]$lineBuffer.Append($character)
+    if (Test-InteractivePromptFragment -Text $lineBuffer.ToString()) {
+        Write-Host -NoNewline $lineBuffer.ToString()
+        [void]$lineBuffer.Clear()
+        $promptPassthrough = $true
+    }
+}
+if ($lineBuffer.Length -gt 0) {
+    Write-FilteredAzdLine -Line $lineBuffer.ToString().TrimEnd("`r")
 }
 
 $process.WaitForExit()
@@ -125,11 +184,13 @@ if ($process.ExitCode -ne 0) {
     throw "azd up failed with exit code $($process.ExitCode)."
 }
 
-$environmentPath = Join-Path $RepositoryRoot ".azure\$Environment\.env"
 if (!(Test-Path -LiteralPath $environmentPath -PathType Leaf)) {
     throw "azd reported success, but environment '$Environment' has no persisted .env file. The installation is incomplete."
 }
 $values = Read-AzdEnvironmentFile -Path $environmentPath
+if ([string]$values['W365_AZD_UP_POSTUP_RUN_ID'] -ne $runId) {
+    throw "azd returned success, but the current post-deployment workflow did not complete. Correct the interrupted step and rerun this command; cleanup is not required."
+}
 $missing = [System.Collections.Generic.List[string]]::new()
 foreach ($name in @(
     'FOUNDRY_AGENT_NAME',
@@ -174,4 +235,11 @@ Write-Host "SUCCESS: Complete sample installation finished in $elapsedText."
     -Environment $Environment
 if (!$?) {
     throw 'Final deployment summary failed.'
+}
+Set-AzdEnvironmentFileValues -Path $environmentPath -Values @{
+    W365_AZD_UP_COMPLETED_RUN_ID = $runId
+}
+$completedValues = Read-AzdEnvironmentFile -Path $environmentPath
+if ([string]$completedValues['W365_AZD_UP_COMPLETED_RUN_ID'] -ne $runId) {
+    throw 'The deployment completed, but its run-specific completion state could not be verified.'
 }

@@ -445,4 +445,13 @@ if (![string]::IsNullOrWhiteSpace($env:AZURE_ENV_NAME)) {
             throw 'Deployment summary failed.'
         }
     }
+    else {
+        if ([string]::IsNullOrWhiteSpace($env:W365_AZD_UP_RUN_ID)) {
+            throw 'The azd up wrapper did not supply its run-specific completion ID.'
+        }
+        $environmentPath = Join-Path $RepositoryRoot ".azure\$environmentName\.env"
+        Set-AzdEnvironmentFileValues -Path $environmentPath -Values @{
+            W365_AZD_UP_POSTUP_RUN_ID = $env:W365_AZD_UP_RUN_ID
+        }
+    }
 }
