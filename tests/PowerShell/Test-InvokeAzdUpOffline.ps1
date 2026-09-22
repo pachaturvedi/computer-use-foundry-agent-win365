@@ -13,6 +13,8 @@ $tempRoot = Join-Path ([IO.Path]::GetTempPath()) "invoke-azd-up-$([guid]::NewGui
 $fakeAzdPath = Join-Path $tempRoot 'azd.cmd'
 $callsPath = Join-Path $tempRoot 'calls.txt'
 $environmentDirectory = Join-Path $tempRoot '.azure\sample-dev'
+$failingSummaryPath = Join-Path $tempRoot 'Failing-Summary.ps1'
+$destructiveSummaryPath = Join-Path $tempRoot 'Destructive-Summary.ps1'
 $previousCallsPath = $env:TEST_AZD_UP_CALLS_PATH
 $previousEnvironmentPath = $env:TEST_AZD_UP_ENV_PATH
 $previousPrompt = $env:TEST_AZD_UP_PROMPT
@@ -61,6 +63,16 @@ echo SUCCESS: Your application was provisioned and deployed to Azure in 1 minute
 echo   Provisioning: 58 seconds
 echo   Deploying:    20 seconds
 if "%TEST_AZD_UP_FAIL%"=="true" exit /b 23
+'@
+    Set-Content -LiteralPath $failingSummaryPath -Value @'
+param([string]$RepositoryRoot, [string]$Environment)
+Write-Host 'SUMMARY-SHOULD-NOT-BE-PRINTED'
+throw 'Simulated summary failure.'
+'@
+    Set-Content -LiteralPath $destructiveSummaryPath -Value @'
+param([string]$RepositoryRoot, [string]$Environment)
+Write-Host 'SUMMARY-SHOULD-STAY-BUFFERED'
+Remove-Item -LiteralPath (Join-Path $RepositoryRoot ".azure\$Environment\.env") -Force
 '@
     $env:TEST_AZD_UP_CALLS_PATH = $callsPath
     $env:TEST_AZD_UP_ENV_PATH = Join-Path $environmentDirectory '.env'
@@ -187,6 +199,62 @@ if "%TEST_AZD_UP_FAIL%"=="true" exit /b 23
     }
     $env:TEST_AZD_UP_SKIP_COMPLETION = $null
 
+    $summaryFailureOutput = try {
+        & $scriptPath `
+            -Environment 'sample-dev' `
+            -ConfirmResourceChanges `
+            -AzdPath $fakeAzdPath `
+            -RepositoryRoot $tempRoot `
+            -DeploymentSummaryScriptPath $failingSummaryPath *>&1 | Out-String
+    }
+    catch {
+        $_ | Out-String
+    }
+    if ($summaryFailureOutput -match 'SUCCESS: Complete sample installation finished' -or
+        $summaryFailureOutput -match 'SUMMARY-SHOULD-NOT-BE-PRINTED') {
+        throw "The wrapper emitted success-shaped output before summary validation: $summaryFailureOutput"
+    }
+
+    Set-Content -LiteralPath (Join-Path $environmentDirectory '.env') -Value @(
+        'FOUNDRY_AGENT_NAME="win365-desktop-agent"',
+        'AGENT_WIN365_DESKTOP_AGENT_VERSION="4"',
+        'ENABLE_W365="true"',
+        'W365_ENABLED="true"',
+        'DEPLOY_STATE="true"',
+        'STATE_STORAGE_ACCOUNT_NAME="samplestorage"',
+        'STATE_CONTAINER_NAME="desktop-state"',
+        'SESSION_BLOB_URI="https://samplestorage.blob.core.windows.net/desktop-state/slot.json"',
+        'DEPLOY_VIEWER="true"',
+        'VIEWER_PUBLIC_URL="https://viewer.example.test"'
+    )
+    $persistenceFailureOutput = try {
+        & $scriptPath `
+            -Environment 'sample-dev' `
+            -ConfirmResourceChanges `
+            -AzdPath $fakeAzdPath `
+            -RepositoryRoot $tempRoot `
+            -DeploymentSummaryScriptPath $destructiveSummaryPath *>&1 | Out-String
+    }
+    catch {
+        $_ | Out-String
+    }
+    if ($persistenceFailureOutput -match 'SUCCESS: Complete sample installation finished' -or
+        $persistenceFailureOutput -match 'SUMMARY-SHOULD-STAY-BUFFERED') {
+        throw "The wrapper emitted buffered final output before completion persistence: $persistenceFailureOutput"
+    }
+
+    Set-Content -LiteralPath (Join-Path $environmentDirectory '.env') -Value @(
+        'FOUNDRY_AGENT_NAME="win365-desktop-agent"',
+        'AGENT_WIN365_DESKTOP_AGENT_VERSION="4"',
+        'ENABLE_W365="true"',
+        'W365_ENABLED="true"',
+        'DEPLOY_STATE="true"',
+        'STATE_STORAGE_ACCOUNT_NAME="samplestorage"',
+        'STATE_CONTAINER_NAME="desktop-state"',
+        'SESSION_BLOB_URI="https://samplestorage.blob.core.windows.net/desktop-state/slot.json"',
+        'DEPLOY_VIEWER="true"',
+        'VIEWER_PUBLIC_URL="https://viewer.example.test"'
+    )
     $env:TEST_AZD_UP_FAIL = 'true'
     $failed = $false
     try {

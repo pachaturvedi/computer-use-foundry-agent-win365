@@ -1,3 +1,38 @@
+<#
+.SYNOPSIS
+Runs the complete azd deployment and prints final guidance only after verified completion.
+
+.DESCRIPTION
+Invokes azd up for one existing azd environment, streams deployment progress and
+interactive prompts, suppresses premature generic Foundry next steps, verifies a
+run-specific post-up handshake and persisted component state, then prints the
+repository deployment summary.
+
+.PARAMETER Environment
+The existing azd environment to deploy.
+
+.PARAMETER RepositoryRoot
+The repository root containing azure.yaml, scripts, and the selected .azure environment.
+
+.PARAMETER ConfirmResourceChanges
+Explicitly approves creation or update of billable Azure and Windows 365 resources.
+
+.PARAMETER NoPrompt
+Passes --no-prompt to azd. Protected automation must separately provide every required approval.
+
+.PARAMETER AzdPath
+Optional explicit Azure Developer CLI executable used by tests or controlled installations.
+
+.PARAMETER DeploymentSummaryScriptPath
+Optional deployment-summary script override used by offline tests.
+
+.OUTPUTS
+Streams sanitized deployment progress, followed by verified success and next-step guidance.
+
+.NOTES
+Mutating wrapper. It fails closed when azd, post-up setup, state validation,
+summary generation, or run-specific completion persistence is incomplete.
+#>
 #Requires -Version 7.4
 [CmdletBinding(SupportsShouldProcess)]
 param(
@@ -11,7 +46,9 @@ param(
 
     [switch]$NoPrompt,
 
-    [string]$AzdPath
+    [string]$AzdPath,
+
+    [string]$DeploymentSummaryScriptPath = (Join-Path $PSScriptRoot 'Show-DeploymentSummary.ps1')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -228,14 +265,10 @@ elseif ($elapsed.Elapsed.TotalMinutes -ge 1) {
 else {
     '{0}s' -f [Math]::Max(1, [int][Math]::Ceiling($elapsed.Elapsed.TotalSeconds))
 }
-Write-Host ''
-Write-Host "SUCCESS: Complete sample installation finished in $elapsedText."
-& (Join-Path $PSScriptRoot 'Show-DeploymentSummary.ps1') `
+$summaryText = & $DeploymentSummaryScriptPath `
     -RepositoryRoot $RepositoryRoot `
-    -Environment $Environment
-if (!$?) {
-    throw 'Final deployment summary failed.'
-}
+    -Environment $Environment *>&1 |
+    Out-String
 Set-AzdEnvironmentFileValues -Path $environmentPath -Values @{
     W365_AZD_UP_COMPLETED_RUN_ID = $runId
 }
@@ -243,3 +276,6 @@ $completedValues = Read-AzdEnvironmentFile -Path $environmentPath
 if ([string]$completedValues['W365_AZD_UP_COMPLETED_RUN_ID'] -ne $runId) {
     throw 'The deployment completed, but its run-specific completion state could not be verified.'
 }
+Write-Host ''
+Write-Host "SUCCESS: Complete sample installation finished in $elapsedText."
+Write-Host $summaryText.TrimEnd()
