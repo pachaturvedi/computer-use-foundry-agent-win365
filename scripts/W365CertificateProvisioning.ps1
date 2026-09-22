@@ -1,0 +1,136 @@
+Set-StrictMode -Version Latest
+
+function Enter-W365CertificateOfficerLease {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][guid]$SubscriptionId,
+        [Parameter(Mandatory)][string]$VaultName,
+        [Parameter(Mandatory)][string]$VaultId,
+        [Parameter(Mandatory)][guid]$OperatorObjectId,
+        [switch]$ConfirmResourceChanges,
+        [ValidateRange(1, 30)][int]$PropagationAttempts = 8,
+        [ValidateRange(0, 30)][int]$PropagationDelaySeconds = 2
+    )
+
+    $roleId = 'a4417e6f-fecd-4de8-b567-7b0420556985'
+    $roleDefinitionId = "/subscriptions/$SubscriptionId/providers/Microsoft.Authorization/roleDefinitions/$roleId"
+    $existing = & az role assignment list `
+        --subscription $SubscriptionId `
+        --scope $VaultId `
+        --assignee-object-id $OperatorObjectId `
+        --query "[?roleDefinitionId=='$roleDefinitionId'].id" `
+        --output tsv 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to inspect Key Vault Certificates Officer on '$VaultName'."
+    }
+
+    $assignmentId = $null
+    if ([string]::IsNullOrWhiteSpace(($existing | Out-String))) {
+        if (!$ConfirmResourceChanges) {
+            throw "The current operator lacks Key Vault Certificates Officer on '$VaultName'. Re-run with -ConfirmResourceChanges to grant it, or have an administrator grant it."
+        }
+        $assignmentId = (& az role assignment create `
+            --subscription $SubscriptionId `
+            --scope $VaultId `
+            --assignee-object-id $OperatorObjectId `
+            --assignee-principal-type User `
+            --role $roleId `
+            --query id `
+            --output tsv | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($assignmentId)) {
+            throw "Unable to grant Key Vault Certificates Officer on '$VaultName'."
+        }
+
+        $pendingLease = [pscustomobject]@{
+            SubscriptionId = $SubscriptionId
+            VaultName = $VaultName
+            VaultId = $VaultId
+            OperatorObjectId = $OperatorObjectId
+            TemporaryRoleAssignmentId = $assignmentId
+        }
+        $propagationError = $null
+        try {
+            for ($attempt = 1; $attempt -le $PropagationAttempts; $attempt++) {
+                $probeOutput = (& az keyvault certificate list `
+                    --subscription $SubscriptionId `
+                    --vault-name $VaultName `
+                    --maxresults 1 `
+                    --output none 2>&1 | Out-String).Trim()
+                if ($LASTEXITCODE -eq 0) {
+                    break
+                }
+                $isPropagationDelay = $probeOutput -match
+                    'Forbidden|AuthorizationFailed|AccessDenied|Caller is not authorized|does not have certificates list permission|RBAC'
+                if (!$isPropagationDelay) {
+                    throw "Key Vault certificate access probe failed with a terminal error for '$VaultName'."
+                }
+                if ($attempt -eq $PropagationAttempts) {
+                    throw "Key Vault Certificates Officer was assigned on '$VaultName', but certificate access was not authorized after $PropagationAttempts bounded propagation attempts."
+                }
+                Start-Sleep -Seconds $PropagationDelaySeconds
+            }
+        }
+        catch {
+            $propagationError = $_
+        }
+        if ($null -ne $propagationError) {
+            Complete-W365CertificateOfficerLease -Lease $pendingLease -PrimaryError $propagationError
+        }
+    }
+
+    return [pscustomobject]@{
+        SubscriptionId = $SubscriptionId
+        VaultName = $VaultName
+        VaultId = $VaultId
+        OperatorObjectId = $OperatorObjectId
+        TemporaryRoleAssignmentId = $assignmentId
+    }
+}
+
+function Exit-W365CertificateOfficerLease {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Lease)
+
+    if ([string]::IsNullOrWhiteSpace([string]$Lease.TemporaryRoleAssignmentId)) {
+        return
+    }
+
+    & az role assignment delete `
+        --subscription $Lease.SubscriptionId `
+        --ids $Lease.TemporaryRoleAssignmentId `
+        --output none
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to revoke the temporary Key Vault Certificates Officer assignment on '$($Lease.VaultName)'."
+    }
+    $Lease.TemporaryRoleAssignmentId = $null
+}
+
+function Complete-W365CertificateOfficerLease {
+    [CmdletBinding()]
+    param(
+        $Lease,
+        [System.Management.Automation.ErrorRecord]$PrimaryError
+    )
+
+    $cleanupError = $null
+    if ($null -ne $Lease) {
+        try {
+            Exit-W365CertificateOfficerLease -Lease $Lease
+        }
+        catch {
+            $cleanupError = $_
+        }
+    }
+
+    if ($null -ne $PrimaryError) {
+        if ($null -ne $cleanupError) {
+            throw [AggregateException]::new(
+                'Certificate provisioning failed and temporary Key Vault role cleanup also failed.',
+                [Exception[]]@($PrimaryError.Exception, $cleanupError.Exception))
+        }
+        throw $PrimaryError
+    }
+    if ($null -ne $cleanupError) {
+        throw $cleanupError
+    }
+}

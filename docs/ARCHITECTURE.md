@@ -234,11 +234,13 @@ replacement after rediscovery.
 The process selects `AgentUserTokenProvider`, not the model.
 `W365_BLUEPRINT_CREDENTIAL_MODE` explicitly selects blueprint T1 acquisition;
 there is no request-driven selection or automatic fallback. Client-secret mode
-is implemented for bounded validation, managed-identity federation remains
+is an explicit legacy option for bounded validation, managed-identity federation remains
 selectable but is blocked in the tested Foundry host by Entra `AADSTS700231`,
-and Key Vault certificate mode remains reserved and fails closed until fully
-implemented. The viewer continues to start with its own managed identity and
-requires an explicitly approved FIC on the blueprint. Every implemented path
+and Key Vault certificate mode is the fresh-deployment default. The agent and
+viewer each use their own managed identity to read the public certificate and
+sign remotely with certificate/key-scoped Key Vault RBAC; the private key never
+leaves Key Vault. A viewer FIC is required only for the explicitly selected
+managed-identity-federation mode. Every implemented path
 uses `fmi_path=W365_AGENT_ID` to obtain blueprint T1, then the shared T1 -> T2 ->
 user-FIC T3 flow for ATG/ARI. The hosted FIC subject must be the discovered
 agent object ID; the viewer FIC subject must be the viewer UAMI object ID.
@@ -249,6 +251,15 @@ boundaries, but it is not itself a token. No DAC/CLI fallback or IdentityRM
 auxiliary token is used for W365. Model/state access uses ordinary Azure
 credentials. See [authentication](AUTHENTICATION.md) for same-tenant
 requirements and token boundaries.
+
+For fresh certificate-mode deployment, phase two first provisions only the
+credential vault, Blob state, and container-scoped state access. Certificate
+and key role assignments are disabled at that point because the certificate
+objects do not yet exist. After certificate creation and exact-blueprint public
+registration pass the existing certificate preflight, orchestration transiently
+sets `W365_CERTIFICATE_PROVISIONING_ACTIVE=true`, reprovisions state to add the
+hosted-agent object-scoped roles, and only then provisions the viewer and its
+object-scoped roles. The gate is process-local and rejected if persisted.
 
 ### Runtime token and desktop flow
 

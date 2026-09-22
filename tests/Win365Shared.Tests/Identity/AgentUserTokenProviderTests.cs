@@ -19,7 +19,8 @@ public sealed class AgentUserTokenProviderTests
             ["W365_TENANT_ID"] = "11111111-1111-1111-1111-111111111111",
             ["W365_BLUEPRINT_ID"] = "blueprint",
             ["W365_AGENT_ID"] = "agent",
-            ["W365_AGENT_USER_ID"] = "agent-user"
+            ["W365_AGENT_USER_ID"] = "agent-user",
+            ["W365_BLUEPRINT_CREDENTIAL_MODE"] = "managed_identity_federation"
         }).Build());
         using var handler = new TokenHandler();
         using var http = new HttpClient(handler);

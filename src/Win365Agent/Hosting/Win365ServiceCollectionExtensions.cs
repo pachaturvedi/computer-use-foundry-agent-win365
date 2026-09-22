@@ -29,15 +29,17 @@ internal static class Win365ServiceCollectionExtensions
             builder.Services.AddSingleton<IBlueprintSecretResolver>(services =>
                 new KeyVaultBlueprintSecretResolver(settings, services.GetRequiredService<TokenCredential>()));
         }
-        if (!viewerMode && settings.BlueprintCredentialMode == "key_vault_certificate")
+        if (settings.BlueprintCredentialMode == "key_vault_certificate")
         {
-            // key_vault_certificate mode is agent-only (see Settings.Validate); the viewer never
-            // registers this provider. The private key never leaves Key Vault: assertions are
-            // signed remotely (see KeyVaultBlueprintCertificateAssertionProvider).
+            // Pin certificate access to the selected runtime managed identity. Do not let
+            // DefaultAzureCredential silently substitute CLI, developer, or interactive users.
+            var managedIdentityClientId = settings.Required(
+                viewerMode ? "AZURE_CLIENT_ID" : "W365_AGENT_ID");
             builder.Services.AddSingleton<IBlueprintCertificateAssertionProvider>(services =>
                 new KeyVaultBlueprintCertificateAssertionProvider(
                     settings,
-                    services.GetRequiredService<TokenCredential>(),
+                    new ManagedIdentityCredential(
+                        ManagedIdentityId.FromUserAssignedClientId(managedIdentityClientId)),
                     services.GetRequiredService<HttpClient>()));
         }
         builder.Services.AddSingleton<IBlueprintTokenProvider>(services =>

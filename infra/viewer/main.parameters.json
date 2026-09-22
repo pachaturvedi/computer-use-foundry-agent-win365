@@ -27,7 +27,8 @@
     "agentId": { "value": "${W365_AGENT_ID=}" },
     "agentObjectId": { "value": "${W365_AGENT_OBJECT_ID=}" },
     "agentUserId": { "value": "${W365_AGENT_USER_ID=}" },
-    "blueprintCredentialMode": { "value": "${W365_BLUEPRINT_CREDENTIAL_MODE=client_secret}" },
+    "blueprintCredentialMode": { "value": "${W365_BLUEPRINT_CREDENTIAL_MODE=key_vault_certificate}" },
+    "certificateProvisioningActive": { "value": "${W365_CERTIFICATE_PROVISIONING_ACTIVE=false}" },
     "screenShareSdkUrl": { "value": "${SCREENSHARE_SDK_URL=}" },
     "screenShareFrameOrigins": { "value": "${SCREENSHARE_FRAME_ORIGINS=}" },
     "screenShareAppUrl": { "value": "${SCREENSHARE_APP_URL=}" }

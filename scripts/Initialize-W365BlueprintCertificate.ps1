@@ -20,12 +20,14 @@ param(
     [string]$Environment,
     [switch]$Rotate,
     [ValidateRange(1, 60)][int]$ValidityInMonths = 12,
-    [switch]$ConfirmResourceChanges
+    [switch]$ConfirmResourceChanges,
+    [psobject]$CertificateOfficerLease
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'Logging.ps1')
+. (Join-Path $PSScriptRoot 'W365CertificateProvisioning.ps1')
 Initialize-SampleScriptLogging -ScriptName $MyInvocation.MyCommand.Name -Parameters $PSBoundParameters
 
 $certificateName = 'w365-blueprint-certificate'
@@ -63,44 +65,28 @@ if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($vaultId)) {
     throw "Unable to resolve Key Vault '$vaultName'."
 }
 
-function Test-CertificatesOfficerRole {
-    param([Parameter(Mandatory)][string]$PrincipalId)
-
-    $roleDefinitionId = "/subscriptions/$subscriptionId/providers/Microsoft.Authorization/roleDefinitions/a4417e6f-fecd-4de8-b567-7b0420556985"
-    $existing = & az role assignment list `
-        --subscription $subscriptionId `
-        --scope $vaultId `
-        --assignee-object-id $PrincipalId `
-        --query "[?roleDefinitionId=='$roleDefinitionId'].id" `
-        --output tsv 2>$null
-    if ($LASTEXITCODE -ne 0) {
-        throw "Unable to inspect Key Vault Certificates Officer role on '$vaultName'."
-    }
-    return ![string]::IsNullOrWhiteSpace(($existing | Out-String))
-}
-
 $operatorObjectId = (& az ad signed-in-user show --query id --output tsv | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($operatorObjectId)) {
     throw 'Unable to resolve the signed-in Azure user.'
 }
-if (!(Test-CertificatesOfficerRole -PrincipalId $operatorObjectId)) {
-    if (!$ConfirmResourceChanges) {
-        throw "The current operator lacks Key Vault Certificates Officer on '$vaultName'. Re-run with -ConfirmResourceChanges to grant it, or have an administrator grant it."
-    }
-    if (!$PSCmdlet.ShouldProcess("$operatorObjectId on $vaultName", 'Grant Key Vault Certificates Officer')) { return }
-    Write-SampleVerbose -Component 'blueprint-certificate' -Message "Granting Key Vault Certificates Officer to the current operator on '$vaultName'."
-    & az role assignment create `
-        --subscription $subscriptionId `
-        --scope $vaultId `
-        --assignee-object-id $operatorObjectId `
-        --assignee-principal-type 'User' `
-        --role 'a4417e6f-fecd-4de8-b567-7b0420556985' `
-        --output none
-    if ($LASTEXITCODE -ne 0) {
-        throw "Unable to grant Key Vault Certificates Officer on '$vaultName'."
-    }
+$ownsCertificateOfficerLease = $null -eq $CertificateOfficerLease
+if ($ownsCertificateOfficerLease) {
+    $CertificateOfficerLease = Enter-W365CertificateOfficerLease `
+        -SubscriptionId ([guid]$subscriptionId) `
+        -VaultName $vaultName `
+        -VaultId $vaultId `
+        -OperatorObjectId ([guid]$operatorObjectId) `
+        -ConfirmResourceChanges:$ConfirmResourceChanges
+}
+elseif ([string]$CertificateOfficerLease.SubscriptionId -ne $subscriptionId -or
+    [string]$CertificateOfficerLease.VaultName -ne $vaultName -or
+    [string]$CertificateOfficerLease.OperatorObjectId -ne $operatorObjectId) {
+    throw 'The supplied certificate officer lease does not match the selected subscription, vault, and operator.'
 }
 
+$primaryError = $null
+$certificateResult = $null
+try {
 $existingCertificateId = & az keyvault certificate show `
     --subscription $subscriptionId `
     --vault-name $vaultName `
@@ -110,7 +96,23 @@ $existingCertificateId = & az keyvault certificate show `
 $certificateExists = $LASTEXITCODE -eq 0 -and ![string]::IsNullOrWhiteSpace(($existingCertificateId | Out-String))
 
 if ($certificateExists -and !$Rotate) {
-    Write-Host "Certificate '$certificateName' already exists in Key Vault '$vaultName'; reusing it. Pass -Rotate to issue a new one."
+    $existingPolicyJson = (& az keyvault certificate show `
+        --subscription $subscriptionId `
+        --vault-name $vaultName `
+        --name $certificateName `
+        --query policy `
+        --output json | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($existingPolicyJson)) {
+        throw "Unable to validate the existing certificate policy for '$certificateName' in '$vaultName'."
+    }
+    $existingPolicy = $existingPolicyJson | ConvertFrom-Json
+    $keyUsage = @($existingPolicy.x509CertificateProperties.keyUsage)
+    if ($existingPolicy.keyProperties.exportable -ne $false -or
+        [string]$existingPolicy.keyProperties.keyType -ne 'RSA' -or
+        [int]$existingPolicy.keyProperties.keySize -ne 2048 -or
+        'digitalSignature' -notin $keyUsage) {
+        throw "Existing certificate '$certificateName' has an incompatible policy. Re-run with -Rotate to create a non-exportable RSA 2048 digital-signature certificate."
+    }
 }
 else {
     if (!$ConfirmResourceChanges) {
@@ -193,10 +195,29 @@ switch ($base64UrlCer.Length % 4) {
     3 { $base64UrlCer += '=' }
 }
 $certificatePublicBase64 = [Convert]::ToBase64String([Convert]::FromBase64String($base64UrlCer))
+$certificateResult = [pscustomobject]@{
+        CertificateName = $certificateName
+        VaultName = $vaultName
+        PublicCertificateBase64 = $certificatePublicBase64
+    }
+}
+catch {
+    $primaryError = $_
+}
 
-Write-Host "Certificate '$certificateName' is ready in Key Vault '$vaultName'. Only its public bytes were read; the private key was never exported."
-[pscustomobject]@{
-    CertificateName = $certificateName
-    VaultName = $vaultName
-    PublicCertificateBase64 = $certificatePublicBase64
+if ($ownsCertificateOfficerLease) {
+    Complete-W365CertificateOfficerLease `
+        -Lease $CertificateOfficerLease `
+        -PrimaryError $primaryError
+}
+elseif ($null -ne $primaryError) {
+    throw $primaryError
+}
+
+if ($null -ne $certificateResult) {
+    Write-Host "Certificate '$certificateName' is ready in Key Vault '$vaultName'. Only its public bytes were read; the private key was never exported."
+    if ($certificateExists -and !$Rotate) {
+        Write-Host "Certificate '$certificateName' already existed with the required policy and was reused."
+    }
+    $certificateResult
 }

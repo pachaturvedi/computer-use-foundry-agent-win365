@@ -13,8 +13,11 @@ param viewerLiveEnabled bool = false
 @allowed([
   'client_secret'
   'managed_identity_federation'
+  'key_vault_certificate'
 ])
-param blueprintCredentialMode string = 'client_secret'
+param blueprintCredentialMode string = 'key_vault_certificate'
+param certificateProvisioningActive bool = false
+param certificateRbacReady bool = false
 param sessionBlobUri string
 param viewerPublicUrl string = ''
 param viewerClientId string = ''
@@ -35,6 +38,11 @@ var containerImage = useRegistry
   ? '${registry.properties.loginServer}/${imageName}'
   : imageName
 var clientSecretEnabled = w365Enabled && blueprintCredentialMode == 'client_secret'
+var certificateConfigurationReady = blueprintCredentialMode == 'key_vault_certificate' && !(certificateProvisioningActive || certificateRbacReady)
+  ? fail('key_vault_certificate viewer provisioning requires the orchestration-owned certificate readiness gate.')
+  : true
+var certificateEnabled = blueprintCredentialMode == 'key_vault_certificate' && certificateConfigurationReady
+var blueprintCertificateName = 'w365-blueprint-certificate'
 
 resource registry 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = { name: registryName }
 resource vault 'Microsoft.KeyVault/vaults@2023-07-01' existing = { name: keyVaultName }
@@ -42,6 +50,44 @@ resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' 
   name: '${appName}-identity'
   location: location
   tags: tags
+}
+
+resource blueprintCertificate 'Microsoft.KeyVault/vaults/certificates@2023-07-01' existing = {
+  parent: vault
+  name: blueprintCertificateName
+}
+
+resource blueprintCertificateKey 'Microsoft.KeyVault/vaults/keys@2023-07-01' existing = {
+  parent: vault
+  name: blueprintCertificateName
+}
+
+// Certificate mode gives the viewer UAMI only public-certificate read and remote-sign rights
+// on the one blueprint certificate/key. It receives no private-key export or vault-wide access.
+resource viewerCertificateUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (certificateEnabled) {
+  name: guid(vault.id, identity.id, 'viewer-blueprint-certificate-reader')
+  scope: blueprintCertificate
+  properties: {
+    principalId: identity.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      'db79e9a7-68ee-4b58-9aeb-b90e7c24fcba'
+    )
+  }
+}
+
+resource viewerCryptoUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (certificateEnabled) {
+  name: guid(vault.id, identity.id, 'viewer-blueprint-certificate-signer')
+  scope: blueprintCertificateKey
+  properties: {
+    principalId: identity.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      '12338af0-0e69-4776-bea7-57ae8d297424'
+    )
+  }
 }
 resource registryRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(registry.id, identity.id, 'pull')
@@ -99,6 +145,7 @@ resource viewer 'Microsoft.App/containerApps@2024-03-01' = {
           { name: 'W365_AGENT_OBJECT_ID', value: agentObjectId }
           { name: 'W365_AGENT_USER_ID', value: agentUserId }
           { name: 'W365_BLUEPRINT_CREDENTIAL_MODE', value: blueprintCredentialMode }
+          { name: 'W365_KEY_VAULT_NAME', value: keyVaultName }
           { name: 'SESSION_BLOB_URI', value: sessionBlobUri }
           { name: 'OPERATOR_TENANT_ID', value: operatorTenantId }
           { name: 'OPERATOR_OBJECT_ID', value: operatorObjectId }
@@ -119,7 +166,7 @@ resource viewer 'Microsoft.App/containerApps@2024-03-01' = {
       }]
     }
   }
-  dependsOn: [registryRole]
+  dependsOn: [registryRole, viewerCertificateUserRole, viewerCryptoUserRole]
 }
 output viewerHostname string = viewer.properties.configuration.ingress.fqdn
 output viewerName string = viewer.name

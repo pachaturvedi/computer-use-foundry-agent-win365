@@ -55,7 +55,7 @@ public sealed class Settings(IConfiguration config)
 
     /// <summary>Gets the explicitly selected blueprint authentication mode.</summary>
     public string BlueprintCredentialMode =>
-        Optional("W365_BLUEPRINT_CREDENTIAL_MODE") ?? "managed_identity_federation";
+        Optional("W365_BLUEPRINT_CREDENTIAL_MODE") ?? "key_vault_certificate";
 
     /// <summary>Gets the hosted HTTP port from <c>PORT</c>, defaulting to 8088.</summary>
     /// <exception cref="InvalidOperationException">The configured value is not a valid TCP port.</exception>
@@ -187,11 +187,6 @@ public sealed class Settings(IConfiguration config)
             throw new InvalidOperationException(
                 "W365_BLUEPRINT_CREDENTIAL_MODE must be managed_identity_federation, client_secret, or key_vault_certificate.");
         }
-        if (BlueprintCredentialMode == "key_vault_certificate" && viewerMode)
-        {
-            throw new InvalidOperationException(
-                "key_vault_certificate mode is agent-only. The viewer must use client_secret or managed_identity_federation.");
-        }
         if (BlueprintCredentialMode == "client_secret")
         {
             // The viewer (Container App) receives the secret through its own native Key Vault
@@ -202,7 +197,7 @@ public sealed class Settings(IConfiguration config)
         }
         if (BlueprintCredentialMode == "key_vault_certificate")
         {
-            // The certificate never leaves Key Vault; the agent only needs the vault name to
+            // The certificate never leaves Key Vault; each runtime only needs the vault name to
             // build a client assertion via remote signing against the canonical certificate name
             // (see KeyVaultBlueprintCertificateAssertionProvider.CertificateName).
             _ = Required("W365_KEY_VAULT_NAME");

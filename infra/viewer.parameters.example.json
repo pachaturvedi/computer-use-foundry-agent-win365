@@ -10,7 +10,7 @@
     "w365Enabled": { "value": false },
     "oidcSecretName": { "value": "w365-viewer-client-secret" },
     "blueprintSecretName": { "value": "w365-blueprint-client-secret" },
-    "blueprintCredentialMode": { "value": "client_secret" },
+    "blueprintCredentialMode": { "value": "key_vault_certificate" },
     "sessionBlobUri": { "value": "https://YOUR-EXISTING-STORAGE.blob.core.windows.net/desktop-state/slot.json" },
     "viewerPublicUrl": { "value": "https://YOUR-VIEWER-HOST" },
     "viewerClientId": { "value": "YOUR-OIDC-WEB-APP-CLIENT-ID" },

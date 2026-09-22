@@ -101,7 +101,10 @@ one place: `Key Vault Secrets User` for the viewer identity when enabled and
 
 ## Enable the hosted viewer
 
-The default E2E path sets `W365_BLUEPRINT_CREDENTIAL_MODE=client_secret`.
+Fresh deployments default to `W365_BLUEPRINT_CREDENTIAL_MODE=key_vault_certificate`.
+The viewer UAMI receives certificate/key-scoped Key Vault read/sign roles and
+uses the same non-exportable certificate as the agent; no blueprint secret is
+injected. `client_secret` remains an explicit legacy opt-in.
 Store the existing blueprint credential as `w365-blueprint-client-secret` in
 the shared W365 Key Vault. The viewer uses it only for the T1 blueprint exchange;
 the same T2/user-FIC T3 exchanges and resource-scoped tokens remain unchanged.

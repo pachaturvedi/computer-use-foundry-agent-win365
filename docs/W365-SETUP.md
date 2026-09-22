@@ -59,8 +59,8 @@ During interactive `postup`, the operator must:
 
 1. approve W365/Entra resource changes;
 2. complete delegated Graph device-code sign-in;
-3. provide the existing blueprint client secret through the secure prompt when
-   using `client_secret`; and
+3. authorize creation/reuse and public registration of the default
+   non-exportable Key Vault certificate (no blueprint secret prompt); and
 4. approve viewer OIDC activation when screen-share prerequisites are present.
 
 The hook then creates or reuses the agent user and W365 pool, persists the
@@ -122,7 +122,10 @@ credential mode, and securely stored the blueprint secret when using
 `client_secret`. The wrapper verifies these prerequisites before any W365 or
 Entra mutation.
 
-For `client_secret` mode:
+Fresh/unset environments use `key_vault_certificate`; `azd up` creates or
+reuses the certificate, registers only its public bytes on the discovered
+blueprint, and verifies registration before W365 mutation. Existing explicit
+modes are preserved. For legacy `client_secret` opt-in:
 
 ```powershell
 pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
@@ -175,7 +178,7 @@ $certificate = .\scripts\Initialize-W365BlueprintCertificate.ps1 `
 # infra/state/keyvault.bicep only grants the certificate/key Key Vault RBAC
 # roles to the agent principal when W365_BLUEPRINT_CREDENTIAL_MODE is
 # key_vault_certificate at *state* provisioning time. If state was already
-# provisioned in client_secret mode (the default) before you switched modes
+# provisioned in client_secret mode before you switched modes
 # above, you must re-provision state now so the agent actually receives that
 # access before the redeploy below; otherwise the next step fails fast with a
 # clear remediation message instead of deploying a broken agent.
@@ -459,9 +462,10 @@ hosting compatibility.
 ## Optional viewer federation
 
 This section applies only when
-`W365_BLUEPRINT_CREDENTIAL_MODE=managed_identity_federation`. The default E2E
-demo uses the existing blueprint client secret and does not require a viewer
-FIC. Credential modes are explicit and never fall back to each other.
+`W365_BLUEPRINT_CREDENTIAL_MODE=managed_identity_federation`. The default
+certificate mode does not require a viewer FIC: the viewer UAMI signs with the
+same non-exportable Key Vault certificate under object-scoped RBAC. Credential
+modes are explicit and never fall back to each other.
 
 First deploy the viewer in bootstrap mode to obtain its existing UAMI
 `viewerIdentityPrincipalId` output. Only after administrator approval, add:
@@ -721,7 +725,8 @@ resource-group deletion does not delete Entra identities or cancel W365 billing.
 
 `scripts/Register-W365BlueprintCertificate.ps1` and
 `scripts/Initialize-W365BlueprintCertificate.ps1` mutate the tenant (a
-blueprint `keyCredential` and, optionally, an operator role assignment) outside
+blueprint `keyCredential`; any self-granted operator certificate role is
+revoked in a `finally` block) outside
 the ownership manifest that `Remove-W365Resources.ps1` tracks. These are not
 removed automatically by `azd down` or the cleanup script above. When retiring
 an environment that used `key_vault_certificate` mode, an administrator with
@@ -751,14 +756,11 @@ an environment that used `key_vault_certificate` mode, an administrator with
    matching how `Register-W365BlueprintCertificate.ps1` added it). Do not
    remove `keyCredentials` belonging to any other integration, and do not
    remove an entry you cannot uniquely match to a retired certificate.
-2. If `Initialize-W365BlueprintCertificate.ps1` self-granted the operator "Key
-   Vault Certificates Officer" role on the Key Vault because it was missing,
-   remove that role assignment once certificate rotation/administration is no
-   longer needed (`az role assignment delete --assignee-object-id
-   <operator-object-id> --role "Key Vault Certificates Officer" --scope
-   <vault-resource-id>`; `--assignee-object-id` avoids a Microsoft Graph lookup
-   of the assignee, matching the pattern used by the deployment-time RBAC
-   checks in `scripts/Invoke-AzdDeployment.ps1`). Skip this step if the
+2. Verify no temporary "Key Vault Certificates Officer" assignment remains.
+   The initializer revokes an assignment it creates even on cancellation or
+   failure. If an older release left one behind, remove it with `az role
+   assignment delete --assignee-object-id <operator-object-id> --role "Key
+   Vault Certificates Officer" --scope <vault-resource-id>`. Skip this step if the
    operator already held the role before setup for another reason.
 3. Deleting the Key Vault (via `azd down`) removes the certificate object and
    its backing key; no separate Key Vault cleanup is required for those.

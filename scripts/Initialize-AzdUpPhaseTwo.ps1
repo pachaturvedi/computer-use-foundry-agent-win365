@@ -3,6 +3,7 @@
 param(
     [Parameter(Mandatory)][string]$Environment,
     [switch]$DeployViewer,
+    [switch]$FinalizeCredentialAccess,
     [string]$IdentityScriptPath = (Join-Path $PSScriptRoot 'Get-FoundryIdentity.ps1'),
     [string]$ProvisioningProfileScriptPath = (Join-Path $PSScriptRoot 'Resolve-AzdUpProvisioningProfile.ps1')
 )
@@ -23,6 +24,18 @@ if (!$azd) {
 }
 
 Invoke-W365Azd -Azd $azd -Arguments @('env', 'select', $Environment) | Out-Null
+$persistedCertificateGate = Get-W365AzdValue -Azd $azd -Name 'W365_CERTIFICATE_PROVISIONING_ACTIVE' -AllowMissing
+$processCertificateGate = [Environment]::GetEnvironmentVariable(
+    'W365_CERTIFICATE_PROVISIONING_ACTIVE',
+    'Process')
+foreach ($gateValue in @($persistedCertificateGate, $processCertificateGate)) {
+    if (![string]::IsNullOrWhiteSpace($gateValue) -and $gateValue -ne 'false') {
+        throw 'W365_CERTIFICATE_PROVISIONING_ACTIVE is orchestration-owned and must not be persisted or supplied by the operator.'
+    }
+}
+if ($DeployViewer -and !$FinalizeCredentialAccess) {
+    throw 'Viewer provisioning is allowed only while finalizing credential access after certificate readiness.'
+}
 $ownership = Get-W365AzdValue -Azd $azd -Name 'FOUNDRY_PROJECT_OWNERSHIP' -AllowMissing
 if ([string]::IsNullOrWhiteSpace($ownership)) {
     $ownership = 'managed'
@@ -39,7 +52,7 @@ if ([string]::IsNullOrWhiteSpace($agentName)) {
 $agentVersion = Get-W365AzdValue -Azd $azd -Name 'AGENT_WIN365_DESKTOP_AGENT_VERSION'
 $credentialMode = Get-W365AzdValue -Azd $azd -Name 'W365_BLUEPRINT_CREDENTIAL_MODE' -AllowMissing
 if ([string]::IsNullOrWhiteSpace($credentialMode)) {
-    $credentialMode = 'client_secret'
+    $credentialMode = 'key_vault_certificate'
 }
 if ($credentialMode -notin @('client_secret', 'managed_identity_federation', 'key_vault_certificate')) {
     throw "Unsupported W365_BLUEPRINT_CREDENTIAL_MODE '$credentialMode'."
@@ -61,16 +74,23 @@ if ($LASTEXITCODE -ne 0) {
 }
 $identity = $identityResult | Select-Object -Last 1
 $agentPrincipalId = [guid]::Empty
+$blueprintId = [guid]::Empty
 if ($null -eq $identity -or
     ![guid]::TryParse([string]$identity.AgentIdentityId, [ref]$agentPrincipalId) -or
     $agentPrincipalId -eq [guid]::Empty) {
     throw 'Foundry identity discovery did not return a valid agent object/principal ID.'
+}
+if (![guid]::TryParse([string]$identity.BlueprintId, [ref]$blueprintId) -or
+    $blueprintId -eq [guid]::Empty) {
+    throw 'Foundry identity discovery did not return a valid blueprint app/client ID.'
 }
 
 $phaseTwoValues = [ordered]@{
     ENABLE_W365 = 'true'
     DEPLOY_STATE = 'true'
     STATE_AGENT_PRINCIPAL_ID = $agentPrincipalId.ToString()
+    W365_BLUEPRINT_ID = $blueprintId.ToString()
+    W365_AGENT_OBJECT_ID = $agentPrincipalId.ToString()
     DEPLOY_VIEWER = 'false'
     VIEWER_LIVE_ENABLED = 'false'
     W365_BLUEPRINT_CREDENTIAL_MODE = $credentialMode
@@ -78,12 +98,31 @@ $phaseTwoValues = [ordered]@{
 Set-W365AzdValues -Azd $azd -Values $phaseTwoValues
 
 $previousUserAgent = $env:AZURE_DEV_USER_AGENT
+$previousCertificateProvisioningActive = $env:W365_CERTIFICATE_PROVISIONING_ACTIVE
 $env:AZURE_DEV_USER_AGENT = 'microsoft_foundry_skill'
 try {
-    Write-W365ProvisioningStep "Provisioning shared Blob state for agent principal '$agentPrincipalId'."
-    Invoke-W365Azd -Azd $azd -Arguments @(
-        'provision', 'state', '--environment', $Environment, '--no-prompt'
-    ) | Out-Null
+    $env:W365_CERTIFICATE_PROVISIONING_ACTIVE = 'false'
+    if (!$FinalizeCredentialAccess) {
+        Write-W365ProvisioningStep "Provisioning shared Blob state without certificate-scoped RBAC for agent principal '$agentPrincipalId'."
+        Invoke-W365Azd -Azd $azd -Arguments @(
+            'provision', 'state', '--environment', $Environment, '--no-prompt'
+        ) | Out-Null
+    }
+    elseif ($credentialMode -eq 'key_vault_certificate') {
+        $subscriptionId = [guid](Get-W365AzdValue -Azd $azd -Name 'AZURE_SUBSCRIPTION_ID')
+        $keyVaultName = Get-W365AzdValue -Azd $azd -Name 'W365_KEY_VAULT_NAME'
+        Assert-W365BlueprintCertificateReady `
+            -SubscriptionId $subscriptionId `
+            -KeyVaultName $keyVaultName `
+            -TenantId $tenantId `
+            -BlueprintId $blueprintId
+
+        $env:W365_CERTIFICATE_PROVISIONING_ACTIVE = 'true'
+        Write-W365ProvisioningStep 'Reprovisioning state to apply certificate-scoped hosted-agent RBAC after certificate readiness.'
+        Invoke-W365Azd -Azd $azd -Arguments @(
+            'provision', 'state', '--environment', $Environment, '--no-prompt'
+        ) | Out-Null
+    }
 
     $stateValues = [ordered]@{
         DEPLOY_STATE = Get-W365AzdValue -Azd $azd -Name 'DEPLOY_STATE'
@@ -160,7 +199,9 @@ try {
     }
 }
 finally {
+    $env:W365_CERTIFICATE_PROVISIONING_ACTIVE = $previousCertificateProvisioningActive
     $env:AZURE_DEV_USER_AGENT = $previousUserAgent
 }
 
-Write-Host "Phase-two Azure prerequisites are ready for '$Environment'."
+$phase = if ($FinalizeCredentialAccess) { 'credential access and viewer prerequisites' } else { 'base state prerequisites' }
+Write-Host "Phase-two $phase are ready for '$Environment'."

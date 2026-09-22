@@ -624,7 +624,8 @@ on the shared vault so it can fetch `w365-blueprint-client-secret` directly
 certificate access.** In `key_vault_certificate` mode the agent's principal is
 instead granted Key Vault Certificate User and Key Vault Crypto User, scoped to
 the `w365-blueprint-certificate` certificate and its backing key specifically
-(not the whole vault). Because that grant is applied at *state* provisioning
+(not the whole vault). The viewer UAMI receives equivalent object-scoped roles.
+Because the agent grant is applied at *state* provisioning
 time, switching `W365_BLUEPRINT_CREDENTIAL_MODE` to `key_vault_certificate`
 after state was already provisioned requires re-running `azd provision state`
 before the next agent deploy; `Invoke-AzdDeployment.ps1` verifies this RBAC is
@@ -637,7 +638,7 @@ access rather than substituting an app/client ID in RBAC. Role assignments
 need appropriately scoped authorization (for example Role Based Access Control
 Administrator); do not blindly grant Owner.
 
-The default `client_secret` E2E path is not self-contained. An authorized Entra
+The legacy `client_secret` E2E path is not self-contained. An authorized Entra
 administrator must create and approve a short-lived credential for the existing
 Foundry blueprint under tenant policy. The repository does not create that
 credential. Transfer it outside source control, logs, command history, JSON,
@@ -669,6 +670,14 @@ principal Storage Blob Data Contributor only on that container, and emits
 fresh `azd up` discovers that principal in `postup`, persists
 `DEPLOY_STATE=true`, and provisions state before W365 setup. The staged path
 leaves this step to the operator. Neither path skips the credential vault.
+
+In the fresh `key_vault_certificate` path, the first state pass deliberately
+omits certificate/key RBAC. `postup` then creates or reuses the certificate,
+registers its public bytes on the exact blueprint, runs the existing readiness
+preflight, reprovisions state with certificate-scoped hosted-agent RBAC, and
+provisions the viewer last. `W365_CERTIFICATE_PROVISIONING_ACTIVE` is an
+internal, process-local orchestration gate; never persist or set it with
+`azd env set`. A persisted or externally supplied active value fails closed.
 
 Legacy development deployments may still have state in a separate
 `*-state-rg`. The templates do not move or delete those resources
@@ -781,7 +790,7 @@ Set non-secret values using `azd env set KEY VALUE`:
 | `SCREENSHARE_APP_URL` | **Viewer only:** W365-hosted view-only application origin supplied by W365 onboarding. It is required only when `VIEWER_LIVE_ENABLED=true`. |
 | `SCREENSHARE_SDK_URL`, `SCREENSHARE_FRAME_ORIGINS` | **Viewer only:** approved W365 SDK URL and exact space-separated frame origins. |
 | `VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID` | Optional full ID of the approved existing ACA managed environment. Empty means create one. |
-| `W365_BLUEPRINT_CREDENTIAL_MODE` | Explicitly `client_secret` for the proven E2E demo, `managed_identity_federation` for the separately approved FIC path, or `key_vault_certificate` for a self-signed non-exportable Key Vault certificate. There is no fallback. |
+| `W365_BLUEPRINT_CREDENTIAL_MODE` | Fresh/unset default: `key_vault_certificate`. Explicit alternatives are legacy `client_secret` and separately approved `managed_identity_federation`. Existing explicit values are preserved and there is no fallback. |
 | `VIEWER_LIVE_ENABLED` | Explicit viewer phase switch. Leave `false` for bootstrap; set `true` only after OIDC, state, W365, SDK/frame-origin values, and the Key Vault secret are ready. |
 | `VIEWER_LOG_ANALYTICS_ENABLED` | Optional for a newly created ACA environment; defaults to `false`. Ignored when an existing environment resource ID is supplied. |
 | `W365_ENABLED` | Internal phase switch. Bootstrap sets it to `false`; `Setup-W365.ps1` persists `true` only after phase-2 prerequisites are ready. |
