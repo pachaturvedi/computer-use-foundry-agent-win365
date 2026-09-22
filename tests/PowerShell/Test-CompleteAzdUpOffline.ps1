@@ -111,6 +111,7 @@ function Write-TestEnvironment {
         'VIEWER_LIVE_ENABLED="false"',
         'W365_BLUEPRINT_CREDENTIAL_MODE="client_secret"',
         'W365_KEY_VAULT_NAME="sample-w365-vault"',
+        'W365_POOL_BILLING_PLAN_ID="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"',
         "W365_ENABLED=`"$($Complete.ToString().ToLowerInvariant())`""
     )
     if (!$OmitDeploymentFlags) {
@@ -239,7 +240,19 @@ param(
     [string]$AgentUserDomain,
     [switch]$BillingConfirmed,
     [switch]$ConfirmResourceChanges,
-    [switch]$UseDeviceCode
+    [switch]$UseDeviceCode,
+    [guid]$PoolId,
+    [guid]$PoolBillingPlanId,
+    [string]$PoolBillingType,
+    [string]$PoolGeographicLocationType,
+    [string]$PoolRegionGroup,
+    [string[]]$PoolRegions,
+    [string]$PoolImageId,
+    [string]$PoolImageType,
+    [string]$PoolOsLocale,
+    [int]$PoolMinimumCount,
+    [int]$PoolMaximumCount,
+    [switch]$PoolEnableSingleSignOn
 )
 @{
     environment = $Environment
@@ -249,6 +262,7 @@ param(
     billingConfirmed = $BillingConfirmed.IsPresent
     confirmResourceChanges = $ConfirmResourceChanges.IsPresent
     useDeviceCode = $UseDeviceCode.IsPresent
+    poolBillingPlanId = $PoolBillingPlanId.ToString()
     recursionGuard = $env:W365_POSTUP_IN_PROGRESS
 } | ConvertTo-Json | Set-Content -LiteralPath $env:TEST_W365_CALLS_PATH
 
@@ -417,6 +431,7 @@ throw 'Simulated W365 setup failure.'
         !$w365Call.billingConfirmed -or
         !$w365Call.confirmResourceChanges -or
         !$w365Call.useDeviceCode -or
+        $w365Call.poolBillingPlanId -ne 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' -or
         $w365Call.recursionGuard -ne 'true') {
         throw 'Enabled postup did not invoke the guarded W365 setup contract.'
     }

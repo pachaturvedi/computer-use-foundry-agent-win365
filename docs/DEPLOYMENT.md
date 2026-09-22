@@ -28,7 +28,7 @@ you need the full staged deployment, rollback, or live-acceptance detail.
 | Stage | Operation | Current status |
 | --- | --- | --- |
 | Phase 1 | Deploy `win365-desktop-agent` with `W365_ENABLED=false` | Automatic first stage of fresh `azd up` |
-| Binding | Discover the version, provision state/viewer, create or reuse the agent user and pool, and persist ownership | Automatic after approval; requires tenant-specific billing input |
+| Binding | Select the W365/ACA profile, discover the version, provision state/viewer, create or reuse the agent user and pool, and persist ownership | Automatic after bootstrap approval |
 | Phase 2 | Enable W365 and redeploy the same service name | Automatic final stage; viewer activation can trigger one additional immutable version |
 
 The complete W365 lifecycle is validated with explicit `client_secret` mode.
@@ -104,17 +104,6 @@ the reviewed model defaults. For a dedicated managed project it also completes
 state, viewer, and W365 setup after the bootstrap agent identity exists.
 Generic infrastructure prompts are not required.
 
-First save an existing W365 pool or the approved billing plan, region, and
-gallery image. The helper is read-only until `-Configure` writes the selected
-non-secret profile to ignored `config\deployment.local.json`:
-
-```powershell
-pwsh -NoProfile -File .\scripts\Get-W365DiscoveryOptions.ps1 `
-    -TenantId "<tenant-guid>" `
-    -UseDeviceCode `
-    -Configure
-```
-
 For example:
 
 ```powershell
@@ -125,18 +114,28 @@ azd up --environment demosept22-dev
 ```
 
 Before provisioning, the `preup` hook prints the generated names, model
-selection, model capacity, and full-setup plan in a readable table. It fails
-before Azure changes if neither an existing W365 pool nor a valid billing-plan
-GUID is configured. The `postup` hook then:
+selection, model capacity, and full-setup plan. Interactive fresh deployments
+do not require tenant-specific W365 values before Foundry exists.
+Non-interactive deployments still fail closed unless `W365_POOL_ID` or
+`W365_POOL_BILLING_PLAN_ID` is supplied. The interactive `postup` hook then:
 
-1. discovers the exact principal of the W365-disabled bootstrap version;
-2. enables and provisions shared Blob state;
-3. provisions and health-checks the ACA viewer bootstrap;
-4. securely stores the existing blueprint credential when required;
-5. runs W365/Entra setup after explicit approval;
-6. redeploys the same hosted-agent name with W365 enabled; and
-7. activates the viewer and redeploys again when the approved screen-share
+1. asks whether to reuse an existing W365 pool, create one, or skip W365;
+2. asks whether to create a dedicated ACA managed environment (default), reuse
+   an existing compatible environment, or skip the viewer;
+3. persists these non-secret choices in `.azure\<environment>\.env`;
+4. discovers the exact principal of the W365-disabled bootstrap version;
+5. enables and provisions shared Blob state;
+6. provisions and health-checks the selected ACA viewer bootstrap;
+7. securely stores the existing blueprint credential when required;
+8. runs W365/Entra setup after explicit approval;
+9. redeploys the same hosted-agent name with W365 enabled; and
+10. activates the viewer and redeploys again when the approved screen-share
    values are available.
+
+New-pool setup uses the checked-in region and image defaults when the tenant
+advertises them. It derives a billing-plan GUID from existing pools when
+possible; otherwise it asks for the approved GUID. Existing-pool and existing
+ACA selections are explicit and never chosen silently.
 
 Use the staged initializer later in this section when you need separate preview
 and approval boundaries.
@@ -503,6 +502,11 @@ New managed environments default to `VIEWER_LOG_ANALYTICS_ENABLED=false`, which
 uses the ACA `none` log destination and avoids creating a Log Analytics
 workspace for the demo. Set it to `true` when retained application logs are
 required. Reused environments keep their existing logging configuration.
+During fresh interactive `azd up`, the default is a new dedicated managed
+environment. If creation fails specifically because of ACA managed-environment
+quota or capacity, the hook lists successfully provisioned environments,
+requires an explicit selection, and retries only the viewer layer. Other
+viewer, RBAC, networking, image, or health failures do not trigger fallback.
 The initializer uses reusable config helpers in `scripts/DeploymentConfig.ps1`
 so later hosted and cleanup workflows can consume the same defaults and
 override precedence without duplicating parsing logic.

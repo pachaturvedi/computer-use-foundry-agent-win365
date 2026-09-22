@@ -12,8 +12,11 @@ $callsPath = Join-Path $tempRoot 'calls.txt'
 $identityCallsPath = Join-Path $tempRoot 'identity-calls.json'
 $mockAzdPath = Join-Path $binPath 'azd.ps1'
 $mockIdentityPath = Join-Path $tempRoot 'Mock-FoundryIdentity.ps1'
+$mockProfilePath = Join-Path $tempRoot 'Mock-ProvisioningProfile.ps1'
+$profileCallsPath = Join-Path $tempRoot 'profile-calls.json'
 $previousPath = $env:Path
 $previousCallsPath = $env:TEST_AZD_CALLS_PATH
+$previousQuotaBehavior = $env:TEST_AZD_VIEWER_QUOTA_ONCE
 
 try {
     New-Item -ItemType Directory -Path $binPath -Force | Out-Null
@@ -29,6 +32,16 @@ if ($CommandArgs[0] -eq 'version') {
     return
 }
 Add-Content -LiteralPath $env:TEST_AZD_CALLS_PATH -Value ($CommandArgs -join ' ')
+if ($env:TEST_AZD_VIEWER_QUOTA_ONCE -eq 'true' -and
+    $CommandArgs -join ' ' -eq 'provision viewer --environment sample-dev --no-prompt') {
+    $viewerCalls = @(Get-Content -LiteralPath $env:TEST_AZD_CALLS_PATH |
+        Where-Object { $_ -eq 'provision viewer --environment sample-dev --no-prompt' })
+    if ($viewerCalls.Count -eq 1) {
+        Write-Output 'MaxNumberOfGlobalEnvironmentsInSubExceeded'
+        $global:LASTEXITCODE = 1
+        return
+    }
+}
 if ($CommandArgs[0] -eq 'env' -and $CommandArgs[1] -eq 'get-value') {
     $values = @{
         FOUNDRY_PROJECT_OWNERSHIP = 'managed'
@@ -39,6 +52,18 @@ if ($CommandArgs[0] -eq 'env' -and $CommandArgs[1] -eq 'get-value') {
     }
     Write-Output $values[$CommandArgs[2]]
 }
+'@
+    Set-Content -LiteralPath $mockProfilePath -Value @'
+param(
+    [string]$Environment,
+    [switch]$ViewerOnly,
+    [string]$ViewerMode
+)
+@{
+    environment = $Environment
+    viewerOnly = $ViewerOnly.IsPresent
+    viewerMode = $ViewerMode
+} | ConvertTo-Json | Set-Content -LiteralPath $env:TEST_PROFILE_CALLS_PATH
 '@
     Set-Content -LiteralPath $mockIdentityPath -Value @'
 param(
@@ -63,6 +88,7 @@ param(
     $env:Path = "$binPath;$previousPath"
     $env:TEST_AZD_CALLS_PATH = $callsPath
     $env:TEST_IDENTITY_CALLS_PATH = $identityCallsPath
+    $env:TEST_PROFILE_CALLS_PATH = $profileCallsPath
 
     & $scriptPath `
         -Environment 'sample-dev' `
@@ -85,6 +111,7 @@ param(
         'env set STATE_AGENT_PRINCIPAL_ID cccccccc-cccc-cccc-cccc-cccccccccccc',
         'env set DEPLOY_VIEWER true',
         'env set VIEWER_LIVE_ENABLED false',
+        'env set W365_BLUEPRINT_CREDENTIAL_MODE client_secret',
         'provision state --environment sample-dev --no-prompt',
         'provision viewer --environment sample-dev --no-prompt'
     )
@@ -99,12 +126,34 @@ param(
         throw 'Phase-two initialization did not provision shared state before the viewer.'
     }
 
+    Remove-Item -LiteralPath $callsPath, $profileCallsPath -ErrorAction SilentlyContinue
+    $env:TEST_AZD_VIEWER_QUOTA_ONCE = 'true'
+    & $scriptPath `
+        -Environment 'sample-dev' `
+        -DeployViewer `
+        -IdentityScriptPath $mockIdentityPath `
+        -ProvisioningProfileScriptPath $mockProfilePath
+    $quotaCalls = @(Get-Content -LiteralPath $callsPath)
+    if (@($quotaCalls | Where-Object {
+        $_ -eq 'provision viewer --environment sample-dev --no-prompt'
+    }).Count -ne 2) {
+        throw 'ACA managed-environment quota recovery did not retry only the viewer layer.'
+    }
+    $profileCall = Get-Content -LiteralPath $profileCallsPath -Raw | ConvertFrom-Json
+    if ($profileCall.environment -ne 'sample-dev' -or
+        !$profileCall.viewerOnly -or
+        $profileCall.viewerMode -ne 'existing') {
+        throw 'ACA managed-environment quota recovery did not request explicit existing-environment selection.'
+    }
+
     Write-Host 'azd up phase-two initialization offline test passed.'
 }
 finally {
     $env:Path = $previousPath
     $env:TEST_AZD_CALLS_PATH = $previousCallsPath
+    $env:TEST_AZD_VIEWER_QUOTA_ONCE = $previousQuotaBehavior
     Remove-Item Env:\TEST_IDENTITY_CALLS_PATH -ErrorAction SilentlyContinue
+    Remove-Item Env:\TEST_PROFILE_CALLS_PATH -ErrorAction SilentlyContinue
     if (Test-Path -LiteralPath $tempRoot) {
         Remove-Item -LiteralPath $tempRoot -Recurse -Force
     }

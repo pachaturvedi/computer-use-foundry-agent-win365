@@ -27,7 +27,8 @@ $tracked = @(
     'DEPLOY_VIEWER',
     'ENABLE_W365',
     'W365_ENABLED',
-    'W365_POOL_BILLING_PLAN_ID'
+    'W365_POOL_BILLING_PLAN_ID',
+    'AZD_NON_INTERACTIVE'
 )
 $saved = @{}
 $tempRoot = Join-Path ([IO.Path]::GetTempPath()) "azd-up-defaults-$([guid]::NewGuid())"
@@ -40,8 +41,6 @@ try {
 
     $env:AZURE_ENV_NAME = 'sample-dev'
     $env:AZURE_SUBSCRIPTION_ID = '11111111-2222-3333-4444-555555555555'
-    $env:W365_POOL_BILLING_PLAN_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
-
     $output = & $scriptPath 6>&1 | Out-String
     if ($output -notmatch 'sample-dev-rg' -or
         $output -notmatch 'sampledevai1111111122' -or
@@ -51,24 +50,25 @@ try {
         $output -notmatch '200K TPM' -or
         $output -notmatch 'Enabled after Foundry identity discovery' -or
         $output -notmatch 'Enabled after shared state is ready' -or
-        $output -notmatch 'Set up after bootstrap approval') {
+        $output -notmatch 'Selected and set up after Foundry bootstrap') {
         throw "Show-AzdUpContext.ps1 did not display the generated names and reviewed defaults: $output"
     }
 
-    $env:W365_POOL_BILLING_PLAN_ID = $null
+    $env:AZD_NON_INTERACTIVE = 'true'
     $missingBillingPlanRejected = $false
     try {
         & $scriptPath 6>&1 | Out-Null
     }
     catch {
-        if ($_.Exception.Message -notmatch 'W365_POOL_BILLING_PLAN_ID') {
+        if ($_.Exception.Message -notmatch 'Non-interactive Windows 365 setup requires') {
             throw
         }
         $missingBillingPlanRejected = $true
     }
     if (!$missingBillingPlanRejected) {
-        throw 'Fresh managed azd up accepted missing W365 pool and billing-plan configuration.'
+        throw 'Non-interactive azd up accepted missing W365 pool and billing-plan configuration.'
     }
+    $env:AZD_NON_INTERACTIVE = $null
     $env:W365_POOL_BILLING_PLAN_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
 
     $env:ENABLE_W365 = 'false'

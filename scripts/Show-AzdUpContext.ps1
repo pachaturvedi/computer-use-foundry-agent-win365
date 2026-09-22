@@ -154,16 +154,14 @@ if ($enableW365 -and !$w365Enabled) {
         $billingPlanId = [string]$w365Config.poolBillingPlanId
     }
     $parsedBillingPlanId = [guid]::Empty
-    if ([string]::IsNullOrWhiteSpace($existingPool) -and
+    $profileMissing = [string]::IsNullOrWhiteSpace($existingPool) -and
         (![guid]::TryParse($billingPlanId, [ref]$parsedBillingPlanId) -or
-            $parsedBillingPlanId -eq [guid]::Empty)) {
+            $parsedBillingPlanId -eq [guid]::Empty)
+    if ($profileMissing -and
+        [Environment]::GetEnvironmentVariable('AZD_NON_INTERACTIVE', 'Process') -eq 'true') {
         throw @"
-Fresh Windows 365 setup requires an existing pool or a tenant billing-plan GUID before Azure changes begin.
-Run:
-  pwsh -NoProfile -File .\scripts\Get-W365DiscoveryOptions.ps1 -TenantId "<tenant-guid>" -UseDeviceCode -Configure
-or set:
-  azd env set W365_POOL_BILLING_PLAN_ID "<billing-plan-guid>" --environment "$environmentName"
-Set ENABLE_W365=false to deploy only the Foundry bootstrap.
+Non-interactive Windows 365 setup requires W365_POOL_ID or W365_POOL_BILLING_PLAN_ID before azd up.
+Set the value in azd environment '$environmentName', or set ENABLE_W365=false.
 "@
     }
 }
@@ -185,7 +183,7 @@ Write-Host 'Resolved deployment defaults:'
     [pscustomobject]@{ Setting = 'Model capacity'; Value = "$($modelSkuCapacity)K TPM" }
     [pscustomobject]@{ Setting = 'Blob session state'; Value = $(if ($deployState) { 'Enabled' } elseif ($enableW365) { 'Enabled after Foundry identity discovery' } else { 'Disabled; credential vault still created' }) }
     [pscustomobject]@{ Setting = 'Viewer'; Value = $(if ($deployViewer) { 'Enabled after shared state is ready' } else { 'Disabled' }) }
-    [pscustomobject]@{ Setting = 'Windows 365'; Value = $(if ($w365Enabled) { 'Enabled' } elseif ($enableW365) { 'Set up after bootstrap approval' } else { 'Disabled' }) }
+    [pscustomobject]@{ Setting = 'Windows 365'; Value = $(if ($w365Enabled) { 'Enabled' } elseif ($enableW365) { 'Selected and set up after Foundry bootstrap' } else { 'Disabled' }) }
 ) | Format-Table -AutoSize | Out-String | Write-Host
 
 Write-Host 'azd may print unlabeled "Skipped: Didn''t find new changes" rows while it checks'

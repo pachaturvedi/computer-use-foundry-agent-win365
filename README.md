@@ -64,7 +64,8 @@ Live deployment additionally requires:
 - an Azure subscription and tenant onboarded for Foundry and W365 for Agents;
 - Azure CLI, the Azure Developer CLI versions required by `azure.yaml`, and a
   model deployment such as `gpt-6-astra` supporting functions and images;
-- a reviewed W365 billing plan, image, region, and pool-capacity choice;
+- access to an existing W365 agent pool or an approved pay-as-you-go billing
+  plan; the deployment collects the tenant-specific choice after bootstrap;
 - the Foundry and tenant-administrator permissions listed in
   [deployment](docs/DEPLOYMENT.md#prerequisites) and
   [W365 setup](docs/W365-SETUP.md#setup-permissions-delegated-not-runtime).
@@ -108,19 +109,7 @@ azd ext install microsoft.foundry
 pwsh -NoProfile -File .\tests\PowerShell\Test-AzdPrerequisites.ps1 -RequireLogin
 ```
 
-Before the first deployment, select an existing W365 pool or save the approved
-billing plan, region, and image profile. This is tenant-specific and cannot be
-invented by the sample:
-
-```powershell
-Install-Module Microsoft.Graph.Authentication -Scope CurrentUser
-pwsh -NoProfile -File .\scripts\Get-W365DiscoveryOptions.ps1 `
-    -TenantId "<tenant-id>" `
-    -UseDeviceCode `
-    -Configure
-```
-
-Then create the environment and deploy:
+Create the environment and deploy:
 
 ```powershell
 azd env new demosept22-dev `
@@ -129,12 +118,20 @@ azd env new demosept22-dev `
 azd up --environment demosept22-dev
 ```
 
-The interactive run asks for W365 resource approval, delegated Graph sign-in,
-and the existing blueprint credential through a secure prompt. The default
-demo stores that credential in Azure Key Vault; it is not written to source,
-JSON, `.azure`, logs, or command history. `azd up` deploys the bootstrap agent,
-discovers its exact principal, provisions shared state and the ACA viewer,
-configures W365, and deploys the final enabled agent version.
+The command deploys the Foundry bootstrap first. It then asks whether to reuse
+an existing W365 agent pool, create a new pool, or keep a Foundry-only
+deployment. New-pool setup uses the reviewed region and image defaults and asks
+for a billing-plan GUID only when one cannot be discovered from the tenant.
+It also asks whether to create a dedicated ACA managed environment (default),
+reuse an existing compatible environment, or skip the viewer. Non-secret
+choices are saved only in the selected azd environment.
+
+After approval and delegated Graph sign-in, the command discovers the exact
+Foundry principal, provisions shared state and the selected viewer topology,
+configures W365, and redeploys the same agent name. The default demo collects
+the existing blueprint credential through a secure prompt and stores it in
+Azure Key Vault; it is not written to source, JSON, `.azure`, logs, or command
+history.
 
 The reviewed model defaults are `gpt-6-astra`, version `2026-09-03`,
 `GlobalStandard`, and capacity `200` (200K TPM). `azd up` persists the approved

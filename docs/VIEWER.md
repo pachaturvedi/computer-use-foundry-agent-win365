@@ -27,6 +27,19 @@ agent-only deployment.
 
 ## Fresh managed deployment
 
+After Foundry bootstrap, `azd up` asks how to host the viewer:
+
+1. create a new dedicated ACA managed environment (default);
+2. reuse an existing successfully provisioned ACA managed environment; or
+3. skip the viewer.
+
+The existing-environment path lists candidates in the selected Azure
+subscription and persists the chosen full resource ID only in the selected azd
+environment. It never silently selects shared infrastructure. If creation of a
+new managed environment fails specifically because of ACA environment quota or
+capacity, the hook offers the same existing-environment selection and retries
+only viewer provisioning. Unrelated deployment failures remain failures.
+
 Set the W365 onboarding values after `azd env new` and before `azd up`:
 
 ```powershell
