@@ -1,4 +1,20 @@
 #Requires -Version 7.4
+<#
+.SYNOPSIS
+Builds and deploys the companion viewer bootstrap.
+
+.DESCRIPTION
+Validates shared state and ACA prerequisites, provisions viewer infrastructure, builds or reuses the content-addressed image, configures the Container App, and verifies health.
+
+
+Key inputs: Values are read from the selected azd environment, including state outputs, viewer topology, image settings, and optional live configuration.
+
+.OUTPUTS
+Viewer infrastructure outputs, image metadata, health status, and non-secret azd environment values.
+
+.NOTES
+Mutates Azure resources. Live routes remain disabled until the separate activation workflow succeeds.
+#>
 [CmdletBinding()]
 param()
 

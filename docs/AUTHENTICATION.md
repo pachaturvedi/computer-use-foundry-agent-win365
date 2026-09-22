@@ -95,19 +95,16 @@ sufficient. Neither script reads, exports, or transmits private key material.
 
 ## Three-stage agent-user tokens
 
-`AgentUserTokenProvider` uses the explicitly selected T1 path:
+The selected credential mode changes only how the runtime obtains blueprint
+T1:
 
-1. **Managed-identity T1:** select the hosted instance identity with
-   `W365_AGENT_ID`, obtain a managed identity exchange assertion, and
-   authenticate the blueprint using the explicitly approved FIC and
-   `fmi_path=W365_AGENT_ID`. This produces blueprint T1.
-2. **Client-secret T1:** authenticate the blueprint with the configured
-   temporary secret, `client_credentials`, and `fmi_path=W365_AGENT_ID`.
-3. **Viewer T1:** select its UAMI with `AZURE_CLIENT_ID` (the UAMI's client ID)
-   and perform the same blueprint FIC plus `fmi_path` exchange.
-4. **Both processes T2:** the agent identity (`W365_AGENT_ID`, app/client ID)
-   uses T1 as `client_assertion` to request the exchange scope.
-5. **Both processes T3:** the agent identity requests the resource token with
+1. **T1:** authenticate the blueprint with either the explicitly approved
+   managed-identity FIC, the Key Vault-backed client secret, or the
+   Key Vault-backed certificate assertion. The viewer supports the first two
+   paths; certificate mode is agent-only.
+2. **T2:** the agent identity (`W365_AGENT_ID`, app/client ID) uses T1 as
+   `client_assertion` to request the exchange scope.
+3. **T3:** the agent identity requests the resource token with
    `grant_type=user_fic`, T1 as `client_assertion`, T2 as
    `user_federated_identity_credential`, and the agent-user ID as `user_id`.
 
@@ -116,10 +113,11 @@ resource/permission purpose with a five-minute refresh margin and serialized
 refresh. No token or exchange request/response body is logged.
 
 There is **no DefaultAzureCredential (DAC) or Azure CLI fallback for W365**.
-Client-secret mode is an explicit,
-temporary validation option and is not enabled by default. Ordinary Azure model/state access uses the normal
-Azure credential path; an `az login` session is not an alternative W365 identity.
-No IdentityRM auxiliary token is sent.
+The checked-in deployment default is the explicit `client_secret` mode, with
+the secret stored in Key Vault rather than an environment variable. Ordinary
+Azure model/state access uses the normal Azure credential path; an `az login`
+session is not an alternative W365 identity. No IdentityRM auxiliary token is
+sent.
 
 ## Stale-state recovery identity
 
@@ -136,12 +134,11 @@ another environment or agent. The mutating process independently resolves the
 deployed agent name/version from the selected environment and checks its hosted
 sessions; it does not accept a caller assertion that this check already happened.
 
-On September 17, 2026, `client_secret` mode passed a complete bounded W365
-lifecycle: blueprint T1, agent-identity T2, agent-user T3, MCP initialization,
-`StartSession`, readiness identified by the returned HTTPS `screenShareUrl`,
-fresh transport/catalog discovery, and `EndSession`. The ready catalog
-advertised only the three lifecycle tools, so `get_screen_size` was correctly
-skipped rather than invented.
+`client_secret` mode has completed the bounded W365 lifecycle: blueprint T1,
+agent-identity T2, agent-user T3, MCP initialization, `StartSession`, readiness
+identified by the returned HTTPS `screenShareUrl`, fresh transport/catalog
+discovery, and `EndSession`. Optional tools are used only when advertised by
+the live catalog.
 
 | Purpose | Scope |
 | --- | --- |
@@ -184,11 +181,14 @@ watch requests ask Entra for See-only scope. Control token issuance pauses the
 desktop under the same lock used for actions. Validate returned scopes during
 live acceptance; never fall back to an overprivileged watch token.
 
-The browser necessarily receives an ARI bearer for the screen-share SDK. It is
-returned only to the authenticated session owner in a CSRF-protected, `no-store`
-response, held in memory, and never put in a URL, localStorage or model message.
-Previously issued bearer tokens cannot be revoked by the sample's pause flag.
-The authorized operator/browser is trusted, not a hostile competing controller.
+The browser necessarily receives an ARI bearer for the screen-share SDK. A
+control token is returned only to the authenticated session owner in a
+CSRF-protected, `no-store` response and held in memory. The See-only redirect
+passes its short-lived token in the URL fragment to the approved W365 static
+viewer; fragments are not sent to the companion viewer server. Tokens are
+never stored in localStorage or returned to the model. Previously issued bearer
+tokens cannot be revoked by the sample's pause flag. The authorized
+operator/browser is trusted, not a hostile competing controller.
 
 ## SDK and hosting boundary
 
@@ -201,9 +201,9 @@ autopilot and does not require a hiring workflow.
 
 The tested Foundry-hosted managed-identity path acquires the initial assertion,
 but Entra rejects using that federated token as another federated credential
-with `AADSTS700231`. The temporary client-secret mode proved the downstream
-agent-user and W365 path independently. See the
-[validation report](VALIDATION-REPORT.md) for versioned evidence.
+with `AADSTS700231`. The explicit client-secret mode proved the downstream
+agent-user and W365 path independently. Certificate mode is implemented and
+offline-validated but has not completed live tenant acceptance.
 
 The Foundry T1 -> T2 -> T3 flow follows the public helper; narrow raw protocol
 handling is retained for the final exchanges with no bodies logged. For

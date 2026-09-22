@@ -1,4 +1,20 @@
 #Requires -Version 7.4
+<#
+.SYNOPSIS
+Runs the canonical local pre-pull-request validation gate.
+
+.DESCRIPTION
+Restores packages, verifies C# formatting, builds the Release solution, runs all .NET tests, parses PowerShell files, and runs every Offline PowerShell test.
+
+
+Key inputs: No parameters. Run from the repository root in PowerShell 7.4 or later.
+
+.OUTPUTS
+Build, formatting, .NET test, PowerShell parse, and offline test results.
+
+.NOTES
+Offline by design. A passing result does not prove live Azure, Foundry, Entra, Graph, or W365 behavior.
+#>
 [CmdletBinding()]
 param()
 

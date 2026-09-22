@@ -1,4 +1,20 @@
 #Requires -Version 7.4
+<#
+.SYNOPSIS
+Verifies a deployed W365 environment and records sanitized evidence.
+
+.DESCRIPTION
+Checks the selected azd environment, ownership manifest integrity, active hosted-agent identity/version, Foundry doctor results, and optional cleanup completion without exposing tenant-private values.
+
+
+Key inputs: EnvironmentName, RepositoryRoot, expected manifest hash, EvidencePath, and RequireCleanupComplete.
+
+.OUTPUTS
+A sanitized evidence record and pass/fail result.
+
+.NOTES
+Live verification. It is read-only except for writing the local evidence file and does not substitute for cleanup.
+#>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$EnvironmentName,

@@ -1,4 +1,20 @@
 #Requires -Version 7.4
+<#
+.SYNOPSIS
+Discovers the exact identities of a deployed Foundry agent version.
+
+.DESCRIPTION
+Reads one immutable hosted-agent version from the trusted Foundry project endpoint and returns its blueprint app/client ID, agent object/principal ID, and tenant binding.
+
+
+Key inputs: ProjectEndpoint, AgentName, AgentVersion, and TenantId are required.
+
+.OUTPUTS
+A non-secret object containing BlueprintId, AgentIdentityId, TenantId, agent name, and version.
+
+.NOTES
+Read-only. It rejects untrusted hosts, missing metadata, and implicit latest-version selection.
+#>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][uri]$ProjectEndpoint,

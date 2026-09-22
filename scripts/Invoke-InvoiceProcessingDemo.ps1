@@ -1,4 +1,20 @@
 #Requires -Version 7.4
+<#
+.SYNOPSIS
+Runs the bounded invoice-processing demonstration.
+
+.DESCRIPTION
+Validates the active hosted-agent target, creates a unique output filename, invokes a fresh foreground session with the invoice prompt, opens only the authenticated observation link, redacts identifiers, and requires an explicit result marker.
+
+
+Key inputs: Environment is required. AgentName, InvoiceUri, timeout, caller partition, viewer behavior, azd path, and prompt template are optional.
+
+.OUTPUTS
+Sanitized progress, viewer-open status, and an explicit success or failure result.
+
+.NOTES
+Mutates the Cloud PC desktop and allocates a W365 session. Ambiguous results must use guarded recovery before retry.
+#>
 [CmdletBinding()]
 param(
     [string]$Environment,

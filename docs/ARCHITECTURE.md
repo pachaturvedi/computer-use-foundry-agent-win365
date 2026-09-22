@@ -216,10 +216,11 @@ replacement desktop.
 Environment teardown is a separate control-plane path. During setup,
 `Setup-W365.ps1` writes `.azure/<environment>/w365-ownership.json` with the
 sample-owned W365 and Entra objects plus the blueprint's pre-mutation
-`requiredResourceAccess`. During `azd down`, the `predown` hook in `azure.yaml`
-runs `Remove-W365Resources.ps1`, which consumes that manifest and deletes in
-reverse dependency order before Azure resources are removed. Missing ownership
-evidence blocks teardown instead of guessing from names.
+`requiredResourceAccess`. `Invoke-AzdDown.ps1` consumes that evidence once,
+then removes the `viewer`, `state`, and `foundry` layers. It continues only
+when a layer deployment is already absent and fails if an environment-tagged
+resource group remains. Missing ownership evidence blocks teardown instead of
+guessing from names.
 
 ## Identity ownership
 
@@ -234,14 +235,13 @@ replacement after rediscovery.
 The process selects `AgentUserTokenProvider`, not the model.
 `W365_BLUEPRINT_CREDENTIAL_MODE` explicitly selects blueprint T1 acquisition;
 there is no request-driven selection or automatic fallback. Client-secret mode
-is implemented for bounded validation, managed-identity federation remains
-selectable but is blocked in the tested Foundry host by Entra `AADSTS700231`,
-and Key Vault certificate mode remains reserved and fails closed until fully
-implemented. The viewer continues to start with its own managed identity and
-requires an explicitly approved FIC on the blueprint. Every implemented path
-uses `fmi_path=W365_AGENT_ID` to obtain blueprint T1, then the shared T1 -> T2 ->
-user-FIC T3 flow for ATG/ARI. The hosted FIC subject must be the discovered
-agent object ID; the viewer FIC subject must be the viewer UAMI object ID.
+is the checked-in default and is live-validated.
+Managed-identity federation remains selectable but is blocked in the tested
+Foundry host by Entra `AADSTS700231`. Key Vault certificate mode is implemented
+and offline-validated but still requires live tenant acceptance. The viewer
+supports client-secret or explicitly approved managed-identity federation;
+certificate mode is agent-only. Every path shares the T1 -> T2 -> user-FIC T3
+flow for ATG/ARI, and no mode falls back to another.
 
 The platform-injected `FOUNDRY_AGENT_BLUEPRINT_CLIENT_ID` is still checked
 against `W365_BLUEPRINT_ID` to prevent configuration from crossing blueprint
@@ -258,7 +258,7 @@ sequenceDiagram
    actor User as Human caller
    participant Ingress as Foundry Responses ingress
    participant Host as Hosted agent application
-   participant MI as Managed identity endpoint
+   participant Credential as Selected T1 credential
    participant Entra as Microsoft Entra token endpoint
    participant MCP as Agent 365 W365 MCP
    participant Pool as W365 agent pool
@@ -267,9 +267,9 @@ sequenceDiagram
    User->>Ingress: Submit Responses request
    Ingress->>Host: Forward request plus opaque x-agent-user-id
    Host->>Host: Hash and compare caller partition
-   Host->>MI: Request exchange assertion as W365_AGENT_ID
-   MI-->>Host: Runtime managed-identity assertion
-   Host->>Entra: Blueprint client ID + assertion + fmi_path=agent ID
+   Host->>Credential: Acquire managed-identity, Key Vault secret, or certificate proof
+   Credential-->>Host: Selected credential proof
+   Host->>Entra: Blueprint client ID + selected proof + fmi_path=agent ID
    Entra-->>Host: T1 blueprint assertion
    Host->>Entra: Agent client ID + T1, client_credentials
    Entra-->>Host: T2 user federated identity credential
@@ -278,7 +278,7 @@ sequenceDiagram
    Host->>MCP: Initialize, list tools, StartSession with T3
    MCP->>Pool: Allocate for assigned agent user
    Pool-->>PC: Start Cloud PC session
-   PC-->>MCP: Session ID, status, and screen-share link
+   PC-->>MCP: Session ID and screen-share link
    MCP-->>Host: Bounded MCP observations
    Host-->>Ingress: Tool result for model loop
    Ingress-->>User: Response and optional opaque viewer links
@@ -313,7 +313,7 @@ allowing a dedicated sample environment to be fully torn down in reverse order.
 | Foundry does not supply a ready W365 agent-user token | The hosting SDK covers Responses/model execution, while W365 requires the Entra agent-user OAuth chain. | Custom exchanges in [`BlueprintTokenProvider.cs`](../src/Win365Shared/Identity/BlueprintTokenProvider.cs) and [`AgentUserTokenProvider.cs`](../src/Win365Shared/Identity/AgentUserTokenProvider.cs). |
 | Phase-1 identity is needed before phase-2 configuration | The blueprint and agent identity do not exist until Foundry deploys an agent version. | Two-phase gate in [`Program.cs`](../src/Win365Agent/Program.cs), deployment declaration in [`azure.yaml`](../azure.yaml), and exact-version discovery in [`Get-FoundryIdentity.ps1`](../scripts/Get-FoundryIdentity.ps1). |
 | App IDs, object IDs, users, callers, and sessions are easy to confuse | Entra and Foundry expose several GUIDs with different authority and API roles. Substitution can bind the wrong principal or pool user. | Parent/type checks in [`Setup-W365.ps1`](../scripts/Setup-W365.ps1), startup checks in [`Settings.cs`](../src/Win365Shared/Configuration/Settings.cs), and the terminology table above. |
-| Hosted identity cannot automatically impersonate the blueprint | Current Responses hosting exposed the agent instance identity but live validation could not obtain a blueprint assertion directly. | Optional, explicit hosted-runtime FIC in [`Setup-W365.ps1`](../scripts/Setup-W365.ps1); current evidence in [`VALIDATION-REPORT.md`](VALIDATION-REPORT.md). This is broad blueprint trust and needs administrator approval. |
+| Hosted identity cannot automatically impersonate the blueprint | Current Responses hosting exposed the agent instance identity but live validation could not obtain a blueprint assertion directly. | Optional, explicit hosted-runtime FIC in [`Setup-W365.ps1`](../scripts/Setup-W365.ps1). This is broad blueprint trust and needs administrator approval. |
 | The final OAuth protocol is preview-sensitive | `client_credentials`, `fmi_path`, and `user_fic` must use exact subjects, scopes, and token roles; the hosting SDK does not abstract this complete path here. | Narrow form construction and allowlisted audiences in [`AgentUserTokenProvider.cs`](../src/Win365Shared/Identity/AgentUserTokenProvider.cs); regression coverage in [`AgentUserTokenProviderTests.cs`](../tests/Win365Shared.Tests/Identity/AgentUserTokenProviderTests.cs). |
 | Foundry caller identity is not the W365 agent user | `x-agent-user-id` is an opaque ingress partition; `W365_AGENT_USER_ID` is an Entra agent-user object assigned to a pool. | Caller gate in [`DesktopRequestMiddleware.cs`](../src/Win365Agent/Hosting/DesktopRequestMiddleware.cs); agent-user creation and assignment in [`Setup-W365.ps1`](../scripts/Setup-W365.ps1). |
 | W365 setup crosses Entra and Intune control planes | Consent/inheritance and agent-user parentage live in Entra/Graph, while capacity and assignment live in the W365 pool. Pool creation, image, geography, and billing remain manual. | Reconciliation in [`Setup-W365.ps1`](../scripts/Setup-W365.ps1) and administrator prerequisites in [`W365-SETUP.md`](W365-SETUP.md). |

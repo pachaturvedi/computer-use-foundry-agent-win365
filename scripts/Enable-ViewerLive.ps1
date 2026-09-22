@@ -1,4 +1,20 @@
 #Requires -Version 7.4
+<#
+.SYNOPSIS
+Activates the deployed viewer for live observation and control.
+
+.DESCRIPTION
+Runs viewer OIDC configuration, Key Vault RBAC setup, secret readiness checks, live viewer reprovisioning, and the guarded hosted-agent update that advertises viewer links.
+
+
+Key inputs: Environment is required; script-path parameters support offline testing and controlled substitution.
+
+.OUTPUTS
+Updated viewer and agent deployments plus non-secret azd environment state.
+
+.NOTES
+Mutating workflow. It fails closed unless W365, OIDC, state, credentials, and approved screen-share settings are ready.
+#>
 [CmdletBinding()]
 param(
     [string]$Environment,

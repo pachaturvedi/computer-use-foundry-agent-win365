@@ -1,4 +1,20 @@
 #Requires -Version 7.4
+<#
+.SYNOPSIS
+Reconciles W365 and Entra setup for existing Foundry identities.
+
+.DESCRIPTION
+Validates blueprint/agent parentage and policy, reconciles resource declarations, grants and inheritance, creates or reuses the correctly parented agent user, creates or updates the approved pool, assigns the user, and writes ownership evidence.
+
+
+Key inputs: Tenant, blueprint, agent identity, agent-user and pool settings, credential-federation approvals, billing confirmation, Graph options, azd-sync option, and manifest path.
+
+.OUTPUTS
+Non-secret W365 identifiers, azd environment values, and an ownership manifest.
+
+.NOTES
+WhatIf previews locally. Real mutation requires delegated Graph authorization and explicit billing/resource approval from the calling workflow.
+#>
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
 param(
     [Parameter(Mandatory)][guid]$TenantId,
