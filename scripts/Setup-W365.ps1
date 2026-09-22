@@ -275,6 +275,7 @@ if (!(Test-GraphContext -Context $context -RequiredTenantId $TenantId -RequiredS
 
     if ($UseDeviceCode) {
         $connectParameters.UseDeviceCode = $true
+        $connectParameters.InformationAction = 'Continue'
         Write-Host ''
         Write-Host 'Microsoft Graph administrator sign-in is required for W365 setup.'
         Write-Host 'When the device code appears:'

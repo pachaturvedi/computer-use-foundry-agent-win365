@@ -80,6 +80,7 @@ $connectArguments = @{
 }
 if ($UseDeviceCode) {
     $connectArguments.UseDeviceCode = $true
+    $connectArguments.InformationAction = 'Continue'
 }
 Connect-MgGraph @connectArguments
 $context = Get-MgContext

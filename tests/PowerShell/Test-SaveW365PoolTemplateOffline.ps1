@@ -13,10 +13,12 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
     $script:connectShouldFail = $false
     $script:timeoutFailuresRemaining = 0
     $script:lastContextScope = ''
+    $script:lastInformationAction = ''
     function Connect-MgGraph {
-        param($TenantId, $Scopes, $ContextScope, $ClientTimeout, [switch]$NoWelcome, [switch]$UseDeviceCode)
+        param($TenantId, $Scopes, $ContextScope, $ClientTimeout, [switch]$NoWelcome, [switch]$UseDeviceCode, $InformationAction)
         $script:connectCalls += 1
         $script:lastContextScope = $ContextScope
+        $script:lastInformationAction = [string]$InformationAction
         if ($script:timeoutFailuresRemaining -gt 0) {
             $script:timeoutFailuresRemaining -= 1
             throw 'Authentication timed out after 120 seconds due to inactivity. Please try again.'
@@ -121,6 +123,9 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
     function Get-LastContextScope {
         $script:lastContextScope
     }
+    function Get-LastInformationAction {
+        $script:lastInformationAction
+    }
     function Set-ConnectFailure {
         param([bool]$Value)
         $script:connectShouldFail = $Value
@@ -136,8 +141,9 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
         $script:connectShouldFail = $false
         $script:timeoutFailuresRemaining = 0
         $script:lastContextScope = ''
+        $script:lastInformationAction = ''
     }
-    Export-ModuleMember -Function Connect-MgGraph, Get-MgContext, Invoke-MgGraphRequest, Get-ConnectCalls, Get-LastContextScope, Set-ConnectFailure, Set-ConnectTimeoutFailures, Reset-GraphState
+    Export-ModuleMember -Function Connect-MgGraph, Get-MgContext, Invoke-MgGraphRequest, Get-ConnectCalls, Get-LastContextScope, Get-LastInformationAction, Set-ConnectFailure, Set-ConnectTimeoutFailures, Reset-GraphState
 }
 
 $module | Import-Module -Global
@@ -186,6 +192,9 @@ try {
     if ((Get-LastContextScope) -ne 'Process') {
         throw 'Direct Graph authentication must use a process-scoped context.'
     }
+    if ((Get-LastInformationAction) -ne 'Continue') {
+        throw 'Device-code authentication must force the Microsoft Graph information stream to remain visible.'
+    }
 
     Reset-GraphState
     Set-ConnectTimeoutFailures -Value 1
@@ -198,6 +207,9 @@ try {
 
     if ((Get-ConnectCalls) -ne 2) {
         throw 'Device-code timeout retry should re-run Connect-MgGraph with a fresh code.'
+    }
+    if ((Get-LastInformationAction) -ne 'Continue') {
+        throw 'W365 discovery did not keep the device-code message visible during retry.'
     }
 
     Reset-GraphState

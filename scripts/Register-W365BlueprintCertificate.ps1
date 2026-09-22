@@ -69,6 +69,7 @@ if (!(Test-GraphContext -Context $context -RequiredTenantId $TenantId -RequiredS
     }
     if ($UseDeviceCode) {
         $connectParameters.UseDeviceCode = $true
+        $connectParameters.InformationAction = 'Continue'
         Write-Host ''
         Write-Host 'Microsoft Graph administrator sign-in is required to register the blueprint certificate.'
         Write-Host 'When the device code appears, open https://login.microsoft.com/device and sign in as an authorized tenant administrator.'
