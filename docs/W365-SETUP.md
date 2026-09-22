@@ -242,10 +242,13 @@ requires live tenant acceptance.
 plan; it does not activate billing.
 
 During fresh `azd up`, one temporary Key Vault Certificates Officer lease is
-held across certificate create/reuse, Graph registration, and exact readiness
-verification. Recognized RBAC-propagation authorization failures are retried
+held across certificate create/reuse, Graph registration, exact readiness
+verification, and the hosted-agent deployment preflight, because those later
+steps also read the certificate through the Key Vault data plane as the same
+operator. Recognized RBAC-propagation authorization failures are retried
 with bounded backoff; terminal errors stop immediately. The lease is revoked
-in an outer `finally`. A primary operation failure remains the primary error;
+once, in an outer `finally`, whether or not the remaining steps succeed. A
+primary operation failure remains the primary error;
 if revocation also fails, both errors are retained. A cleanup-only failure
 marks deployment incomplete. Rerun `azd up` after correcting the reported
 cause: certificate creation and Graph registration are idempotent. If the

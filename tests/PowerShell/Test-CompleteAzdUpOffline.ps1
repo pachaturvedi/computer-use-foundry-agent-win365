@@ -462,14 +462,17 @@ throw 'Simulated W365 setup failure.'
         'certificate-initialize',
         'certificate-register',
         'phase-two-finalize',
-        'certificate-role-release',
         'viewer-bootstrap',
-        'w365-setup'
+        'w365-setup',
+        'certificate-role-release'
     )
     for ($index = 0; $index -lt $expectedOrder.Count; $index++) {
         if ($order[$index] -ne $expectedOrder[$index]) {
             throw "Fresh certificate-mode azd up ordering was incorrect at step $index."
         }
+    }
+    if (@($order | Where-Object { $_ -eq 'certificate-role-release' }).Count -ne 1) {
+        throw 'The temporary certificate officer lease was not released exactly once.'
     }
 
     foreach ($failureStage in @('initialization', 'registration')) {

@@ -224,6 +224,7 @@ if ($credentialMode -notin @('client_secret', 'managed_identity_federation', 'ke
     throw "Unsupported W365_BLUEPRINT_CREDENTIAL_MODE '$credentialMode'."
 }
 $credentialAccessFinalized = $false
+$certificateOfficerLease = $null
 if ($enableW365 -and !$w365AlreadyEnabled -and $credentialMode -eq 'key_vault_certificate') {
     $certificateTenantId = [guid]::Empty
     $certificateBlueprintId = [guid]::Empty
@@ -302,12 +303,22 @@ if ($enableW365 -and !$w365AlreadyEnabled -and $credentialMode -eq 'key_vault_ce
     catch {
         $certificatePrimaryError = $_
     }
-    finally {
+    if ($null -ne $certificatePrimaryError) {
+        # Release immediately on failure. On success the lease is deliberately retained: W365 setup
+        # readiness verification and the hosted-agent deployment preflight later in this run read the
+        # certificate through the Key Vault data plane as this same operator.
+        $failedCertificateLease = $certificateOfficerLease
+        $certificateOfficerLease = $null
         Complete-W365CertificateOfficerLease `
-            -Lease $certificateOfficerLease `
+            -Lease $failedCertificateLease `
             -PrimaryError $certificatePrimaryError
     }
 }
+
+# The temporary Certificates Officer lease acquired above must stay valid for the certificate reads
+# performed by W365 setup readiness verification and the hosted-agent deployment preflight below.
+# It is released once, in the trailing finally, whether or not the remaining steps succeed.
+try {
 
 if ($enableW365 -and !$w365AlreadyEnabled -and !$credentialAccessFinalized) {
     Write-SampleVerbose -Component 'postup' -Message 'Finalizing credential-scoped RBAC before optional viewer provisioning.'
@@ -549,5 +560,14 @@ if (![string]::IsNullOrWhiteSpace($env:AZURE_ENV_NAME)) {
     & $DeploymentSummaryScriptPath -RepositoryRoot $RepositoryRoot -Environment $environmentName
     if (!$?) {
         throw 'Deployment summary failed.'
+    }
+}
+
+}
+finally {
+    if ($null -ne $certificateOfficerLease) {
+        $completedCertificateLease = $certificateOfficerLease
+        $certificateOfficerLease = $null
+        Complete-W365CertificateOfficerLease -Lease $completedCertificateLease
     }
 }

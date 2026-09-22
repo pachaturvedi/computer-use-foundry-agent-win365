@@ -187,7 +187,9 @@ param(
     if ($stateKeyVaultTemplate -notmatch
         'agentCertificateRoleAssignmentEnabled\s*=\s*\(certificateProvisioningActive \|\| certificateRbacReady\)' -or
         $viewerTemplate -notmatch
-        "certificateEnabled\s*=\s*blueprintCredentialMode == 'key_vault_certificate'\s*&&\s*certificateConfigurationReady") {
+        "certificateEnabled\s*=\s*w365Enabled\s*&&\s*blueprintCredentialMode == 'key_vault_certificate'\s*&&\s*certificateConfigurationReady" -or
+        $viewerTemplate -notmatch
+        'certificateConfigurationReady\s*=\s*w365Enabled\s*&&') {
         throw 'Certificate-scoped state/viewer RBAC is not gated by orchestration readiness.'
     }
 

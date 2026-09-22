@@ -38,10 +38,10 @@ var containerImage = useRegistry
   ? '${registry.properties.loginServer}/${imageName}'
   : imageName
 var clientSecretEnabled = w365Enabled && blueprintCredentialMode == 'client_secret'
-var certificateConfigurationReady = blueprintCredentialMode == 'key_vault_certificate' && !(certificateProvisioningActive || certificateRbacReady)
+var certificateConfigurationReady = w365Enabled && blueprintCredentialMode == 'key_vault_certificate' && !(certificateProvisioningActive || certificateRbacReady)
   ? fail('key_vault_certificate viewer provisioning requires the orchestration-owned certificate readiness gate.')
   : true
-var certificateEnabled = blueprintCredentialMode == 'key_vault_certificate' && certificateConfigurationReady
+var certificateEnabled = w365Enabled && blueprintCredentialMode == 'key_vault_certificate' && certificateConfigurationReady
 var blueprintCertificateName = 'w365-blueprint-certificate'
 
 resource registry 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = { name: registryName }
