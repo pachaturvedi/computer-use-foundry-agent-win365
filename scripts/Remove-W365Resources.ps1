@@ -35,7 +35,9 @@ function Get-AzdCommand {
         (Join-Path $env:LOCALAPPDATA 'Programs\Azure Dev CLI\azd.exe'),
         (Join-Path $env:ProgramFiles 'Azure Dev CLI\azd.exe')
     )) {
-        if (![string]::IsNullOrWhiteSpace($path) -and (Test-Path $path) -and !$azdPaths.Contains($path)) {
+        if (![string]::IsNullOrWhiteSpace($path) -and
+            (Test-Path -LiteralPath $path -PathType Leaf) -and
+            !$azdPaths.Contains($path)) {
             $azdPaths.Add($path)
         }
     }
@@ -46,13 +48,12 @@ function Get-AzdCommand {
             $versionOutput = $null
             try {
                 $versionOutput = & $candidatePath version 2>$null
+                if ($LASTEXITCODE -eq 0 -and ($versionOutput | Out-String) -match 'azd version\s+(\d+\.\d+\.\d+)') {
+                    [pscustomobject]@{ Path = $candidatePath; Version = [version]$Matches[1] }
+                }
             }
             catch {
                 return
-            }
-
-            if ($LASTEXITCODE -eq 0 -and ($versionOutput | Out-String) -match 'azd version\s+(\d+\.\d+\.\d+)') {
-                [pscustomobject]@{ Path = $candidatePath; Version = [version]$Matches[1] }
             }
         } |
         Sort-Object Version -Descending

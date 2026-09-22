@@ -30,12 +30,17 @@ if (!$getAzdCommandAst) {
 }
 
 $commandDiscoveryTempRoot = Join-Path ([IO.Path]::GetTempPath()) ("w365-azd-discovery-{0}" -f ([guid]::NewGuid()))
-$fakeAzdPath = Join-Path $commandDiscoveryTempRoot 'azd.cmd'
+$malformedAzdRoot = Join-Path $commandDiscoveryTempRoot 'malformed'
+$validAzdRoot = Join-Path $commandDiscoveryTempRoot 'valid'
+$malformedAzdPath = Join-Path $malformedAzdRoot 'azd.cmd'
+$fakeAzdPath = Join-Path $validAzdRoot 'azd.cmd'
 $previousPath = $env:PATH
 try {
-    New-Item -ItemType Directory -Path $commandDiscoveryTempRoot -Force | Out-Null
+    New-Item -ItemType Directory -Path $malformedAzdRoot -Force | Out-Null
+    New-Item -ItemType Directory -Path $validAzdRoot -Force | Out-Null
+    Set-Content -LiteralPath $malformedAzdPath -Value '@echo azd version 999999999999.1.1 (commit malformed-test)'
     Set-Content -LiteralPath $fakeAzdPath -Value '@echo azd version 9.99.9 (commit offline-test)'
-    $env:PATH = "$commandDiscoveryTempRoot;$previousPath"
+    $env:PATH = "$malformedAzdRoot;$validAzdRoot;$previousPath"
 
     $commandDiscoveryModule = New-Module -Name W365AzdCommandDiscovery -ScriptBlock ([scriptblock]::Create(@"
 $($getAzdCommandAst.Extent.Text)
@@ -43,7 +48,7 @@ function azd { 'profile shadow' }
 "@))
     $azd = & $commandDiscoveryModule { Get-AzdCommand }
     if ($null -eq $azd -or $azd.Path -ne $fakeAzdPath -or $azd.Version -ne ([version]'9.99.9')) {
-        throw 'Cleanup azd discovery did not ignore a non-application command shadow or select the highest supported executable.'
+        throw 'Cleanup azd discovery did not ignore invalid candidates or select the highest supported executable.'
     }
 }
 finally {
