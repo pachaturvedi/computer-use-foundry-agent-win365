@@ -1,12 +1,15 @@
 # Deploy to Foundry and Azure Container Apps
 
-Deployment is explicit and billable. No script runs it automatically. Use a
-dedicated resource group and, where possible, a dedicated Foundry blueprint.
-Review resource, role and blueprint trust changes before execution. This is
-a single-operator preview sample, not a production multi-user service.
+Deployment is explicit and billable. A fresh managed `azd up` orchestrates the
+complete demo after interactive approval; it does not bypass W365 billing,
+Graph consent, credential, or viewer activation checks. Use a dedicated
+resource group and Foundry project. This is a single-operator preview sample,
+not a production multi-user service.
 
 Deployment has two phases: **bootstrap to obtain Foundry-owned identities**,
-then **bind W365 to those exact identities and enable the runtime**.
+then **bind W365 to those exact identities and enable the runtime**. The direct
+fresh-environment path performs both phases inside one `azd up`; the staged
+path exposes the same boundaries as separate commands.
 
 ## Prerequisites
 
@@ -18,13 +21,15 @@ you need the full staged deployment, rollback, or live-acceptance detail.
 - PowerShell 7.4+ and .NET 10 installed on the Windows operator machine.
 - One Foundry path selected up front: either a fresh environment that will provision a dedicated Foundry project, or an existing Foundry project with a supported model deployment.
 - Windows 365 onboarding, billing, and pool decisions reviewed before enabling phase 2.
-- Viewer deployment approved only if you need authenticated live view or human handoff.
+- Viewer deployment is enabled by default for a fresh managed environment.
+  Set `DEPLOY_VIEWER=false` only when the scenario does not need live view or
+  human handoff.
 
 | Stage | Operation | Current status |
 | --- | --- | --- |
-| Phase 1 | Deploy `win365-desktop-agent` with `W365_ENABLED=false` | Greenfield bootstrap validated as version `1` in the separate `fawsep18-dev` evidence environment |
-| Binding | Discover the deployed version, run W365 setup, create/reuse the agent user, and create or update the W365 agent pool | Scripted; live pool creation still requires tenant-specific billing and image inputs |
-| Phase 2 | Provision state, apply returned IDs and operator values, enable W365, and redeploy the same service | Staged after the phase-1 agent principal is known |
+| Phase 1 | Deploy `win365-desktop-agent` with `W365_ENABLED=false` | Automatic first stage of fresh `azd up` |
+| Binding | Discover the version, provision state/viewer, create or reuse the agent user and pool, and persist ownership | Automatic after approval; requires tenant-specific billing input |
+| Phase 2 | Enable W365 and redeploy the same service name | Automatic final stage; viewer activation can trigger one additional immutable version |
 
 The complete W365 lifecycle is validated with explicit `client_secret` mode.
 Blueprint-selected managed identity remains blocked on the tested Responses
@@ -64,9 +69,10 @@ and project managed identity. Defaults are committed in
 `config\deployment.defaults.json`. Existing-project users can override the
 deployment name, model version, SKU, location, viewer image, or project
 endpoint. `config\deployment.local.json` is consumed by the repository
-initializer and deployment wrappers. Direct `azd up` uses azd environment
-values, so set direct-path overrides with `azd env set`. Never run provisioning
-against an unreviewed shared project.
+initializer, W365 setup, and deployment wrappers. Direct `azd up` uses azd
+environment values for infrastructure overrides, while its W365 step can use
+the tenant profile saved in `config\deployment.local.json`. Never run
+provisioning against an unreviewed shared project.
 
 Install .NET 10, PowerShell 7.4+, Azure CLI and Azure Developer CLI. From the
 repository root, verify the exact versions required by `azure.yaml`:
@@ -94,7 +100,20 @@ Choose exactly one project setup path.
 **Existing clone (recommended):** the checked-in `azure.yaml` is already the
 project manifest. A new azd environment uses its name as the resource prefix,
 generates the resource group, Foundry account, and project names, and applies
-the reviewed model defaults. Generic infrastructure prompts are not required.
+the reviewed model defaults. For a dedicated managed project it also completes
+state, viewer, and W365 setup after the bootstrap agent identity exists.
+Generic infrastructure prompts are not required.
+
+First save an existing W365 pool or the approved billing plan, region, and
+gallery image. The helper is read-only until `-Configure` writes the selected
+non-secret profile to ignored `config\deployment.local.json`:
+
+```powershell
+pwsh -NoProfile -File .\scripts\Get-W365DiscoveryOptions.ps1 `
+    -TenantId "<tenant-guid>" `
+    -UseDeviceCode `
+    -Configure
+```
 
 For example:
 
@@ -106,9 +125,21 @@ azd up --environment demosept22-dev
 ```
 
 Before provisioning, the `preup` hook prints the generated names, model
-selection, model capacity, and disabled bootstrap features in a readable table.
-Use the staged initializer later in this section when you need preview and
-approval boundaries before each mutation.
+selection, model capacity, and full-setup plan in a readable table. It fails
+before Azure changes if neither an existing W365 pool nor a valid billing-plan
+GUID is configured. The `postup` hook then:
+
+1. discovers the exact principal of the W365-disabled bootstrap version;
+2. enables and provisions shared Blob state;
+3. provisions and health-checks the ACA viewer bootstrap;
+4. securely stores the existing blueprint credential when required;
+5. runs W365/Entra setup after explicit approval;
+6. redeploys the same hosted-agent name with W365 enabled; and
+7. activates the viewer and redeploys again when the approved screen-share
+   values are available.
+
+Use the staged initializer later in this section when you need separate preview
+and approval boundaries.
 
 The default `200` capacity means 200K TPM and consumes regional model quota.
 Availability varies by model version, SKU, subscription, and region. To use a
@@ -133,6 +164,23 @@ project until the ownership and cleanup boundaries later in this guide have
 been reviewed. Global Standard is consumption billed rather than fixed PTU
 capacity, but reserving a higher TPM quota permits higher throughput and
 potentially higher usage charges.
+
+The viewer is deployed by default. Set these onboarding-supplied values before
+`azd up` to activate live view and take control during the same run:
+
+```powershell
+azd env set SCREENSHARE_APP_URL "<approved-app-url>" --environment demosept22-dev
+azd env set SCREENSHARE_SDK_URL "<approved-sdk-url>" --environment demosept22-dev
+azd env set SCREENSHARE_FRAME_ORIGINS "<approved-origin-list>" --environment demosept22-dev
+```
+
+If they are omitted, the ACA viewer remains in bootstrap mode and the final
+summary lists the missing activation settings. To request only the Foundry
+bootstrap:
+
+```powershell
+azd env set ENABLE_W365 false --environment demosept22-dev
+```
 
 To reuse an environment that was already initialized for this repository:
 
@@ -159,12 +207,10 @@ The no-clone command creates a new project directory. Change into that generated
 directory before running subsequent commands. Do not run it from the repository
 clone or target the existing clone directory.
 
-When the user needs a fresh environment, choose **create a new project** and
-run the initializer below. It creates the azd environment, generates globally
-scoped deterministic resource names, applies the reviewed model defaults from
-`config\deployment.defaults.json`, keeps W365/state/viewer disabled, and
-previews the deployment. The minimum successful path is staged so each boundary
-is validated before the first live agent publish:
+For a staged fresh environment, choose **create a new project** and run the
+initializer below. It creates the azd environment, generates deterministic
+resource names, applies the reviewed model defaults, keeps W365/state/viewer
+disabled for the first publish, and previews the deployment:
 
 | Setting | Source for a fresh environment | Default or generated value |
 | --- | --- | --- |
@@ -176,7 +222,7 @@ is validated before the first live agent publish:
 | Model deployment and model | `config\deployment.defaults.json` | `gpt-6-astra` |
 | Model version | `config\deployment.defaults.json` | `2026-09-03` |
 | Model SKU and capacity | `config\deployment.defaults.json` | `GlobalStandard`, 200K TPM |
-| State, viewer, and W365 | Safe bootstrap defaults | Disabled |
+| State, viewer, and W365 | Staged bootstrap defaults | Disabled until the operator runs phase 2 |
 
 Override a reviewed default with `config\deployment.local.json` when using the
 initializer, or set the matching azd environment value before direct `azd up`.
@@ -222,13 +268,12 @@ for the deploying principal, and `Foundry User` for the project managed
 identity. `DeployAgent` publishes the first immutable hosted-agent version only
 after the project endpoint and role checks are green.
 
-Do not pass `-EnableW365` on the initial greenfield deployment. The first
+Do not pass `-EnableW365` to the staged initializer. The first
 hosted-agent version must exist before its principal can be granted access to
 the shared Blob state required by enabled W365 execution. Complete the staged
 bootstrap above, discover the exact agent principal, and continue with
-[phase 2](#phase-2-bind-and-enable). Do not use a one-shot `azd up` for a fresh
-W365-enabled environment until the state principal and all phase-2 values have
-been explicitly configured and reviewed.
+[phase 2](#phase-2-bind-and-enable). The direct fresh `azd up` path performs
+these same steps through its guarded `postup` orchestration.
 
 Keep `W365_ENABLED=false`, `DEPLOY_STATE=false`, and `DEPLOY_VIEWER=false` for
 this bootstrap pass unless the later phases are explicitly approved. Existing-
@@ -303,19 +348,14 @@ container deploy modeled on the viewer's `Dockerfile`, which already copies
 `Directory.Packages.props`, `NuGet.Config`, and `Win365Shared` before
 restoring).
 
-Generic templates often use `azd up`, but this sample deliberately uses the
-`Invoke-AzdDeployment.ps1` wrapper: the project and model must already exist,
-and phase 1 must not provision an unconfirmed model SKU or W365 capacity. In
-`client_secret` mode, the hosted agent fetches the blueprint client secret
-directly from Key Vault at startup using its own runtime identity (see
-"Blueprint client secret delivery" in `docs/AUTHENTICATION.md`), so a direct
-`azd deploy win365-desktop-agent` or `azd up` no longer risks an empty
-`W365_CLIENT_SECRET` crash. Still prefer the wrapper: it also confirms the
-`w365-blueprint-client-secret` secret and the agent's Key Vault RBAC exist
-before deployment, and runs `azd ai agent doctor` plus an optional smoke
-invocation afterward. Do not run `azd provision` or `azd up` unless you have
-intentionally added and reviewed complete infrastructure declarations for your
-own fork, or you are following the dedicated greenfield path above.
+Use direct `azd up` for the dedicated fresh managed path described above. Its
+hooks preserve the bootstrap-first sequence and invoke the guarded deployment
+wrapper after W365 setup. For shared/existing projects or focused
+redeployments, use `Invoke-AzdDeployment.ps1`: it confirms the
+`w365-blueprint-client-secret` and agent Key Vault RBAC before publication,
+runs `azd ai agent doctor`, and can smoke-invoke the active version. Do not
+replace either path with raw `azd deploy win365-desktop-agent`, which skips
+those safeguards.
 
 `W365_ENABLED` defaults to `false` and accepts only `true` or `false`. In phase 1,
 all phase-2 environment values in the manifest may remain empty: **no W365 IDs,
@@ -597,9 +637,11 @@ Vault, emitting `W365_KEY_VAULT_NAME`. When
 `DEPLOY_STATE=true`, it also derives a globally unique Storage account name,
 creates the private `desktop-state` container, grants the supplied agent
 principal Storage Blob Data Contributor only on that container, and emits
-`SESSION_BLOB_URI`. Greenfield phase 1 defaults `DEPLOY_STATE=false` because
-the agent principal is not available until the first hosted-agent deployment;
-that does not skip the credential vault.
+`SESSION_BLOB_URI`. The initial greenfield infrastructure pass uses
+`DEPLOY_STATE=false` because the agent principal does not exist yet. Direct
+fresh `azd up` discovers that principal in `postup`, persists
+`DEPLOY_STATE=true`, and provisions state before W365 setup. The staged path
+leaves this step to the operator. Neither path skips the credential vault.
 
 Legacy development deployments may still have state in a separate
 `*-state-rg`. The templates do not move or delete those resources
@@ -751,9 +793,9 @@ exact `https://<viewer-host>/signin-oidc` callback, service principal, operator
 binding, and `w365-viewer-client-secret`. `Set-ViewerSecrets.ps1
 -BlueprintOnly` prompts securely for the proven blueprint credential and stores
 it as `w365-blueprint-client-secret`. Neither secret is stored in `.azure`,
-JSON, Bicep parameters, `azure.yaml`, or the image. The deployment script loads
-the blueprint secret into its process environment only while publishing the
-hosted agent.
+JSON, Bicep parameters, `azure.yaml`, or the image. In `client_secret` mode,
+the hosted agent retrieves the blueprint secret from Key Vault at runtime with
+its own managed identity.
 
 Only live activation references the two secrets. The Windows postup hook
 configures the two least-privilege, vault-scoped built-in RBAC assignments from
@@ -765,20 +807,16 @@ absent, stores both in the same vault, and reprovisions the viewer.
 unless the exact viewer UAMI federation is present in the W365 ownership
 manifest.
 
-After phase 2 enables W365 or credentials, publish the agent only through
-`Invoke-AzdDeployment.ps1 -Mode DeployAgent`. The wrapper verifies Key Vault
-and RBAC prerequisites, runs `azd ai agent doctor`, and can perform a smoke
-invocation. Direct `azd up` is supported only for the dedicated, disabled
-phase-1 bootstrap documented earlier. Set `SAMPLE_LOG_LEVEL` to `summary`
-(default), `verbose`, or `debug`:
+For a dedicated managed environment, routine `azd up` reruns are supported.
+The `postup` hook reuses the guarded deployment wrapper after W365 or viewer
+configuration changes; it does not publish an enabled agent directly. For a
+focused agent-only redeploy, use `Invoke-AzdDeployment.ps1 -Mode DeployAgent`.
+Set `SAMPLE_LOG_LEVEL` to `summary` (default), `verbose`, or `debug`:
 
 ```powershell
 $environment = "<azd-environment-name>"
 azd env set SAMPLE_LOG_LEVEL verbose --environment $environment
-pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
-    -Environment $environment `
-    -Mode DeployAgent `
-    -ConfirmResourceChanges
+azd up --environment $environment
 ```
 
 All Windows scripts also support PowerShell's common `-Verbose` and `-Debug`
@@ -863,17 +901,19 @@ container as an independent public ACA endpoint with spoofable headers.
 
 ## Operations and rollback
 
-> **Always redeploy `win365-desktop-agent` through
+> **Always publish `win365-desktop-agent` through the guarded deployment
+> wrapper.** A full managed-environment `azd up` calls that wrapper from
+> `Complete-AzdUp.ps1`; focused operators can call
 > `scripts/Invoke-AzdDeployment.ps1 -Mode DeployAgent -Environment <env>
-> -ConfirmResourceChanges`.** In `client_secret` mode the hosted agent fetches
+> -ConfirmResourceChanges` directly. In `client_secret` mode the agent fetches
 > its own blueprint client secret directly from Key Vault at startup using its
 > runtime identity (see "Blueprint client secret delivery" in
-> `docs/AUTHENTICATION.md`), so a direct `azd deploy win365-desktop-agent` or
-> `azd up` no longer crashes with `Configure W365_CLIENT_SECRET.` Still prefer
-> the wrapper: it confirms `w365-blueprint-client-secret` exists and the
+> `docs/AUTHENTICATION.md`). Do not replace either supported path with a raw
+> `azd deploy win365-desktop-agent`: the wrapper confirms
+> `w365-blueprint-client-secret` exists and the
 > agent's Key Vault RBAC is in place before packaging/publishing, then runs
 > `azd ai agent doctor` and an optional smoke invocation afterward — checks a
-> raw `azd` command skips even for a quick redeploy.
+> raw deploy skips.
 
 Keep one active revision/replica per component. Stop/drain tasks before
 deployment or identity changes. Do not clear a slot to make a deployment appear

@@ -14,6 +14,10 @@
     "modelSkuName": "GlobalStandard",
     "modelSkuCapacity": 200
   },
+  "freshDeployment": {
+    "enableW365": true,
+    "deployViewer": true
+  },
   "state": {
     "deploy": false
   },

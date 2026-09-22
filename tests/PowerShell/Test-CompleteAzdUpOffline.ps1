@@ -13,11 +13,13 @@ $environmentName = 'sample-dev'
 $environmentDirectory = Join-Path $tempRoot ".azure\$environmentName"
 $environmentPath = Join-Path $environmentDirectory '.env'
 $w365CallsPath = Join-Path $tempRoot 'w365-calls.json'
+$phaseTwoCallsPath = Join-Path $tempRoot 'phase-two-calls.json'
 $viewerCallsPath = Join-Path $tempRoot 'viewer-calls.json'
 $agentDeployCallsPath = Join-Path $tempRoot 'agent-deploy-calls.json'
 $viewerSecretsCallsPath = Join-Path $tempRoot 'viewer-secrets-calls.json'
 $viewerActivationCallsPath = Join-Path $tempRoot 'viewer-activation-calls.json'
 $mockW365Path = Join-Path $tempRoot 'Mock-W365Setup.ps1'
+$mockPhaseTwoPath = Join-Path $tempRoot 'Mock-PhaseTwo.ps1'
 $failingW365Path = Join-Path $tempRoot 'Mock-W365SetupFailure.ps1'
 $mockViewerPath = Join-Path $tempRoot 'Mock-Viewer.ps1'
 $mockAgentDeployPath = Join-Path $tempRoot 'Mock-AgentDeploy.ps1'
@@ -34,6 +36,9 @@ $trackedEnvironmentVariables = @(
     'AZD_NON_INTERACTIVE',
     'AZURE_ENV_NAME',
     'AZURE_TENANT_ID',
+    'FOUNDRY_PROJECT_OWNERSHIP',
+    'DEPLOY_STATE',
+    'STATE_AGENT_PRINCIPAL_ID',
     'W365_POOL_ID',
     'W365_AGENT_USER_ID',
     'W365_AGENT_ID',
@@ -81,6 +86,7 @@ function az {
 function Reset-Calls {
     Remove-Item -LiteralPath `
         $w365CallsPath, `
+        $phaseTwoCallsPath, `
         $viewerCallsPath, `
         $agentDeployCallsPath, `
         $viewerSecretsCallsPath, `
@@ -92,7 +98,8 @@ function Write-TestEnvironment {
     param(
         [bool]$Complete,
         [string]$AgentUserPrincipalName,
-        [string]$AgentUserDomain
+        [string]$AgentUserDomain,
+        [switch]$OmitDeploymentFlags
     )
 
     New-Item -ItemType Directory -Path $environmentDirectory -Force | Out-Null
@@ -100,12 +107,18 @@ function Write-TestEnvironment {
         "AZURE_ENV_NAME=`"$environmentName`"",
         'AZURE_TENANT_ID="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"',
         'RESOURCE_PREFIX="sample-dev"',
-        'DEPLOY_VIEWER="false"',
+        'FOUNDRY_PROJECT_OWNERSHIP="managed"',
         'VIEWER_LIVE_ENABLED="false"',
         'W365_BLUEPRINT_CREDENTIAL_MODE="client_secret"',
         'W365_KEY_VAULT_NAME="sample-w365-vault"',
         "W365_ENABLED=`"$($Complete.ToString().ToLowerInvariant())`""
     )
+    if (!$OmitDeploymentFlags) {
+        $lines += @(
+            'DEPLOY_STATE="false"',
+            'DEPLOY_VIEWER="false"'
+        )
+    }
     if (![string]::IsNullOrWhiteSpace($AgentUserPrincipalName)) {
         $lines += "W365_AGENT_USER_PRINCIPAL_NAME=`"$AgentUserPrincipalName`""
     }
@@ -167,6 +180,23 @@ if (![string]::IsNullOrWhiteSpace($env:TEST_VIEWER_PUBLIC_URL)) {
     Add-Content -LiteralPath $environmentPath -Value "VIEWER_PUBLIC_URL=`"$($env:TEST_VIEWER_PUBLIC_URL)`""
 }
 '@
+    Set-Content -LiteralPath $mockPhaseTwoPath -Value @'
+param(
+    [string]$Environment,
+    [switch]$DeployViewer
+)
+@{
+    environment = $Environment
+    deployViewer = $DeployViewer.IsPresent
+} | ConvertTo-Json | Set-Content -LiteralPath $env:TEST_PHASE_TWO_CALLS_PATH
+$environmentPath = Join-Path $env:TEST_REPOSITORY_ROOT ".azure\$Environment\.env"
+Add-Content -LiteralPath $environmentPath -Value @(
+    'ENABLE_W365="true"',
+    'DEPLOY_STATE="true"',
+    'STATE_AGENT_PRINCIPAL_ID="99999999-9999-9999-9999-999999999999"',
+    "DEPLOY_VIEWER=`"$($DeployViewer.IsPresent.ToString().ToLowerInvariant())`""
+)
+'@
     Set-Content -LiteralPath $mockAgentDeployPath -Value @'
 param(
     [string]$Mode,
@@ -223,7 +253,7 @@ param(
 } | ConvertTo-Json | Set-Content -LiteralPath $env:TEST_W365_CALLS_PATH
 
 $environmentDirectory = Join-Path $env:TEST_REPOSITORY_ROOT ".azure\$Environment"
-Set-Content -LiteralPath (Join-Path $environmentDirectory '.env') -Value @(
+Add-Content -LiteralPath (Join-Path $environmentDirectory '.env') -Value @(
     "AZURE_ENV_NAME=`"$Environment`"",
     'RESOURCE_PREFIX="sample-dev"',
     'W365_ENABLED="true"',
@@ -283,6 +313,7 @@ throw 'Simulated W365 setup failure.'
     $env:TEST_SOURCE_ROOT = $repoRoot
     $env:TEST_REPOSITORY_ROOT = $tempRoot
     $env:TEST_W365_CALLS_PATH = $w365CallsPath
+    $env:TEST_PHASE_TWO_CALLS_PATH = $phaseTwoCallsPath
     $env:TEST_VIEWER_CALLS_PATH = $viewerCallsPath
     $env:TEST_AGENT_DEPLOY_CALLS_PATH = $agentDeployCallsPath
     $env:TEST_VIEWER_SECRETS_CALLS_PATH = $viewerSecretsCallsPath
@@ -301,7 +332,7 @@ throw 'Simulated W365 setup failure.'
     $env:ENABLE_W365 = 'false'
     $env:W365_ENABLED = 'false'
     $env:SAMPLE_LOG_LEVEL = 'verbose'
-    $planOutput = & $scriptPath -RepositoryRoot $tempRoot -W365SetupScriptPath $mockW365Path -ViewerBootstrapScriptPath $mockViewerPath -ViewerSecretsScriptPath $mockViewerSecretsPath *>&1 | Out-String
+    $planOutput = & $scriptPath -RepositoryRoot $tempRoot -PhaseTwoPreparationScriptPath $mockPhaseTwoPath -W365SetupScriptPath $mockW365Path -ViewerBootstrapScriptPath $mockViewerPath -ViewerSecretsScriptPath $mockViewerSecretsPath *>&1 | Out-String
     $env:SAMPLE_LOG_LEVEL = ''
     $planOutput = $planOutput -replace "`r", ''
     $planIndex = $planOutput.IndexOf('postup plan (runs after azd provision, before this hook exits):')
@@ -309,10 +340,10 @@ throw 'Simulated W365 setup failure.'
     if ($planIndex -lt 0 -or $bootstrapIndex -lt 0 -or $planIndex -gt $bootstrapIndex) {
         throw 'The postup plan summary did not print before viewer bootstrap execution.'
     }
-    if ($planOutput -notmatch '(?m)^.*1\. Skip viewer image build and health check because DEPLOY_VIEWER is not true\.$' -or
+    if ($planOutput -notmatch '(?m)^.*1\. After the Foundry principal is known, provision shared Blob state without the optional viewer\.$' -or
         $planOutput -notmatch '(?m)^.*2\. Skip Windows 365 setup because ENABLE_W365 is not true\.$' -or
         $planOutput -notmatch '(?m)^.*3\. Skip live-viewer activation\.$' -or
-        $planOutput -notmatch '(?m)^.*4\. Redeploy the hosted agent only if a new viewer URL became available during this run\.$' -or
+        $planOutput -notmatch '(?m)^.*4\. Redeploy the same hosted-agent name after W365 setup and again if viewer activation changes its runtime configuration\.$' -or
         $planOutput -notmatch '(?m)^.*5\. Print the final deployment summary table\.$') {
         throw 'The postup plan summary did not describe every disabled step accurately.'
     }
@@ -322,16 +353,34 @@ throw 'Simulated W365 setup failure.'
     $env:ENABLE_W365 = 'false'
     $env:W365_ENABLED = 'false'
     $env:SAMPLE_LOG_LEVEL = ''
-    $summaryModeOutput = & $scriptPath -RepositoryRoot $tempRoot -W365SetupScriptPath $mockW365Path -ViewerBootstrapScriptPath $mockViewerPath -ViewerSecretsScriptPath $mockViewerSecretsPath *>&1 | Out-String
+    $summaryModeOutput = & $scriptPath -RepositoryRoot $tempRoot -PhaseTwoPreparationScriptPath $mockPhaseTwoPath -W365SetupScriptPath $mockW365Path -ViewerBootstrapScriptPath $mockViewerPath -ViewerSecretsScriptPath $mockViewerSecretsPath *>&1 | Out-String
     if ($summaryModeOutput -match 'postup plan \(runs after azd provision, before this hook exits\):') {
         throw 'The postup plan summary printed in default/summary mode; it should only appear in verbose or debug mode.'
+    }
+
+    Reset-Calls
+    Write-TestEnvironment -Complete:$false -OmitDeploymentFlags
+    $env:ENABLE_W365 = ''
+    $env:W365_ENABLED = 'false'
+    & $scriptPath `
+        -RepositoryRoot $tempRoot `
+        -PhaseTwoPreparationScriptPath $mockPhaseTwoPath `
+        -W365SetupScriptPath $mockW365Path `
+        -ViewerBootstrapScriptPath $mockViewerPath `
+        -ViewerSecretsScriptPath $mockViewerSecretsPath
+    $phaseTwoCall = Get-Content -LiteralPath $phaseTwoCallsPath -Raw | ConvertFrom-Json
+    if ($phaseTwoCall.environment -ne $environmentName -or !$phaseTwoCall.deployViewer) {
+        throw 'Fresh managed azd up did not default to phase-two state and viewer provisioning.'
+    }
+    if (!(Test-Path -LiteralPath $w365CallsPath) -or !(Test-Path -LiteralPath $viewerCallsPath)) {
+        throw 'Fresh managed azd up did not continue through viewer bootstrap and W365 setup.'
     }
 
     Reset-Calls
     Write-TestEnvironment -Complete:$false
     $env:ENABLE_W365 = 'false'
     $env:W365_ENABLED = 'false'
-    & $scriptPath -RepositoryRoot $tempRoot -W365SetupScriptPath $mockW365Path -ViewerBootstrapScriptPath $mockViewerPath -ViewerSecretsScriptPath $mockViewerSecretsPath
+    & $scriptPath -RepositoryRoot $tempRoot -PhaseTwoPreparationScriptPath $mockPhaseTwoPath -W365SetupScriptPath $mockW365Path -ViewerBootstrapScriptPath $mockViewerPath -ViewerSecretsScriptPath $mockViewerSecretsPath
     if (Test-Path -LiteralPath $w365CallsPath) {
         throw 'Disabled postup invoked W365 setup.'
     }
@@ -348,7 +397,7 @@ throw 'Simulated W365 setup failure.'
     $env:W365_RESOURCE_CHANGES_CONFIRMED = ''
     $approvalFailed = $false
     try {
-        & $scriptPath -RepositoryRoot $tempRoot -W365SetupScriptPath $mockW365Path -ViewerBootstrapScriptPath $mockViewerPath -ViewerSecretsScriptPath $mockViewerSecretsPath
+        & $scriptPath -RepositoryRoot $tempRoot -PhaseTwoPreparationScriptPath $mockPhaseTwoPath -W365SetupScriptPath $mockW365Path -ViewerBootstrapScriptPath $mockViewerPath -ViewerSecretsScriptPath $mockViewerSecretsPath
     }
     catch {
         $approvalFailed = $true
@@ -359,7 +408,7 @@ throw 'Simulated W365 setup failure.'
 
     Reset-Calls
     $env:W365_RESOURCE_CHANGES_CONFIRMED = 'true'
-    & $scriptPath -RepositoryRoot $tempRoot -W365SetupScriptPath $mockW365Path -ViewerBootstrapScriptPath $mockViewerPath -ViewerSecretsScriptPath $mockViewerSecretsPath
+    & $scriptPath -RepositoryRoot $tempRoot -PhaseTwoPreparationScriptPath $mockPhaseTwoPath -W365SetupScriptPath $mockW365Path -ViewerBootstrapScriptPath $mockViewerPath -ViewerSecretsScriptPath $mockViewerSecretsPath
     $w365Call = Get-Content -LiteralPath $w365CallsPath -Raw | ConvertFrom-Json
     if ($w365Call.environment -ne $environmentName -or
         $w365Call.tenantId -ne 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' -or
@@ -384,7 +433,7 @@ throw 'Simulated W365 setup failure.'
         -Complete:$false `
         -AgentUserPrincipalName 'explicit@custom.example' `
         -AgentUserDomain 'custom.example'
-    & $scriptPath -RepositoryRoot $tempRoot -W365SetupScriptPath $mockW365Path -ViewerBootstrapScriptPath $mockViewerPath -ViewerSecretsScriptPath $mockViewerSecretsPath
+    & $scriptPath -RepositoryRoot $tempRoot -PhaseTwoPreparationScriptPath $mockPhaseTwoPath -W365SetupScriptPath $mockW365Path -ViewerBootstrapScriptPath $mockViewerPath -ViewerSecretsScriptPath $mockViewerSecretsPath
     $overrideCall = Get-Content -LiteralPath $w365CallsPath -Raw | ConvertFrom-Json
     if ($overrideCall.agentUserPrincipalName -ne 'explicit@custom.example' -or
         $overrideCall.agentUserDomain -ne 'custom.example') {
@@ -396,7 +445,7 @@ throw 'Simulated W365 setup failure.'
     Write-CompleteManifest
     $env:ENABLE_W365 = 'true'
     $env:W365_ENABLED = 'true'
-    & $scriptPath -RepositoryRoot $tempRoot -W365SetupScriptPath $mockW365Path -ViewerBootstrapScriptPath $mockViewerPath -ViewerSecretsScriptPath $mockViewerSecretsPath
+    & $scriptPath -RepositoryRoot $tempRoot -PhaseTwoPreparationScriptPath $mockPhaseTwoPath -W365SetupScriptPath $mockW365Path -ViewerBootstrapScriptPath $mockViewerPath -ViewerSecretsScriptPath $mockViewerSecretsPath
     if (Test-Path -LiteralPath $w365CallsPath) {
         throw 'Completed W365 environment reran setup.'
     }
@@ -411,6 +460,7 @@ throw 'Simulated W365 setup failure.'
     $env:TEST_VIEWER_PUBLIC_URL = 'https://viewer.example.com'
     & $scriptPath `
         -RepositoryRoot $tempRoot `
+        -PhaseTwoPreparationScriptPath $mockPhaseTwoPath `
         -W365SetupScriptPath $mockW365Path `
         -ViewerBootstrapScriptPath $mockViewerPath `
         -ViewerSecretsScriptPath $mockViewerSecretsPath `
@@ -438,6 +488,7 @@ throw 'Simulated W365 setup failure.'
     $env:TEST_AZ_BEHAVIOR = 'fail'
     $missingOperatorOutput = & $scriptPath `
         -RepositoryRoot $tempRoot `
+        -PhaseTwoPreparationScriptPath $mockPhaseTwoPath `
         -W365SetupScriptPath $mockW365Path `
         -ViewerBootstrapScriptPath $mockViewerPath `
         -ViewerSecretsScriptPath $mockViewerSecretsPath `
@@ -471,6 +522,7 @@ throw 'Simulated W365 setup failure.'
     $env:TEST_VIEWER_PUBLIC_URL = 'https://viewer.example.com'
     & $scriptPath `
         -RepositoryRoot $tempRoot `
+        -PhaseTwoPreparationScriptPath $mockPhaseTwoPath `
         -W365SetupScriptPath $mockW365Path `
         -ViewerBootstrapScriptPath $mockViewerPath `
         -ViewerSecretsScriptPath $mockViewerSecretsPath `
@@ -498,7 +550,7 @@ throw 'Simulated W365 setup failure.'
     $env:W365_ENABLED = 'false'
     $failed = $false
     try {
-        & $scriptPath -RepositoryRoot $tempRoot -W365SetupScriptPath $failingW365Path -ViewerBootstrapScriptPath $mockViewerPath -ViewerSecretsScriptPath $mockViewerSecretsPath
+        & $scriptPath -RepositoryRoot $tempRoot -PhaseTwoPreparationScriptPath $mockPhaseTwoPath -W365SetupScriptPath $failingW365Path -ViewerBootstrapScriptPath $mockViewerPath -ViewerSecretsScriptPath $mockViewerSecretsPath
     }
     catch {
         $failed = $true
@@ -516,7 +568,7 @@ throw 'Simulated W365 setup failure.'
 
     Reset-Calls
     $env:W365_POSTUP_IN_PROGRESS = 'true'
-    & $scriptPath -RepositoryRoot $tempRoot -W365SetupScriptPath $mockW365Path -ViewerBootstrapScriptPath $mockViewerPath
+    & $scriptPath -RepositoryRoot $tempRoot -PhaseTwoPreparationScriptPath $mockPhaseTwoPath -W365SetupScriptPath $mockW365Path -ViewerBootstrapScriptPath $mockViewerPath
     if ((Test-Path -LiteralPath $w365CallsPath) -or (Test-Path -LiteralPath $viewerCallsPath)) {
         throw 'Nested postup execution was not fully suppressed.'
     }
@@ -531,6 +583,7 @@ finally {
         'TEST_SOURCE_ROOT',
         'TEST_REPOSITORY_ROOT',
         'TEST_W365_CALLS_PATH',
+        'TEST_PHASE_TWO_CALLS_PATH',
         'TEST_VIEWER_CALLS_PATH',
         'TEST_AGENT_DEPLOY_CALLS_PATH',
         'TEST_VIEWER_SECRETS_CALLS_PATH',

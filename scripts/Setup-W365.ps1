@@ -172,6 +172,15 @@ $PoolIdOrUrl = Resolve-ConfiguredString -ParameterName 'PoolIdOrUrl' -CurrentVal
 $PoolDisplayName = Resolve-ConfiguredString -ParameterName 'PoolDisplayName' -CurrentValue $PoolDisplayName -ConfigKey 'poolDisplayName'
 $PoolDescription = Resolve-ConfiguredString -ParameterName 'PoolDescription' -CurrentValue $PoolDescription -ConfigKey 'poolDescription'
 $PoolBillingPlanId = Resolve-ConfiguredGuid -ParameterName 'PoolBillingPlanId' -CurrentValue $PoolBillingPlanId -ConfigKey 'poolBillingPlanId'
+if ($PoolBillingPlanId -eq [guid]::Empty -and
+    ![string]::IsNullOrWhiteSpace($env:W365_POOL_BILLING_PLAN_ID)) {
+    $environmentBillingPlanId = [guid]::Empty
+    if (![guid]::TryParse($env:W365_POOL_BILLING_PLAN_ID, [ref]$environmentBillingPlanId) -or
+        $environmentBillingPlanId -eq [guid]::Empty) {
+        throw 'W365_POOL_BILLING_PLAN_ID must be a non-empty GUID.'
+    }
+    $PoolBillingPlanId = $environmentBillingPlanId
+}
 $PoolBillingType = Resolve-ConfiguredString -ParameterName 'PoolBillingType' -CurrentValue $PoolBillingType -ConfigKey 'poolBillingType'
 $PoolGeographicLocationType = Resolve-ConfiguredString -ParameterName 'PoolGeographicLocationType' -CurrentValue $PoolGeographicLocationType -ConfigKey 'poolGeographicLocationType'
 $PoolRegionGroup = Resolve-ConfiguredString -ParameterName 'PoolRegionGroup' -CurrentValue $PoolRegionGroup -ConfigKey 'poolRegionGroup'

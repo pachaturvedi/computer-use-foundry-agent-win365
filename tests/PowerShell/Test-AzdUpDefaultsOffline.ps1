@@ -25,7 +25,9 @@ $tracked = @(
     'AZURE_FOUNDRY_RESOURCE_GROUP',
     'DEPLOY_STATE',
     'DEPLOY_VIEWER',
-    'W365_ENABLED'
+    'ENABLE_W365',
+    'W365_ENABLED',
+    'W365_POOL_BILLING_PLAN_ID'
 )
 $saved = @{}
 $tempRoot = Join-Path ([IO.Path]::GetTempPath()) "azd-up-defaults-$([guid]::NewGuid())"
@@ -38,6 +40,7 @@ try {
 
     $env:AZURE_ENV_NAME = 'sample-dev'
     $env:AZURE_SUBSCRIPTION_ID = '11111111-2222-3333-4444-555555555555'
+    $env:W365_POOL_BILLING_PLAN_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
 
     $output = & $scriptPath 6>&1 | Out-String
     if ($output -notmatch 'sample-dev-rg' -or
@@ -46,9 +49,36 @@ try {
         $output -notmatch 'gpt-6-astra \(2026-09-03\)' -or
         $output -notmatch 'GlobalStandard' -or
         $output -notmatch '200K TPM' -or
-        $output -notmatch 'credential vault still created') {
+        $output -notmatch 'Enabled after Foundry identity discovery' -or
+        $output -notmatch 'Enabled after shared state is ready' -or
+        $output -notmatch 'Set up after bootstrap approval') {
         throw "Show-AzdUpContext.ps1 did not display the generated names and reviewed defaults: $output"
     }
+
+    $env:W365_POOL_BILLING_PLAN_ID = $null
+    $missingBillingPlanRejected = $false
+    try {
+        & $scriptPath 6>&1 | Out-Null
+    }
+    catch {
+        if ($_.Exception.Message -notmatch 'W365_POOL_BILLING_PLAN_ID') {
+            throw
+        }
+        $missingBillingPlanRejected = $true
+    }
+    if (!$missingBillingPlanRejected) {
+        throw 'Fresh managed azd up accepted missing W365 pool and billing-plan configuration.'
+    }
+    $env:W365_POOL_BILLING_PLAN_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+
+    $env:ENABLE_W365 = 'false'
+    $disabledOutput = & $scriptPath 6>&1 | Out-String
+    if ($disabledOutput -notmatch 'Windows 365\s+Disabled' -or
+        $disabledOutput -notmatch 'Viewer\s+Disabled' -or
+        $disabledOutput -notmatch 'credential vault still created') {
+        throw "Show-AzdUpContext.ps1 did not honor the explicit fresh-deployment opt-out: $disabledOutput"
+    }
+    $env:ENABLE_W365 = $null
 
     New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
     $defaultsPath = Join-Path $tempRoot 'deployment.defaults.json'

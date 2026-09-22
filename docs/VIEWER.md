@@ -9,16 +9,40 @@ startup behavior.
 
 ## Prerequisites
 
-Use this guide only when you need authenticated live view or human handoff. The
-viewer is optional for direct W365 MCP execution.
+The viewer is optional for direct W365 MCP execution, but a fresh managed
+`azd up` deploys it by default so the demo can expose authenticated live view
+and human handoff. Set `DEPLOY_VIEWER=false` only for an intentional
+agent-only deployment.
 
-- Phase-1 hosted-agent deployment completed and, for the hosted path, W365 phase 2 is either planned or already enabled.
-- Viewer bootstrap outputs recorded from [deployment](DEPLOYMENT.md#optional-phase-1-viewer-bootstrap), especially `viewerIdentityClientId`, `viewerIdentityPrincipalId`, and `viewerHostname`.
+- For a direct fresh deployment, the `postup` hook creates the viewer after the
+  phase-1 agent principal and shared state are ready.
+- For the staged path, record the viewer bootstrap outputs from
+  [deployment](DEPLOYMENT.md#optional-phase-1-viewer-bootstrap), especially
+  `viewerIdentityClientId`, `viewerIdentityPrincipalId`, and `viewerHostname`.
 - A valid blueprint client secret for the default E2E path. Viewer federation
   is required only when explicitly selecting `managed_identity_federation`.
 - Approved W365 screen-share values available from onboarding: `SCREENSHARE_APP_URL`, `SCREENSHARE_SDK_URL`, and `SCREENSHARE_FRAME_ORIGINS`.
 - A shared W365 Key Vault, provisioned independently of the viewer, and a
   single-tenant Entra web application for the viewer OIDC sign-in flow.
+
+## Fresh managed deployment
+
+Set the W365 onboarding values after `azd env new` and before `azd up`:
+
+```powershell
+azd env set SCREENSHARE_APP_URL "<approved-app-url>" --environment "<env>"
+azd env set SCREENSHARE_SDK_URL "<approved-sdk-url>" --environment "<env>"
+azd env set SCREENSHARE_FRAME_ORIGINS "<approved-origin-list>" --environment "<env>"
+```
+
+The one-command deployment provisions the ACA/ACR/UAMI bootstrap after shared
+state, builds and health-checks the viewer image, completes W365 setup,
+configures OIDC and Key Vault secrets, enables live mode, and republishes the
+hosted agent so it advertises viewer links.
+
+If the onboarding values are absent, the ACA viewer still deploys and reports
+healthy bootstrap status, but live-view and take-control routes remain disabled.
+The final summary lists the missing values; set them and rerun `azd up`.
 
 ## Bootstrap and local mode
 

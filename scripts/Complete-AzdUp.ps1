@@ -2,6 +2,8 @@
 [CmdletBinding()]
 param(
     [string]$RepositoryRoot = (Split-Path $PSScriptRoot),
+    [string]$ConfigPath = (Join-Path (Split-Path $PSScriptRoot) 'config\deployment.defaults.json'),
+    [string]$PhaseTwoPreparationScriptPath = (Join-Path $PSScriptRoot 'Initialize-AzdUpPhaseTwo.ps1'),
     [string]$W365SetupScriptPath = (Join-Path $PSScriptRoot 'Invoke-W365SetupFlow.ps1'),
     [string]$ViewerBootstrapScriptPath = (Join-Path $PSScriptRoot 'Deploy-ViewerBootstrap.ps1'),
     [string]$ViewerSecretsScriptPath = (Join-Path $PSScriptRoot 'Set-ViewerSecrets.ps1'),
@@ -42,6 +44,28 @@ function Import-AzdEnvironmentValues {
     }
 
     return $values
+}
+
+function Resolve-PostUpFlag {
+    param(
+        [Parameter(Mandatory)][System.Collections.IDictionary]$EnvironmentValues,
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][bool]$DefaultValue,
+        [switch]$AllowProcessValue
+    )
+
+    if ($EnvironmentValues.Contains($Name) -and
+        ![string]::IsNullOrWhiteSpace([string]$EnvironmentValues[$Name])) {
+        return Test-EnabledValue -Value ([string]$EnvironmentValues[$Name])
+    }
+    if ($AllowProcessValue) {
+        $processValue = [Environment]::GetEnvironmentVariable($Name, 'Process')
+        if (![string]::IsNullOrWhiteSpace($processValue)) {
+            return Test-EnabledValue -Value $processValue
+        }
+    }
+
+    return $DefaultValue
 }
 
 function Confirm-W365PostUpChanges {
@@ -89,23 +113,23 @@ function Show-PostUpPlan {
 
     $steps = [System.Collections.Generic.List[string]]::new()
     $steps.Add($(if ($ViewerEnabled) {
-        '1. Build (only if changed) and push the viewer image, then wait for the ACA viewer health check.'
+        '1. After the Foundry principal is known, provision shared Blob state and the ACA viewer bootstrap.'
     } else {
-        '1. Skip viewer image build and health check because DEPLOY_VIEWER is not true.'
+        '1. After the Foundry principal is known, provision shared Blob state without the optional viewer.'
     }))
     $steps.Add($(if ($EnableW365 -and !$W365Enabled) {
-        '2. Run interactive Windows 365 setup: Entra agent user, Cloud PC pool, and consent.'
+        '2. Build and verify the viewer image, then run interactive Windows 365 setup.'
     } elseif ($W365Enabled) {
-        '2. Verify the existing Windows 365 environment is already complete.'
+        '2. Verify the existing Windows 365 environment and viewer deployment.'
     } else {
         '2. Skip Windows 365 setup because ENABLE_W365 is not true.'
     }))
     $steps.Add($(if ($ViewerEnabled -and $W365Enabled -and !$ViewerLiveEnabled) {
-        '3. Activate the authenticated live viewer if OIDC/screen-share prerequisites are already set; otherwise warn what is missing.'
+        '3. Activate the authenticated live viewer when OIDC and screen-share prerequisites are present.'
     } else {
         '3. Skip live-viewer activation.'
     }))
-    $steps.Add('4. Redeploy the hosted agent only if a new viewer URL became available during this run.')
+    $steps.Add('4. Redeploy the same hosted-agent name after W365 setup and again if viewer activation changes its runtime configuration.')
     $steps.Add('5. Print the final deployment summary table.')
 
     Write-SampleVerbose -Component 'postup' -Message 'postup plan (runs after azd provision, before this hook exits):'
@@ -119,24 +143,55 @@ if (Test-EnabledValue -Value $env:W365_POSTUP_IN_PROGRESS) {
     return
 }
 
-Show-PostUpPlan `
-    -ViewerEnabled (Test-EnabledValue -Value $env:DEPLOY_VIEWER) `
-    -W365Enabled (Test-EnabledValue -Value $env:W365_ENABLED) `
-    -EnableW365 (Test-EnabledValue -Value $env:ENABLE_W365) `
-    -ViewerLiveEnabled (Test-EnabledValue -Value $env:VIEWER_LIVE_ENABLED)
+$environmentName = [string]$env:AZURE_ENV_NAME
+if ([string]::IsNullOrWhiteSpace($environmentName)) {
+    throw 'The azd postup hook requires AZURE_ENV_NAME.'
+}
+$currentValues = Import-AzdEnvironmentValues -Root $RepositoryRoot -EnvironmentName $environmentName
+$defaults = Read-DeploymentConfigFile -Path $ConfigPath
+if (!$defaults.ContainsKey('freshDeployment') -or !($defaults.freshDeployment -is [hashtable])) {
+    throw "Configuration file '$ConfigPath' must define freshDeployment defaults."
+}
+$projectOwnership = [string]$currentValues['FOUNDRY_PROJECT_OWNERSHIP']
+if ([string]::IsNullOrWhiteSpace($projectOwnership)) {
+    $projectOwnership = 'managed'
+}
+$freshManagedEnvironment = $projectOwnership -eq 'managed'
+$enableW365 = Resolve-PostUpFlag `
+    -EnvironmentValues $currentValues `
+    -Name 'ENABLE_W365' `
+    -DefaultValue ($freshManagedEnvironment -and [bool]$defaults.freshDeployment.enableW365) `
+    -AllowProcessValue
+$deployViewer = Resolve-PostUpFlag `
+    -EnvironmentValues $currentValues `
+    -Name 'DEPLOY_VIEWER' `
+    -DefaultValue ($enableW365 -and [bool]$defaults.freshDeployment.deployViewer)
+$w365AlreadyEnabled = Test-EnabledValue -Value ([string]$currentValues['W365_ENABLED'])
 
-$viewerUrlBefore = [string]$env:VIEWER_PUBLIC_URL
+Show-PostUpPlan `
+    -ViewerEnabled $deployViewer `
+    -W365Enabled $w365AlreadyEnabled `
+    -EnableW365 $enableW365 `
+    -ViewerLiveEnabled (Test-EnabledValue -Value ([string]$currentValues['VIEWER_LIVE_ENABLED']))
+
+if ($enableW365 -and !$w365AlreadyEnabled) {
+    Confirm-W365PostUpChanges
+    Write-SampleVerbose -Component 'postup' -Message 'Preparing shared state and viewer infrastructure after phase-one identity discovery.'
+    & $PhaseTwoPreparationScriptPath `
+        -Environment $environmentName `
+        -DeployViewer:$deployViewer
+    if (!$?) {
+        throw 'Phase-two Azure prerequisite provisioning failed.'
+    }
+    $currentValues = Import-AzdEnvironmentValues -Root $RepositoryRoot -EnvironmentName $environmentName
+}
+
+$viewerUrlBefore = [string]$currentValues['VIEWER_PUBLIC_URL']
 Write-SampleVerbose -Component 'postup' -Message 'Running viewer bootstrap before enabled W365 deployment.'
 Write-SampleDebug -Component 'postup' -Message "Viewer URL existed before bootstrap: $(![string]::IsNullOrWhiteSpace($viewerUrlBefore))."
 & $ViewerBootstrapScriptPath
 
-$environmentName = [string]$env:AZURE_ENV_NAME
-$currentValues = if (![string]::IsNullOrWhiteSpace($environmentName)) {
-    Import-AzdEnvironmentValues -Root $RepositoryRoot -EnvironmentName $environmentName
-}
-else {
-    @{}
-}
+$currentValues = Import-AzdEnvironmentValues -Root $RepositoryRoot -EnvironmentName $environmentName
 $deployViewer = Test-EnabledValue -Value ([string]$currentValues['DEPLOY_VIEWER'])
 $credentialMode = [string]$currentValues['W365_BLUEPRINT_CREDENTIAL_MODE']
 $w365VaultName = [string]$currentValues['W365_KEY_VAULT_NAME']
@@ -144,9 +199,7 @@ if ([string]::IsNullOrWhiteSpace($w365VaultName)) {
     $w365VaultName = [string]$currentValues['VIEWER_KEY_VAULT_NAME']
 }
 $requiresBlueprintSecret = $credentialMode -eq 'client_secret' -and (
-    (Test-EnabledValue -Value $env:ENABLE_W365) -or
-    (Test-EnabledValue -Value ([string]$currentValues['W365_ENABLED']))
-)
+    $enableW365 -or (Test-EnabledValue -Value ([string]$currentValues['W365_ENABLED'])))
 if ($requiresBlueprintSecret) {
     if ([string]::IsNullOrWhiteSpace($w365VaultName)) {
         throw 'State provisioning did not produce W365_KEY_VAULT_NAME before blueprint secret configuration.'
@@ -159,7 +212,7 @@ if ($requiresBlueprintSecret) {
     }
 }
 
-$hostedAgentPossible = (Test-EnabledValue -Value $env:ENABLE_W365) -or
+$hostedAgentPossible = $enableW365 -or
     (Test-EnabledValue -Value ([string]$currentValues['W365_ENABLED']))
 if ($hostedAgentPossible -and ![string]::IsNullOrWhiteSpace($environmentName)) {
     Write-SampleVerbose -Component 'postup' -Message 'Resolving hosted-agent operator defaults (OPERATOR_TENANT_ID, OPERATOR_OBJECT_ID, HOSTED_ALLOWED_USER_ID) before any hosted-agent deployment.'
@@ -167,13 +220,8 @@ if ($hostedAgentPossible -and ![string]::IsNullOrWhiteSpace($environmentName)) {
     $currentValues = Resolve-W365HostedAgentOperatorDefaults -EnvironmentFilePath $environmentFilePath -EnvironmentValues $currentValues
 }
 
-$enableW365 = Test-EnabledValue -Value $env:ENABLE_W365
 $w365SetupRan = $false
 if ($enableW365) {
-    if ([string]::IsNullOrWhiteSpace($env:AZURE_ENV_NAME)) {
-        throw 'ENABLE_W365=true requires AZURE_ENV_NAME.'
-    }
-    $environmentName = $env:AZURE_ENV_NAME
     $currentValues = Import-AzdEnvironmentValues -Root $RepositoryRoot -EnvironmentName $environmentName
     $w365AlreadyEnabled = Test-EnabledValue -Value ([string]$currentValues['W365_ENABLED'])
     if ($w365AlreadyEnabled) {
@@ -188,7 +236,6 @@ if ($enableW365) {
         Write-Host "W365 environment '$environmentName' is already complete; setup redeployment skipped."
     }
     else {
-        Confirm-W365PostUpChanges
         $previousPostUpGuard = $env:W365_POSTUP_IN_PROGRESS
         $env:W365_POSTUP_IN_PROGRESS = 'true'
         try {
@@ -282,10 +329,11 @@ if (![string]::IsNullOrWhiteSpace($env:AZURE_ENV_NAME)) {
         }
     }
 
+    $viewerConfigurationChanged = $viewerLiveActivated -or (
+        !$w365SetupRan -and $viewerUrlAfter -ne $viewerUrlBefore)
     if ($w365EnabledAfter -and
-        !$w365SetupRan -and
         ![string]::IsNullOrWhiteSpace($viewerUrlAfter) -and
-        ($viewerLiveActivated -or $viewerUrlAfter -ne $viewerUrlBefore)) {
+        $viewerConfigurationChanged) {
         $agentRequired = @('OPERATOR_TENANT_ID', 'OPERATOR_OBJECT_ID', 'HOSTED_ALLOWED_USER_ID')
         $agentMissing = @($agentRequired | Where-Object {
             [string]::IsNullOrWhiteSpace([string]$updatedValues[$_])
@@ -294,7 +342,10 @@ if (![string]::IsNullOrWhiteSpace($env:AZURE_ENV_NAME)) {
             Write-Warning "Skipping hosted-agent redeploy: the running container would crash on startup without $($agentMissing -join ', '). Set these values (see 'Bind the hosted operator' in docs/DEPLOYMENT.md) and rerun azd up."
         }
         else {
-            $redeployReason = if ($viewerLiveActivated) {
+            $redeployReason = if ($viewerLiveActivated -and $w365SetupRan) {
+                "Viewer '$viewerUrlAfter' was activated after W365 setup"
+            }
+            elseif ($viewerLiveActivated) {
                 "Viewer URL '$viewerUrlAfter' was activated"
             }
             else {
