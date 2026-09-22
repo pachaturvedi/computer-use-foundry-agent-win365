@@ -15,9 +15,19 @@ function Write-W365ProvisioningStep {
 
 function Get-W365AzdCommand {
     $azdPaths = [System.Collections.Generic.List[string]]::new()
-    foreach ($command in @(Get-Command azd -All -ErrorAction SilentlyContinue)) {
-        if ($null -ne $command -and !$azdPaths.Contains($command.Source)) {
-            $azdPaths.Add($command.Source)
+    foreach ($command in @(Get-Command azd -All -CommandType Application -ErrorAction SilentlyContinue)) {
+        if ($null -eq $command) {
+            continue
+        }
+
+        $source = [string]$command.Source
+        if ([string]::IsNullOrWhiteSpace($source) -or
+            !(Test-Path -LiteralPath $source -PathType Leaf)) {
+            continue
+        }
+
+        if (!$azdPaths.Contains($source)) {
+            $azdPaths.Add($source)
         }
     }
     foreach ($path in @(
@@ -33,9 +43,19 @@ function Get-W365AzdCommand {
 
     $candidates = $azdPaths |
         ForEach-Object {
-            $versionOutput = & $_ version 2>$null
-            if ($LASTEXITCODE -eq 0 -and $versionOutput -match 'azd version\s+(\d+\.\d+\.\d+)') {
-                [pscustomobject]@{ Path = $_; Version = [version]$Matches[1] }
+            $candidatePath = [string]$_
+            try {
+                $versionOutput = & $candidatePath version 2>$null
+            }
+            catch {
+                return
+            }
+
+            $parsedVersion = $null
+            if ($LASTEXITCODE -eq 0 -and
+                ($versionOutput | Out-String) -match 'azd version\s+(\d+\.\d+\.\d+)' -and
+                [version]::TryParse($Matches[1], [ref]$parsedVersion)) {
+                [pscustomobject]@{ Path = $candidatePath; Version = $parsedVersion }
             }
         } |
         Sort-Object Version -Descending
