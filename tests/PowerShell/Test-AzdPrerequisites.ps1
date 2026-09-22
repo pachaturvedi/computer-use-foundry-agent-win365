@@ -45,9 +45,18 @@ function Test-VersionAtLeast {
 
 function Get-AzdPaths {
     $azdPaths = [System.Collections.Generic.List[string]]::new()
-    foreach ($command in @(Get-Command azd -All -ErrorAction SilentlyContinue)) {
-        if ($null -ne $command -and !$azdPaths.Contains($command.Source)) {
-            $azdPaths.Add($command.Source)
+    foreach ($command in @(Get-Command azd -All -CommandType Application -ErrorAction SilentlyContinue)) {
+        if ($null -eq $command) {
+            continue
+        }
+
+        $source = $command.Source
+        if ([string]::IsNullOrWhiteSpace($source) -or !(Test-Path -LiteralPath $source -PathType Leaf)) {
+            continue
+        }
+
+        if (!$azdPaths.Contains($source)) {
+            $azdPaths.Add($source)
         }
     }
     foreach ($path in @(
@@ -75,10 +84,18 @@ $requiredAzd = $Matches[1]
 
 $azdCandidates = $azdPaths |
     ForEach-Object {
-        $output = & $_ version 2>$null
-        if ($LASTEXITCODE -eq 0 -and $output -match 'azd version\s+([^\s]+)') {
+        $candidatePath = $_
+        $output = $null
+        try {
+            $output = & $candidatePath version 2>$null
+        }
+        catch {
+            return
+        }
+
+        if ($LASTEXITCODE -eq 0 -and ($output | Out-String) -match 'azd version\s+([^\s]+)') {
             [pscustomobject]@{
-                Path = $_
+                Path = $candidatePath
                 Version = $Matches[1]
                 ParsedVersion = (Convert-Version $Matches[1]).Core
             }

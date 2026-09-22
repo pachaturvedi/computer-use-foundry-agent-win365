@@ -28,9 +28,18 @@ $logPath = Join-Path $logDirectory (
 New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
 
 $azdPaths = [System.Collections.Generic.List[string]]::new()
-foreach ($command in @(Get-Command azd -All -ErrorAction SilentlyContinue)) {
-    if ($null -ne $command -and !$azdPaths.Contains($command.Source)) {
-        $azdPaths.Add($command.Source)
+foreach ($command in @(Get-Command azd -All -CommandType Application -ErrorAction SilentlyContinue)) {
+    if ($null -eq $command) {
+        continue
+    }
+
+    $source = $command.Source
+    if ([string]::IsNullOrWhiteSpace($source) -or !(Test-Path -LiteralPath $source -PathType Leaf)) {
+        continue
+    }
+
+    if (!$azdPaths.Contains($source)) {
+        $azdPaths.Add($source)
     }
 }
 foreach ($path in @(
@@ -44,9 +53,17 @@ foreach ($path in @(
 
 $azdCandidates = $azdPaths |
     ForEach-Object {
-        $versionOutput = & $_ version 2>$null
-        if ($LASTEXITCODE -eq 0 -and $versionOutput -match 'azd version\s+(\d+\.\d+\.\d+)') {
-            [pscustomobject]@{ Path = $_; Version = [version]$Matches[1] }
+        $candidatePath = $_
+        $versionOutput = $null
+        try {
+            $versionOutput = & $candidatePath version 2>$null
+        }
+        catch {
+            return
+        }
+
+        if ($LASTEXITCODE -eq 0 -and ($versionOutput | Out-String) -match 'azd version\s+(\d+\.\d+\.\d+)') {
+            [pscustomobject]@{ Path = $candidatePath; Version = [version]$Matches[1] }
         }
     } |
     Sort-Object Version -Descending
