@@ -3,17 +3,34 @@
 A Windows-first C#/.NET 10 sample where a Microsoft Foundry hosted agent uses
 Windows 365 tools through Agent 365 MCP to complete a bounded Cloud PC task.
 
+The included scenario processes a sample invoice entirely through the Cloud PC
+desktop. The agent opens the invoice image in Microsoft Edge, reads the visible
+fields, writes a structured summary in Notepad, saves the file to Documents,
+verifies the saved result, and closes the Windows 365 session.
+
 > **Preview sample:** Not a production multi-user service. Live use requires
 > Foundry/W365 onboarding, billing, pool capacity, tenant administration, and
 > [live acceptance](docs/DEPLOYMENT.md#live-acceptance). Review [security](SECURITY.md).
 
 ## What this sample does
 
-The sample opens an invoice in Edge, summarizes it in Notepad, verifies the
-result, and releases the desktop. It supports one operator and one fresh task
-at a time. Transport-level conversation metadata from `azd` is accepted, while
-`previous_response_id` and background execution are rejected. The optional
-viewer adds authenticated live view and human control.
+The invoice-processing run demonstrates the complete bounded desktop lifecycle:
+
+1. Acquire one Windows 365 Cloud PC for one fresh task.
+2. Open the fixed sample invoice in Microsoft Edge:
+   `https://invoicemgmt.blob.core.windows.net/invoices/Invoice_6.png`.
+3. Read the invoice visually from the desktop and extract the invoice number,
+   vendor, addresses, dates, bill-to details, every line item, subtotal, tax,
+   and total.
+4. Open Notepad and save the structured result as
+   `Documents\Invoice-Processing-Summary.txt`.
+5. Verify the filename and saved content in Notepad.
+6. End the Windows 365 session even when the task fails.
+
+The sample supports one operator and one fresh task at a time. The ACA viewer
+is deployed by default for authenticated observation and controlled human
+handoff, although the basic invoice prompt is observation-only and does not
+pause for operator input.
 
 ## Scenario and code map
 
@@ -37,7 +54,7 @@ cleanup flows.
 | Build and test the repository | [Offline validation](#offline-validation) | None |
 | Create a dedicated Foundry project and bind W365 | [Fresh deployment](#bring-up-a-fresh-environment) | Billable and tenant-changing |
 | Reuse an existing Foundry project | [Existing project deployment](docs/DEPLOYMENT.md#phase-1-deploy-bootstrap) | Validates and updates selected resources |
-| Add live view and human handoff | [Viewer guide](docs/VIEWER.md) | Optional ACA and Entra resources |
+| Configure live view and human handoff | [Viewer guide](docs/VIEWER.md) | ACA viewer is deployed by default; live activation is tenant-specific |
 
 ## Before you start
 
@@ -111,29 +128,23 @@ choices are saved only in the selected azd environment.
 
 After approval and delegated Graph sign-in, the command discovers the exact
 Foundry principal, provisions shared state and the selected viewer topology,
-configures W365, securely collects the existing blueprint credential, and
-redeploys the same agent name. The reviewed model defaults are `gpt-6-astra`,
-version `2026-09-03`, `GlobalStandard`, and capacity `200` (200K TPM).
+configures W365, and redeploys the same agent name. The default demo collects
+the existing blueprint credential through a secure prompt and stores it in
+Azure Key Vault; it is not written to source, JSON, `.azure`, logs, or command
+history.
 
-The ACA viewer is deployed by default. To activate live view and take control
-in the same run, set the three non-secret screen-share values supplied during
-W365 onboarding before `azd up`:
+The reviewed model defaults are `gpt-6-astra`, version `2026-09-03`,
+`GlobalStandard`, and capacity `200` (200K TPM). `azd up` persists the approved
+screen-share values supplied during W365 onboarding; the primary flow does not
+require separate `azd env set SCREENSHARE_*` commands. If those tenant-specific
+values are unavailable, the deployment leaves the viewer in healthy bootstrap
+mode and identifies the missing onboarding inputs.
 
-```powershell
-azd env set SCREENSHARE_APP_URL "<approved-app-url>" --environment demosept22-dev
-azd env set SCREENSHARE_SDK_URL "<approved-sdk-url>" --environment demosept22-dev
-azd env set SCREENSHARE_FRAME_ORIGINS "<approved-origin-list>" --environment demosept22-dev
-```
-
-Without those values, W365 and the ACA viewer still deploy, but the viewer
-remains in healthy bootstrap mode and the final summary identifies the missing
-activation settings.
-
-See the [deployment guidance](docs/DEPLOYMENT.md#phase-1-deploy-bootstrap)
-for prerequisites, defaults, quota, cost, existing-project rules, and opt-out
-settings, and
-[operations and rollback](docs/DEPLOYMENT.md#operations-and-rollback) for
-partial deployments and teardown.
+See the [deployment guide](docs/DEPLOYMENT.md) for quota, cost, shared-project
+deployment, staged previews, opt-out settings, rollback, and teardown. See the
+[viewer guide](docs/VIEWER.md) for tenant-specific screen-share onboarding and
+human-handoff behavior, and [authentication](docs/AUTHENTICATION.md) for the
+Key Vault credential boundary and other explicitly selected modes.
 
 For a Foundry-only bootstrap:
 
@@ -142,48 +153,10 @@ azd env set ENABLE_W365 false --environment demosept22-dev
 azd up --environment demosept22-dev
 ```
 
-Use the staged workflow below when you need separate previews and approvals,
-or when reusing a shared Foundry project:
-
-```powershell
-pwsh -NoProfile -File .\scripts\Initialize-Greenfield.ps1 `
-    -SubscriptionId "<subscription-id>" `
-    -TenantId "<tenant-id>" `
-    -Prefix "<resource-prefix>" `
-    -Environment "dev"
-```
-
-Review the preview, then deploy only the disabled Foundry bootstrap:
-
-```powershell
-pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
-    -Environment "<resource-prefix>-dev" `
-    -Mode Validate
-pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
-    -Environment "<resource-prefix>-dev" `
-    -Mode ProvisionFoundry `
-    -ConfirmResourceChanges
-pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
-    -Environment "<resource-prefix>-dev" `
-    -Mode DeployAgent `
-    -ConfirmResourceChanges
-azd ai agent doctor --environment "<resource-prefix>-dev"
-```
-
-The staged bootstrap is not desktop-capable. Continue with
-[phase 2](docs/DEPLOYMENT.md#phase-2-bind-and-enable) to discover its exact
-principal, provision shared Blob state, configure the approved W365 pool,
-perform W365 setup, and redeploy the same agent name.
-
-The validated `client_secret` path requires an administrator-approved,
-short-lived blueprint credential stored through the secure phase-2 prompt.
-Never place it in source, JSON, `.azure`, logs, or command history. See
-[authentication](docs/AUTHENTICATION.md) for supported modes and cleanup.
-
 Do not run `azd init` or `azd ai agent init` inside this clone. Direct `azd up`
-is the complete path only for a new, dedicated managed environment. Use the
-[deployment guide](docs/DEPLOYMENT.md) for shared-project safeguards, staged
-changes, rollback, teardown, and recovery.
+is the complete path for a new, dedicated managed environment. Use the
+[deployment guide](docs/DEPLOYMENT.md) when reusing a shared Foundry project or
+when separate previews and approvals are required.
 
 ## Verify live behavior
 
@@ -196,45 +169,41 @@ Before real tasks, complete the
 - exclusive ownership, bounded actions, and unknown-outcome recovery;
 - `EndSession`, task/session cleanup, and recovery behavior.
 
-After acceptance, run the included scenario helper:
+After acceptance, invoke the ready-to-run invoice scenario directly. The
+checked-in prompt already contains the sample Blob URL and output filename, so
+no prompt replacement or preprocessing is required:
 
 ```powershell
-pwsh -NoProfile -File .\scripts\Invoke-InvoiceProcessingDemo.ps1 `
-    -Environment "<resource-prefix>-dev"
-```
-
-The helper creates a new agent session, generates a unique
-`Invoice-Processing-Summary-<run-guid>.txt` filename, opens the authenticated
-live viewer in the default browser, and waits for the final success or failure
-result. The viewer is observation-only in this basic scenario; the prompt
-forbids human handoff and fails instead of waiting for operator control.
-
-To invoke the same scenario directly without the helper:
-
-```powershell
-$environment = "<resource-prefix>-dev"
-$runSuffix = [guid]::NewGuid().ToString("N")
-$outputFile = "Invoice-Processing-Summary-$runSuffix.txt"
-$prompt = Get-Content .\samples\prompts\invoice-processing.txt -Raw
-$prompt = $prompt.Replace(
-    "{{INVOICE_URI}}",
-    "https://invoicemgmt.blob.core.windows.net/invoices/Invoice_6.png")
-$prompt = $prompt.Replace("{{OUTPUT_FILE_NAME}}", $outputFile)
 $version = azd env get-value AGENT_WIN365_DESKTOP_AGENT_VERSION `
-    --environment $environment
+    --environment demosept22-dev
 azd ai agent invoke win365-desktop-agent `
-    --environment $environment `
+    --environment demosept22-dev `
     --version $version `
     --new-session `
     --new-conversation `
     --timeout 1200 `
-    $prompt
+    (Get-Content .\samples\prompts\invoice-processing-direct.txt -Raw)
 ```
 
-The direct command waits for completion but does not automatically open or
-redact the viewer link. Use the helper when you want that behavior. See the
-[live invoice demo workflow](docs/LIVE-INVOICE-DEMO.md) for detailed execution,
-evidence, retry, and recovery steps.
+Expected completion:
+
+```text
+DEMO_RESULT: SUCCESS; FILE: Invoice-Processing-Summary.txt
+```
+
+The command waits for completion but does not automatically open or redact the
+viewer link. To generate a unique output filename and open the authenticated
+viewer automatically, use the helper:
+
+```powershell
+pwsh -NoProfile -File .\scripts\Invoke-InvoiceProcessingDemo.ps1 `
+    -Environment "demosept22-dev"
+```
+
+The viewer remains observation-only for this basic scenario. The prompt forbids
+human handoff and reports failure rather than waiting for operator control. See
+the [live invoice demo workflow](docs/LIVE-INVOICE-DEMO.md) for evidence, retry,
+and recovery steps.
 
 Pass `-UserIdentity "<caller-partition>"` only when required. This is the opaque
 Foundry caller partition, not `OPERATOR_OBJECT_ID` or an Entra object ID; see
