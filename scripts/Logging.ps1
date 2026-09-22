@@ -1,5 +1,20 @@
 #Requires -Version 7.4
+<#
+.SYNOPSIS
+Provides redacted logging helpers for repository PowerShell scripts.
 
+.DESCRIPTION
+Normalizes summary, verbose, and debug logging; removes sensitive parameter values before diagnostic output; and initializes consistent script-level telemetry context.
+
+
+Key inputs: Log level environment settings and parameter dictionaries supplied to exported functions.
+
+.OUTPUTS
+Formatted host, verbose, and debug messages containing sanitized metadata only.
+
+.NOTES
+Dot-source library. It must never emit credentials, tokens, raw session identifiers, or private links.
+#>
 Set-StrictMode -Version Latest
 
 function Get-SampleLogLevel {

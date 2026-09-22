@@ -1,4 +1,20 @@
 #Requires -Version 7.4
+<#
+.SYNOPSIS
+Discovers tenant-supported Windows 365 setup choices.
+
+.DESCRIPTION
+Uses delegated Graph access to list existing agent pools, billing plans, regions, and gallery images; optional Configure mode writes the reviewed selection to ignored local configuration.
+
+
+Key inputs: TenantId, device-code options, output format, Configure, DefaultBillingPlanId, and OutputPath.
+
+.OUTPUTS
+Discovery data as objects/JSON and, in Configure mode, an updated local deployment profile.
+
+.NOTES
+Read-only against Graph unless Configure writes a local file. It does not create or modify W365 resources.
+#>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][guid]$TenantId,

@@ -31,7 +31,7 @@ suffixed with `Async`.
 
 Keep the hosted agent as a small modular monolith under `src\Win365Agent`.
 The independently deployed ACA viewer has its own executable under
-`src\Win365Viewer` and references the agent's shared identity/state contracts;
+`src\Win365Viewer` and references `Win365Shared` identity/state contracts;
 do not add viewer startup routing back to the hosted-agent `Program.cs`.
 Prefer one primary public type per file, keep each `Program.cs` limited to
 composition, and mirror behavior under the corresponding
@@ -87,7 +87,6 @@ Use this documentation impact matrix when changing code:
 | W365 pool behavior, Intune steps, Entra agent users, Graph permissions, billing confirmations, or tenant cleanup | `docs/W365-SETUP.md` |
 | Token exchange, caller binding, permission model, blueprint trust, or identity sourcing | `docs/AUTHENTICATION.md` |
 | Viewer deployment, OIDC secrets, federation, screen-sharing, or handoff behavior | `docs/VIEWER.md` |
-| Checked-in live validation outcomes or operator-tested status | `docs/VALIDATION-REPORT.md` |
 
 For mixed changes, update every affected guide, not only the most obvious one.
 Examples:
@@ -152,56 +151,8 @@ Never contribute tenant IDs, private endpoints, credentials, session state or
 screenshots from real users. The existing [license](LICENSE) governs this repo;
 follow the destination organization's contribution/CLA process when publishing.
 
-## Copilot customization
-
-Repository AI guidance is intentionally modular:
-
-- `.github\copilot-instructions.md` contains short, repository-wide invariants.
-- `.github\instructions\*.instructions.md` adds path-specific .NET, identity,
-  lifecycle, PowerShell, Azure, and documentation rules.
-- `.github\agents\*.agent.md` defines specialist implementation and validation
-  agents.
-- `.github\prompts\*.prompt.md` provides reusable feature, authentication, and
-  validation entry points.
-
-Instruction precedence and routing:
-
-1. The user's explicit request and safety constraints define the task.
-2. Repository-wide instructions define invariants that cannot be weakened.
-3. Matching path-specific instructions refine those invariants.
-4. The selected custom agent defines role, workflow, deliverables, and tools.
-5. A prompt file frames a repeatable invocation.
-6. Documentation examples are operational guidance, not permission to bypass a
-   higher-level safety or ownership rule.
-
-Use `auth-mode-implementer` for credential modes, token providers, FICs, or
-identity configuration. Use `w365-implementer` for runtime lifecycle, MCP,
-state, hosting, or viewer behavior. Use `validation-reviewer` after
-implementation; it is read-only. Use the principal reviewer personas for
-independent architecture, engineering, QA, product, and field-readiness reviews.
-Use `principal-operations-documentation-engineer` to create Windows-first
-runbooks, diagnostic query catalogs, troubleshooting decision trees, evidence
-templates, rollback procedures, and administrator handoff documentation.
-Use `final-change-gate` before the final proposal for any non-trivial code,
-configuration, authentication, lifecycle, deployment, infrastructure, or
-operational documentation change. The gate invokes the relevant principal
-reviewers, consolidates findings, validates evidence, and returns `READY`,
-`READY_WITH_DECLARED_LIMITS`, or `NOT_READY`. This is the default automatic
-completion step; implementation agents must not wait for the user to request
-it. Only no-file-change responses and clearly trivial typo-only edits with no
-behavioral or operational impact are exempt.
-
-Put durable rules in the narrowest applicable instruction file. Put a repeatable
-task workflow in a prompt, and use a custom agent only when the task benefits
-from a distinct role or tool boundary. Avoid copying the same rule into every
-layer: custom agents inherit repository and matching path-specific instructions.
-
-When architecture or repository policy changes, update the appropriate
-instruction module in the same pull request. Validate YAML frontmatter, links,
-referenced commands, and path globs before merging.
-
-Before implementation, record the initial `git status --short`, identify
-pre-existing changes, and trace entry points, callers, registrations,
-configuration consumers, tests, scripts, and owning documentation. At
-completion, review only the intended changed paths, run `git diff --check`, and
-report any checks that could not run.
+Repository-specific Copilot instructions, agents, and reusable prompts live
+under `.github\`. Keep durable rules in the narrowest applicable instruction
+file, validate referenced paths and commands, and run the repository's required
+final change gate for non-trivial implementation or operational documentation
+changes.

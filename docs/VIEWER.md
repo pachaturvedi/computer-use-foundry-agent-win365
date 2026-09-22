@@ -21,7 +21,10 @@ agent-only deployment.
   `viewerIdentityClientId`, `viewerIdentityPrincipalId`, and `viewerHostname`.
 - A valid blueprint client secret for the default E2E path. Viewer federation
   is required only when explicitly selecting `managed_identity_federation`.
-- Approved W365 screen-share values available from onboarding: `SCREENSHARE_APP_URL`, `SCREENSHARE_SDK_URL`, and `SCREENSHARE_FRAME_ORIGINS`.
+- Approved W365 screen-share values available from onboarding:
+  `SCREENSHARE_APP_URL`, `SCREENSHARE_SDK_URL`, and
+  `SCREENSHARE_FRAME_ORIGINS`. These are required only for live viewer
+  activation, not agent-only execution or viewer bootstrap.
 - A shared W365 Key Vault, provisioned independently of the viewer, and a
   single-tenant Entra web application for the viewer OIDC sign-in flow.
 
@@ -48,18 +51,12 @@ inconsistent outputs stop before ACA provisioning. Fix the reported state
 configuration and rerun `azd up`; the onboarding retry re-enters phase two, and
 no viewer cleanup is required for a failure before viewer provisioning.
 
-Set the W365 onboarding values after `azd env new` and before `azd up`:
-
-```powershell
-azd env set SCREENSHARE_APP_URL "<approved-app-url>" --environment "<env>"
-azd env set SCREENSHARE_SDK_URL "<approved-sdk-url>" --environment "<env>"
-azd env set SCREENSHARE_FRAME_ORIGINS "<approved-origin-list>" --environment "<env>"
-```
-
 The one-command deployment provisions the ACA/ACR/UAMI bootstrap after shared
 state, builds and health-checks the viewer image, completes W365 setup,
-configures OIDC and Key Vault secrets, enables live mode, and republishes the
-hosted agent so it advertises viewer links.
+configures OIDC and Key Vault secrets, enables live mode when the approved
+screen-share values are available, and republishes the hosted agent so it
+advertises viewer links. Values already present in the selected azd environment
+or ignored `config\deployment.local.json` are carried through automatically.
 
 If the onboarding values are absent, the ACA viewer still deploys and reports
 healthy bootstrap status, but live-view and take-control routes remain disabled.
@@ -101,14 +98,13 @@ one place: `Key Vault Secrets User` for the viewer identity when enabled and
 
 ## Enable the hosted viewer
 
-The default E2E path sets `W365_BLUEPRINT_CREDENTIAL_MODE=client_secret`.
-Store the existing blueprint credential as `w365-blueprint-client-secret` in
-the shared W365 Key Vault. The viewer uses it only for the T1 blueprint exchange;
-the same T2/user-FIC T3 exchanges and resource-scoped tokens remain unchanged.
-Managed-identity federation remains an explicit alternative and requires the
-approved viewer FIC documented in
-[W365 setup](W365-SETUP.md#optional-viewer-federation). There is no automatic
-fallback between credential modes.
+The default E2E path sets `W365_BLUEPRINT_CREDENTIAL_MODE=client_secret` and
+stores the existing blueprint credential as `w365-blueprint-client-secret` in
+the shared W365 Key Vault. The viewer uses it only for the T1 blueprint
+exchange. Managed-identity federation is an explicit alternative and requires
+the approved viewer FIC documented in
+[W365 setup](W365-SETUP.md#optional-viewer-federation). Certificate mode is
+agent-only. There is no automatic fallback between credential modes.
 
 Create a **single-tenant web application** in Entra for the viewer. This is not
 the W365 agent blueprint. Set its web redirect URI to
@@ -246,9 +242,9 @@ Its prompt forbids pause, takeover, or human handoff because the basic scenario
 needs no authentication or sensitive action. If an unexpected page requires
 human action, the agent reports failure instead of waiting. Each run uses a
 locally generated run GUID in the Notepad filename; it does not expose or reuse
-the hosted session ID. Follow the complete
-[live invoice demo workflow](LIVE-INVOICE-DEMO.md) for endpoint verification,
-expected evidence, retry behavior, and cleanup checks.
+the hosted session ID. Use the direct invocation in [README](../README.md#verify-live-behavior). Treat
+an ambiguous result as unresolved and follow
+[fail-closed recovery](ARCHITECTURE.md#fail-closed-recovery) before retrying.
 
 Live-view links enter through the authenticated `/live/<id>` route and then
 redirect into the W365-hosted view-only app. Take-control links stay on the

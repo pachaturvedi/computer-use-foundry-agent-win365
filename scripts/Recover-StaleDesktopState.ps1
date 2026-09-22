@@ -1,4 +1,20 @@
 #Requires -Version 7.4
+<#
+.SYNOPSIS
+Inspects and optionally repairs stale desktop state.
+
+.DESCRIPTION
+Verifies that no hosted session is running, invokes the recovery command against the selected environment, and defaults to read-only inspection before any lease or Blob mutation.
+
+
+Key inputs: Environment is required. Apply enables mutation; AzdPath and DotNetPath support controlled command resolution.
+
+.OUTPUTS
+A redacted inspection or recovery result with the next safe operator action.
+
+.NOTES
+Read-only by default. Apply repeats all checks and fails closed on ownership, session, state, lease, or remote-outcome ambiguity.
+#>
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
 param(
     [string]$Environment,

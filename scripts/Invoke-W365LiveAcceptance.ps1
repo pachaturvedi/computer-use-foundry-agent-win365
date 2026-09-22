@@ -1,4 +1,20 @@
 #Requires -Version 7.4
+<#
+.SYNOPSIS
+Runs isolated end-to-end W365 live acceptance.
+
+.DESCRIPTION
+Creates or resumes a dedicated acceptance environment, validates prerequisites and billing approval, deploys the sample, verifies identities and lifecycle behavior, records sanitized evidence, and attempts teardown in a finally block.
+
+
+Key inputs: SubscriptionId, TenantId, Prefix, Location, billing plan, approval phrase, resume/cleanup options, repository/evidence paths, and script overrides.
+
+.OUTPUTS
+Sanitized acceptance evidence and cleanup status for the isolated environment.
+
+.NOTES
+Live, billable, and destructive. It requires the exact approval phrase and never treats offline checks as live evidence.
+#>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][guid]$SubscriptionId,

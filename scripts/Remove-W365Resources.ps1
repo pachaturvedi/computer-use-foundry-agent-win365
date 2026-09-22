@@ -1,4 +1,20 @@
 #Requires -Version 7.4
+<#
+.SYNOPSIS
+Removes sample-owned W365, Entra, viewer, and RBAC artifacts.
+
+.DESCRIPTION
+Loads the ownership manifests, validates reused shared dependencies, connects to Graph, and removes or restores recorded resources in reverse dependency order before Azure teardown.
+
+
+Key inputs: EnvironmentName and optional environment/manifest paths, shared-project override, device-code option, and Graph timeout.
+
+.OUTPUTS
+Redacted cleanup progress and an explicit indication that Azure resource deletion may continue.
+
+.NOTES
+Destructive and ownership-driven. Missing evidence, drift, unexpected assignments, or unapproved shared-project cleanup blocks all mutation.
+#>
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
 param(
     [string]$EnvironmentName,

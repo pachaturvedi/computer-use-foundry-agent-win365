@@ -1,4 +1,20 @@
 #Requires -Version 7.4
+<#
+.SYNOPSIS
+Creates or reconciles the viewer OIDC application.
+
+.DESCRIPTION
+Configures the single-tenant Entra web application, service principal, exact viewer callback URI, operator binding, and short-lived client credential used by the companion viewer.
+
+
+Key inputs: Environment is required. ApplicationName, OperatorObjectId, credential lifetime, rotation threshold, and UseDeviceCode customize reconciliation.
+
+.OUTPUTS
+Persists non-secret viewer identifiers to the azd environment and stores the generated OIDC secret through the approved Key Vault path.
+
+.NOTES
+Mutates Entra and Key Vault configuration. Existing unrelated application configuration is preserved.
+#>
 [CmdletBinding()]
 param(
     [string]$Environment,

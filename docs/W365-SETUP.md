@@ -172,13 +172,6 @@ $certificate = .\scripts\Initialize-W365BlueprintCertificate.ps1 `
     -ConfirmResourceChanges `
     -UseDeviceCode
 
-# infra/state/keyvault.bicep only grants the certificate/key Key Vault RBAC
-# roles to the agent principal when W365_BLUEPRINT_CREDENTIAL_MODE is
-# key_vault_certificate at *state* provisioning time. If state was already
-# provisioned in client_secret mode (the default) before you switched modes
-# above, you must re-provision state now so the agent actually receives that
-# access before the redeploy below; otherwise the next step fails fast with a
-# clear remediation message instead of deploying a broken agent.
 azd provision state --environment $environment --no-prompt
 
 pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
@@ -190,6 +183,11 @@ pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
     -ConfirmResourceChanges `
     -UseDeviceCode
 ```
+
+State provisioning grants certificate/key access only when
+`W365_BLUEPRINT_CREDENTIAL_MODE=key_vault_certificate`. If state was previously
+provisioned in another mode, the `azd provision state` command above is
+required before redeployment.
 
 `Register-W365BlueprintCertificate.ps1` requires a delegated Graph sign-in
 with `AgentIdentityBlueprint.AddRemoveCreds.All` (the least-privileged Blueprint
@@ -223,8 +221,8 @@ once from the Intune URL and persist the template automatically:
 
 ```powershell
 pwsh -NoProfile -File .\scripts\Save-W365PoolTemplate.ps1 `
-    -PoolIdOrUrl "https://intune.microsoft.com/#view/Microsoft_Azure_CloudPC/CloudPCAgentPoolDetail.ReactView/poolId/8607571b-2177-462c-bd6f-b8d1dac75333" `
-    -PoolDisplayName "su-cua-test-clone" `
+    -PoolIdOrUrl "https://intune.microsoft.com/#view/Microsoft_Azure_CloudPC/CloudPCAgentPoolDetail.ReactView/poolId/<pool-guid>" `
+    -PoolDisplayName "<new-pool-display-name>" `
     -UseDeviceCode
 ```
 
@@ -296,8 +294,8 @@ pass the operator-specific values such as the agent-user UPN.
 ```json
 {
     "w365": {
-        "poolDisplayName": "su-cua-test-clone",
-        "poolDescription": "Cloned from the su-cua-test pool template.",
+        "poolDisplayName": "<new-pool-display-name>",
+        "poolDescription": "Created from the reviewed pool template.",
         "poolBillingPlanId": "<billing-plan-guid>",
         "poolBillingPlanName": "w365a-billingplan",
         "poolBillingType": "payAsYouGo",
@@ -451,11 +449,6 @@ hosting compatibility.
 | Azure CLI fallback reports missing CloudPC consent | The cached Azure CLI Graph token does not include the required CloudPC scope or consent. | Run `az logout`, then `az login --tenant "<tenant-id>" --scope "https://graph.microsoft.com/CloudPC.Read.All"`, and rerun the helper. |
 | Setup refuses to reuse an existing pool or agent user | The parent/ownership chain or persisted ownership manifest does not match the supplied entities. | Review the emitted validation error, confirm the exact blueprint, agent object ID, agent app ID, and pool ID, then rerun with the intended environment selected. |
 
-## Next steps
-
-- Return to [deployment phase 2](DEPLOYMENT.md#phase-2-bind-and-enable) to redeploy the same hosted agent name with desktop access enabled.
-- Use [viewer setup](VIEWER.md) only after the core W365 flow is working and you have explicit approval for viewer federation.
-
 ## Optional viewer federation
 
 This section applies only when
@@ -579,62 +572,22 @@ An old agent user bound to a separate identity **must not be automatically
 reparented**: choose a different UPN and create a user bound to the correct
 Foundry identity.
 
-Remove old certificate settings from deployment configuration.
-`scripts/New-DevCertificate.ps1` has been deleted and the standalone-identity
-quickstart is retired; there is
-no certificate fallback. Do not delete old resources automatically. After the
-new binding and hosting token flow are accepted, check all consumers before
-retiring separate identities, certificate registrations, private files and
-old Key Vault certificate secrets. Preserve the viewer's separate OIDC secret.
+Remove obsolete exported-certificate or standalone-identity settings from
+deployment configuration. `scripts/New-DevCertificate.ps1` has been deleted
+and the standalone-identity quickstart is retired. The supported
+`key_vault_certificate` mode uses a non-exportable certificate and is not a
+fallback. Do not delete old resources automatically. After the new binding and
+hosting token flow are accepted, check all consumers before retiring separate
+identities, certificate registrations, private files, or old Key Vault
+certificate secrets. Preserve the viewer's separate OIDC secret.
 
 ## Live acceptance
 
-The authoritative acceptance path is a Windows PowerShell driver centered on
-one isolated azd environment. It does not require a GitHub Environment.
-
-The checked-in defaults use the sample's Windows 11 Enterprise 25H2 gallery
-image in `centralus`, region group/geography `usCentral`, and minimum/maximum
-capacity of `1`. The pool display name and description are derived from the
-isolated azd environment. Confirm those defaults are supported in the tenant;
-override only values that differ in ignored `config\deployment.local.json`.
-The billing-plan GUID is tenant-specific and must be supplied to the driver.
-
-Sign in to Azure and run:
-
-```powershell
-azd auth login
-Install-Module Microsoft.Graph.Authentication -Scope CurrentUser
-
-pwsh -NoProfile -File .\scripts\Invoke-W365LiveAcceptance.ps1 `
-    -SubscriptionId "<subscription-guid>" `
-    -TenantId "<tenant-guid>" `
-    -Location "eastus" `
-    -Prefix "w365accept" `
-    -PoolBillingPlanId "<tenant-billing-plan-guid>"
-```
-
-Example effective defaults:
-
-```text
-Geographic location type: usCentral
-Region group:              usCentral
-Regions:                   centralus
-Gallery image ID:          microsoftwindowsdesktop_windows-ent-cpc_win11-25h2-ent-cpc-m365
-```
-
-The driver creates `w365accept-live`, previews the Azure deployment, and then
-requires `I_APPROVE_W365_BILLING_AND_CLEANUP`. It deploys the bootstrap and
-W365-enabled agent, requests delegated Graph device-code sign-in, verifies the
-ownership manifest and Foundry doctor, reruns `azd up` to prove the manifest is
-stable, and always attempts `azd down` in `finally`.
-
-Use `-Resume` only after reviewing a retained environment from a failed run.
-Existing environments are otherwise rejected. Use
-`-RemoveEnvironmentAfterCleanup` to remove local azd state only after cleanup is
-proven; by default the cleaned `.azure\<prefix>-live` state is retained for
-review. Sanitized evidence is written under
-`artifacts\w365-live-acceptance`; it excludes tenant IDs, resource IDs, UPNs,
-endpoints, credentials, and tokens.
+Use the isolated Windows acceptance driver described in
+[deployment live acceptance](DEPLOYMENT.md#live-acceptance). It requires
+explicit billing approval, writes sanitized evidence under
+`artifacts\w365-live-acceptance`, and always attempts ownership-driven cleanup.
+Offline tests and `-WhatIf` do not prove tenant, Foundry, or W365 compatibility.
 
 The manually dispatched `W365 live acceptance` GitHub workflow is an optional
 wrapper around the same script. It uses repository-level `AZURE_CLIENT_ID` for
@@ -768,3 +721,10 @@ Sources: [Foundry identity](https://learn.microsoft.com/azure/foundry/agents/con
 [managed identity FIC](https://learn.microsoft.com/entra/workload-id/workload-identity-federation-config-app-trust-managed-identity),
 [agent users](https://learn.microsoft.com/powershell/module/microsoft.entra.users/new-entraagentuserforagentid),
 [pool assignment](https://learn.microsoft.com/graph/api/cloudpcpool-post-assignments?view=graph-rest-beta).
+
+## Next steps
+
+- Return to [deployment phase 2](DEPLOYMENT.md#phase-2-bind-and-enable) to
+  redeploy the same hosted agent name with desktop access enabled.
+- Use [viewer setup](VIEWER.md) only after the core W365 flow works and viewer
+  identity, OIDC, and screen-share inputs are approved.

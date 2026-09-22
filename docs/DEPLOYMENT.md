@@ -91,7 +91,7 @@ az login
 az account set --subscription "<subscription-id>"
 azd ext install microsoft.foundry
 azd auth login
-.\tests\PowerShell\Test-AzdPrerequisites.ps1 -RequireLogin
+pwsh -NoProfile -File .\tests\PowerShell\Test-AzdPrerequisites.ps1 -RequireLogin
 ```
 
 Use the same intended identity for Azure CLI and azd. Confirm the subscription,
@@ -116,10 +116,10 @@ Generic infrastructure prompts are not required.
 For example:
 
 ```powershell
-azd env new demosept22-dev `
+azd env new "<resource-prefix>-dev" `
     --subscription "<subscription-id>" `
     --location eastus
-azd up --environment demosept22-dev
+azd up --environment "<resource-prefix>-dev"
 ```
 
 Before provisioning, the `preup` hook prints the generated names, model
@@ -154,7 +154,8 @@ Availability varies by model version, SKU, subscription, and region. To use a
 smaller reviewed capacity before provisioning:
 
 ```powershell
-azd env set FOUNDRY_MODEL_SKU_CAPACITY "50" --environment demosept22-dev
+azd env set FOUNDRY_MODEL_SKU_CAPACITY "50" `
+    --environment "<resource-prefix>-dev"
 ```
 
 If model validation or deployment fails, no agent version is published. Azure
@@ -165,7 +166,7 @@ ownership record and then run:
 
 ```powershell
 pwsh -NoProfile -File .\scripts\Invoke-AzdDown.ps1 `
-    -EnvironmentName demosept22-dev `
+    -EnvironmentName "<resource-prefix>-dev" `
     -Purge
 ```
 
@@ -180,21 +181,15 @@ later in this guide have been reviewed. Global Standard is consumption billed
 rather than fixed PTU capacity, but reserving a higher TPM quota permits higher
 throughput and potentially higher usage charges.
 
-The viewer is deployed by default. Set these onboarding-supplied values before
-`azd up` to activate live view and take control during the same run:
+The viewer is deployed by default. When approved W365 screen-share values are
+already present in the selected azd environment or ignored
+`config\deployment.local.json`, `azd up` carries them into viewer activation.
+If they are unavailable, the ACA viewer remains in bootstrap mode and the
+final summary lists the missing settings. The values are tenant-specific and
+cannot be inferred by the sample. To request only the Foundry bootstrap:
 
 ```powershell
-azd env set SCREENSHARE_APP_URL "<approved-app-url>" --environment demosept22-dev
-azd env set SCREENSHARE_SDK_URL "<approved-sdk-url>" --environment demosept22-dev
-azd env set SCREENSHARE_FRAME_ORIGINS "<approved-origin-list>" --environment demosept22-dev
-```
-
-If they are omitted, the ACA viewer remains in bootstrap mode and the final
-summary lists the missing activation settings. To request only the Foundry
-bootstrap:
-
-```powershell
-azd env set ENABLE_W365 false --environment demosept22-dev
+azd env set ENABLE_W365 false --environment "<resource-prefix>-dev"
 ```
 
 To reuse an environment that was already initialized for this repository:
@@ -215,7 +210,7 @@ Foundry-specific initializer at this repository's raw `azure.yaml` URL:
 ```powershell
 azd auth login
 azd ai agent init -m "https://raw.githubusercontent.com/pachaturvedi/computer-use-foundry-agent-win365/main/azure.yaml"
-.\tests\PowerShell\Test-AzdPrerequisites.ps1 -RequireLogin
+pwsh -NoProfile -File .\tests\PowerShell\Test-AzdPrerequisites.ps1 -RequireLogin
 ```
 
 The no-clone command creates a new project directory. Change into that generated
@@ -249,7 +244,7 @@ explicit name before retrying:
 
 ```powershell
 azd env set AZURE_AI_ACCOUNT_NAME "<globally-available-account-name>" `
-    --environment demosept22-dev
+    --environment "<resource-prefix>-dev"
 ```
 
 ```powershell
@@ -338,30 +333,10 @@ one `azure.ai.project` service, one `azure.ai.agent` service, pinned minimum
 tool versions, code runtime/entry point, protocol, environment mapping, resource
 limits, and scenario tags.
 
-`win365-desktop-agent` sets `codeConfiguration.dependencyResolution: bundled`.
-`Win365Agent.csproj` references the sibling `Win365Shared` project and relies on
-the repo-root `Directory.Packages.props` for central package versions. Foundry's
-default `remote_build` mode zips and restores only the `project:` folder
-(`src/Win365Agent`) on the build server, so it cannot see `Win365Shared` or the
-central package-version file and fails restore with `NU1015` /
-`Win365Shared.csproj ... was not found`. `bundled` makes `azd deploy` build and
-publish locally, where the full repository/solution context is available, and
-upload only the published output.
-
-`bundled` publishes for the container's target runtime with `dotnet publish -r
-linux-x64 --self-contained false`. A RID-specific publish otherwise implicitly
-builds a native apphost, which needs the `Microsoft.NETCore.App.Host.linux-x64`
-runtime pack; if that pack isn't already cached locally and the machine's
-global NuGet sources are restricted, restore fails with `NU1101`. Because the
-agent always starts as `dotnet Win365Agent.dll` (see `entryPoint` above), no
-native apphost is required, so `Win365Agent.csproj` sets
-`<UseAppHost>false</UseAppHost>` to skip that extra restore entirely.
-
-Do not switch this back to `remote_build`
-without also giving the agent a self-contained build context (for example, a
-container deploy modeled on the viewer's `Dockerfile`, which already copies
-`Directory.Packages.props`, `NuGet.Config`, and `Win365Shared` before
-restoring).
+`win365-desktop-agent` uses bundled dependency resolution so local publish can
+see `Win365Shared`, central package versions, and the complete solution context.
+Do not switch to `remote_build` without first making the hosted-agent project
+self-contained; the remote builder receives only `src\Win365Agent`.
 
 Use direct `azd up` for the dedicated fresh managed path described above. Its
 hooks preserve the bootstrap-first sequence and invoke the guarded deployment
@@ -403,7 +378,7 @@ deployed if initialization changed it.
 
 ```powershell
 az login --tenant "<Foundry-tenant-GUID>"
-.\scripts\Get-FoundryIdentity.ps1 `
+pwsh -NoProfile -File .\scripts\Get-FoundryIdentity.ps1 `
     -ProjectEndpoint "https://<account>.services.ai.azure.com/api/projects/<project>" `
     -AgentName "<deployed-agent-name>" `
     -TenantId "<Foundry-tenant-GUID>" `
@@ -466,7 +441,7 @@ federated credentials, and the blueprint's prior `requiredResourceAccess`.
 ## Optional phase-1 viewer bootstrap
 
 The viewer is a separate `src\Win365Viewer` executable and ACA container. It
-references shared identity/state contracts from `Win365Agent` but has an
+references shared identity/state contracts from `Win365Shared` but has an
 independent startup path and cannot expose the hosted Responses endpoint.
 Until `VIEWER_LIVE_ENABLED=true`, the hosted agent suppresses viewer links even
 if `VIEWER_PUBLIC_URL` already contains the provisioned ACA hostname.
@@ -673,21 +648,9 @@ leaves this step to the operator. Neither path skips the credential vault.
 Legacy development deployments may still have state in a separate
 `*-state-rg`. The templates do not move or delete those resources
 automatically. A new deployment uses the environment resource group and a new
-storage account; migrate any required session state deliberately before
-removing the legacy resource group.
-
-The earlier validated development deployment created:
-
-| Item | Value |
-| --- | --- |
-| Resource group | `fawin365-dev-state-rg` |
-| Storage account | `fawin365devstsq53oc` |
-| Container | `desktop-state` |
-| Session Blob URI | `https://fawin365devstsq53oc.blob.core.windows.net/desktop-state/slot.json` |
-| Data principal | `5ff7789e-bb85-4e15-9667-bf83c94465e1` |
-
-The application creates `slot.json` atomically on first enabled use; the
-infrastructure deployment intentionally does not seed the Blob.
+storage account. Migrate required state deliberately before removing a legacy
+resource group. The application creates `slot.json` atomically on first enabled
+use; infrastructure does not seed the Blob.
 
 Configure the hosted operator and credential before W365 mutation:
 
@@ -1009,14 +972,11 @@ W365 capacity through its owning service when applicable.
 
 ## Live acceptance
 
-Offline compilation/tests cannot prove tenant, preview SDK or service
-compatibility. As recorded in the
-[validation report](VALIDATION-REPORT.md), hosted version `15` completed the
-bounded W365 lifecycle with the explicitly selected `client_secret` mode. The
-temporary secret was then revoked and removed, and a clean version `16`
-restored `managed_identity_federation`. That federation mode remains blocked on
-the tested host by Entra `AADSTS700231`; it never falls back to the validated
-secret mode.
+Offline compilation and tests cannot prove tenant, preview SDK, or service
+compatibility. The bounded W365 lifecycle has been exercised with explicitly
+selected `client_secret` mode. Managed-identity federation remains blocked on
+the tested host by Entra `AADSTS700231`, and `key_vault_certificate` has only
+offline validation. No mode falls back to another.
 
 1. Deploy phase 1 without W365/operator/state/OIDC configuration. Confirm healthy
    readiness, phase-2 503 responses and no W365/model/state credential access.

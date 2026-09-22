@@ -1,4 +1,20 @@
 #Requires -Version 7.4
+<#
+.SYNOPSIS
+Prepares and validates the local development environment.
+
+.DESCRIPTION
+Creates or validates the ignored .env file, restores dependencies, verifies formatting, builds Release, and runs the canonical tests unless SkipTests is supplied.
+
+
+Key inputs: SkipTests runs the restore, format, and build path without test execution.
+
+.OUTPUTS
+A validated local build and, by default, complete offline test results.
+
+.NOTES
+Offline workflow. It does not authenticate to or mutate Azure, Entra, Foundry, Graph, or W365.
+#>
 [CmdletBinding()]
 param(
     [switch]$SkipTests

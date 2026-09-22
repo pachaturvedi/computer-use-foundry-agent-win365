@@ -1,4 +1,20 @@
 #Requires -Version 7.4
+<#
+.SYNOPSIS
+Runs one local sample process in bootstrap mode.
+
+.DESCRIPTION
+Loads the local environment file and starts either the agent or viewer executable on a loopback port for offline development.
+
+
+Key inputs: Mode selects Agent or Viewer; EnvFile and port parameters override local defaults.
+
+.OUTPUTS
+Foreground process output from the selected .NET executable.
+
+.NOTES
+Local-only and unauthenticated. It refuses enabled live W365 configuration and should never be exposed through public ingress.
+#>
 [CmdletBinding()]
 param(
     [ValidateSet('agent', 'viewer')][string]$Mode = 'agent',

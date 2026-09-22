@@ -14,6 +14,17 @@ public bytes to the caller for the follow-up Register-W365BlueprintCertificate.p
 
 Idempotent by default: if a certificate with this name already exists and -Rotate is not
 specified, the existing certificate is reused and its public bytes are returned unchanged.
+
+
+Key inputs: Environment selects the azd environment. Rotate requests a new certificate, ValidityInMonths sets its lifetime, and ConfirmResourceChanges authorizes role assignment or certificate mutation.
+
+.OUTPUTS
+An object containing the certificate name, thumbprint, public certificate
+bytes, and Key Vault identifiers. No private key material is returned.
+
+.NOTES
+Mutates Key Vault and may grant the current operator Key Vault Certificates
+Officer. SupportsShouldProcess and fails unless resource changes are confirmed.
 #>
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
 param(

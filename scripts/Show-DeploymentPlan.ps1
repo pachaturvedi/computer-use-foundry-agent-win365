@@ -1,4 +1,20 @@
 #Requires -Version 7.4
+<#
+.SYNOPSIS
+Prints the component create, reuse, or skip plan.
+
+.DESCRIPTION
+Evaluates the current deployment environment and displays the intended Foundry, state, viewer, and W365 topology before resource changes.
+
+
+Key inputs: Values are read from the current process and selected azd environment.
+
+.OUTPUTS
+A concise deployment-plan table for operator review.
+
+.NOTES
+Read-only. It performs no Azure, Entra, Graph, Foundry, or W365 mutation.
+#>
 [CmdletBinding()]
 param()
 
