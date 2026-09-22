@@ -245,6 +245,26 @@ Remove-Item -LiteralPath (Join-Path $RepositoryRoot ".azure\$Environment\.env") 
 
     Set-Content -LiteralPath (Join-Path $environmentDirectory '.env') -Value @(
         'FOUNDRY_AGENT_NAME="win365-desktop-agent"',
+        'AGENT_WIN365_DESKTOP_AGENT_VERSION="5"',
+        'ENABLE_W365="false"',
+        'W365_ENABLED="false"',
+        'DEPLOY_STATE="false"',
+        'DEPLOY_VIEWER="false"'
+    )
+    $bootstrapOutput = & $scriptPath `
+        -Environment 'sample-dev' `
+        -ConfirmResourceChanges `
+        -AzdPath $fakeAzdPath `
+        -RepositoryRoot $tempRoot *>&1 | Out-String
+    if ($bootstrapOutput -notmatch 'SUCCESS: Foundry bootstrap deployment finished' -or
+        $bootstrapOutput -notmatch 'Verify the W365-disabled bootstrap agent' -or
+        $bootstrapOutput -notmatch 'azd env set ENABLE_W365 true --environment sample-dev' -or
+        $bootstrapOutput -match 'Run the repository invoice scenario') {
+        throw "The wrapper reported incorrect Foundry-only completion guidance: $bootstrapOutput"
+    }
+
+    Set-Content -LiteralPath (Join-Path $environmentDirectory '.env') -Value @(
+        'FOUNDRY_AGENT_NAME="win365-desktop-agent"',
         'AGENT_WIN365_DESKTOP_AGENT_VERSION="4"',
         'ENABLE_W365="true"',
         'W365_ENABLED="true"',

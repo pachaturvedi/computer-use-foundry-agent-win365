@@ -277,5 +277,11 @@ if ([string]$completedValues['W365_AZD_UP_COMPLETED_RUN_ID'] -ne $runId) {
     throw 'The deployment completed, but its run-specific completion state could not be verified.'
 }
 Write-Host ''
-Write-Host "SUCCESS: Complete sample installation finished in $elapsedText."
+$completionLabel = if ([string]$values['W365_ENABLED'] -eq 'true') {
+    'Complete sample installation'
+}
+else {
+    'Foundry bootstrap deployment'
+}
+Write-Host "SUCCESS: $completionLabel finished in $elapsedText."
 Write-Host $summaryText.TrimEnd()

@@ -129,7 +129,9 @@ after the full workflow completes. It also replaces azd's core-only elapsed
 time with an end-to-end installation time and verifies the persisted final
 state, so canceling an interactive setup step cannot be reported as a
 successful complete installation. The final deployment table and next commands
-are the last output from a successful wrapper run.
+are the last output from a successful wrapper run. Foundry-only runs print
+bootstrap verification and the explicit command for enabling phase two instead
+of the invoice scenario.
 
 The command deploys the Foundry bootstrap first. It then asks whether to reuse
 an existing W365 agent pool, create a new pool, or keep a Foundry-only

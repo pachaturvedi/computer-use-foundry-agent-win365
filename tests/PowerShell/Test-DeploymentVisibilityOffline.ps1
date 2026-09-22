@@ -109,6 +109,28 @@ try {
         throw "Deployment summary was incomplete or unsafe: $summary"
     }
 
+    Set-Content -LiteralPath (Join-Path $environmentDirectory '.env') -Value @(
+        'AZURE_RESOURCE_GROUP="sample-dev-rg"',
+        'AZURE_AI_PROJECT_NAME="sample-project"',
+        'FOUNDRY_AGENT_NAME="win365-desktop-agent"',
+        'AGENT_WIN365_DESKTOP_AGENT_ENDPOINT="https://agent.example.com"',
+        'AGENT_WIN365_DESKTOP_AGENT_VERSION="43"',
+        'ENABLE_W365="false"',
+        'DEPLOY_STATE="false"',
+        'DEPLOY_VIEWER="false"',
+        'W365_ENABLED="false"'
+    )
+    $bootstrapSummary = & (Join-Path $root 'scripts\Show-DeploymentSummary.ps1') `
+        -RepositoryRoot $tempRoot `
+        -Environment $environmentName 6>&1 | Out-String
+    if ($bootstrapSummary -notmatch 'Verify the W365-disabled bootstrap agent' -or
+        $bootstrapSummary -notmatch 'azd ai agent show win365-desktop-agent --environment sample-dev' -or
+        $bootstrapSummary -notmatch 'azd env set ENABLE_W365 true --environment sample-dev' -or
+        $bootstrapSummary -notmatch [regex]::Escape('pwsh -NoProfile -File .\scripts\Invoke-AzdUp.ps1 -Environment sample-dev -ConfirmResourceChanges') -or
+        $bootstrapSummary -match 'Run the repository invoice scenario') {
+        throw "Foundry-only deployment summary was incomplete or misleading: $bootstrapSummary"
+    }
+
     $foundryBicep = Get-Content -LiteralPath (Join-Path $root 'infra\foundry\main.bicep') -Raw
     $stateBicep = Get-Content -LiteralPath (Join-Path $root 'infra\state\main.bicep') -Raw
     $keyVaultBicep = Get-Content -LiteralPath (Join-Path $root 'infra\state\keyvault.bicep') -Raw

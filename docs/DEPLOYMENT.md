@@ -97,9 +97,11 @@ behavior. It suppresses generic Foundry next steps that otherwise appear while
 `postup` is still configuring W365 and the viewer. After all phases succeed,
 it verifies the persisted agent, state, viewer, and W365 completion flags,
 replaces the core-only elapsed time with the end-to-end duration, and prints
-the final deployment table and sample-specific next commands last. If an
-interactive prompt is canceled, it reports an incomplete installation and
-preserves the environment for a safe retry.
+the final deployment table and mode-specific next commands last. W365-enabled
+runs print the invoice smoke test; Foundry-only runs print bootstrap
+verification and the command that explicitly enables phase two. If an
+interactive prompt is canceled, the wrapper reports an incomplete installation
+and preserves the environment for a safe retry.
 
 Expected result:
 
