@@ -19,6 +19,9 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
         $script:connectCalls += 1
         $script:lastContextScope = $ContextScope
         $script:lastInformationAction = [string]$InformationAction
+        if ($UseDeviceCode) {
+            Write-Output 'To sign in, open the browser and enter code TEST-CODE.'
+        }
         if ($script:timeoutFailuresRemaining -gt 0) {
             $script:timeoutFailuresRemaining -= 1
             throw 'Authentication timed out after 120 seconds due to inactivity. Please try again.'
@@ -237,7 +240,8 @@ try {
         -TenantId 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' `
         -UseDeviceCode `
         -DeviceCodeMaxAttempts 2
-    if (@($options.pools).Count -ne 1 -or
+    if (@($options).Count -ne 1 -or
+        @($options.pools).Count -ne 1 -or
         $options.pools[0].billingPlanId -ne '66666666-6666-6666-6666-666666666666' -or
         @($options.regions).Count -ne 1 -or
         $options.regions[0].regionName -ne 'centralus' -or
@@ -247,6 +251,19 @@ try {
     }
     if ((Get-ConnectCalls) -ne 2) {
         throw 'Read-only discovery should retry a timed-out device-code prompt with a fresh code.'
+    }
+
+    Reset-GraphState
+    $discoveryJson = @(& "$scriptsRoot\Get-W365DiscoveryOptions.ps1" `
+        -TenantId 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' `
+        -UseDeviceCode `
+        -AsJson)
+    if ($discoveryJson.Count -ne 1) {
+        throw 'The Graph device-code message leaked into the captured discovery JSON output.'
+    }
+    $discoveryJsonResult = $discoveryJson[0] | ConvertFrom-Json
+    if (@($discoveryJsonResult.pools).Count -ne 1) {
+        throw 'Captured discovery JSON did not contain the expected W365 pool.'
     }
 
     $global:W365DiscoveryReadHostResponses = [Collections.Generic.Queue[string]]::new()
