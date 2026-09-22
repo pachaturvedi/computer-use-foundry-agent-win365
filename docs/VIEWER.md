@@ -38,7 +38,15 @@ subscription and persists the chosen full resource ID only in the selected azd
 environment. It never silently selects shared infrastructure. If creation of a
 new managed environment fails specifically because of ACA environment quota or
 capacity, the hook offers the same existing-environment selection and retries
-only viewer provisioning. Unrelated deployment failures remain failures.
+only viewer provisioning. The retry changes only the ACA selection; the
+validated phase-two flow owns viewer activation. Unrelated deployment failures
+remain failures.
+
+Viewer infrastructure is requested only after the shared storage account,
+container, and exact undecorated HTTPS Blob URI are validated. Missing or
+inconsistent outputs stop before ACA provisioning. Fix the reported state
+configuration and rerun `azd up`; the onboarding retry re-enters phase two, and
+no viewer cleanup is required for a failure before viewer provisioning.
 
 Set the W365 onboarding values after `azd env new` and before `azd up`:
 

@@ -6,6 +6,8 @@
     "location": { "value": "${AZURE_LOCATION}" },
     "deployViewer": { "value": "${DEPLOY_VIEWER=false}" },
     "deployState": { "value": "${DEPLOY_STATE=false}" },
+    "viewerProvisioningActive": { "value": "${VIEWER_PROVISIONING_ACTIVE=false}" },
+    "w365Enabled": { "value": "${W365_ENABLED=false}" },
     "resourcePrefix": { "value": "${RESOURCE_PREFIX=}" },
     "resourceGroupName": { "value": "${AZURE_RESOURCE_GROUP=}" },
     "viewerImageName": { "value": "${VIEWER_IMAGE_NAME=win365-sample:v1}" },

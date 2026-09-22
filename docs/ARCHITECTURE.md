@@ -104,7 +104,10 @@ sequenceDiagram
    Discovery->>Foundry: Read blueprint client ID and instance principal ID
    Foundry-->>Discovery: Blueprint ID and agent object ID
    Discovery-->>Hook: Non-secret identity IDs
-   Hook->>AZD: Provision shared state and viewer bootstrap
+   Hook->>AZD: Provision shared state with viewer disabled
+   AZD-->>Hook: Return storage account, container, and exact Blob URI
+   Hook->>Hook: Validate state outputs and activate viewer provisioning
+   Hook->>AZD: Provision viewer bootstrap
 
    Hook->>Setup: Supply tenant, blueprint, agent object, and approved pool profile
    Setup->>Entra: Validate parent chain and resolve agent client ID

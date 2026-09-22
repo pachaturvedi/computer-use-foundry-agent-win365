@@ -12,6 +12,16 @@ param deployViewer string = 'false'
   'false'
 ])
 param deployState string = 'false'
+@allowed([
+  'true'
+  'false'
+])
+param viewerProvisioningActive string = 'false'
+@allowed([
+  'true'
+  'false'
+])
+param w365Enabled string = 'false'
 @maxLength(24)
 param resourcePrefix string = ''
 param resourceGroupName string = ''
@@ -47,7 +57,8 @@ param screenShareAppUrl string = ''
 
 var expectedSessionBlobUri = 'https://${stateStorageAccountName}.blob.${environment().suffixes.storage}/${stateContainerName}/slot.json'
 var stateReady = toLower(deployState) == 'true' && !empty(stateStorageAccountName) && !empty(stateContainerName) && sessionBlobUri == expectedSessionBlobUri
-var viewerEnabled = toLower(deployViewer) == 'true'
+var viewerDeploymentRequested = toLower(deployViewer) == 'true' && (toLower(w365Enabled) == 'true' || toLower(viewerProvisioningActive) == 'true')
+var viewerEnabled = viewerDeploymentRequested
   ? (stateReady ? true : fail('DEPLOY_VIEWER=true requires validated shared Blob state outputs.'))
   : false
 var liveViewerEnabled = viewerEnabled && toLower(viewerLiveEnabled) == 'true'

@@ -19,6 +19,7 @@ $previousPath = $env:Path
 $previousCallsPath = $env:TEST_AZD_CALLS_PATH
 $previousQuotaBehavior = $env:TEST_AZD_VIEWER_QUOTA_ONCE
 $previousStateMode = $env:TEST_AZD_STATE_MODE
+$previousViewerFailure = $env:TEST_AZD_VIEWER_FAILURE
 
 try {
     New-Item -ItemType Directory -Path $binPath -Force | Out-Null
@@ -43,6 +44,20 @@ if ($env:TEST_AZD_VIEWER_QUOTA_ONCE -eq 'true' -and
         exit 1
     }
 }
+if ($CommandArgs -join ' ' -eq 'provision viewer --environment sample-dev --no-prompt') {
+    if ($env:VIEWER_PROVISIONING_ACTIVE -ne 'true') {
+        Write-Output 'viewer provisioning was not phase-two active'
+        exit 1
+    }
+    if ($env:TEST_AZD_VIEWER_FAILURE -eq 'generic') {
+        Write-Output 'simulated viewer provider failure'
+        exit 1
+    }
+    if ($env:TEST_AZD_VIEWER_FAILURE -eq 'quota-always') {
+        Write-Output 'MaxNumberOfGlobalEnvironmentsInSubExceeded'
+        exit 1
+    }
+}
 if ($CommandArgs[0] -eq 'env' -and $CommandArgs[1] -eq 'get-value') {
     $storageName = if ($env:TEST_AZD_STATE_MODE -eq 'missing') { '' } else { 'samplestatestorage' }
     $sessionBlobUri = switch ($env:TEST_AZD_STATE_MODE) {
@@ -52,6 +67,9 @@ if ($CommandArgs[0] -eq 'env' -and $CommandArgs[1] -eq 'get-value') {
         'fragment' { 'https://samplestatestorage.blob.core.windows.net/desktop-state/slot.json#unexpected' }
         'port' { 'https://samplestatestorage.blob.core.windows.net:8443/desktop-state/slot.json' }
         'userinfo' { 'https://unexpected@samplestatestorage.blob.core.windows.net/desktop-state/slot.json' }
+        'http' { 'http://samplestatestorage.blob.core.windows.net/desktop-state/slot.json' }
+        'wrongpath' { 'https://samplestatestorage.blob.core.windows.net/desktop-state/other.json' }
+        'casepath' { 'https://samplestatestorage.blob.core.windows.net/Desktop-State/slot.json' }
         default { 'https://samplestatestorage.blob.core.windows.net/desktop-state/slot.json' }
     }
     $values = @{
@@ -156,7 +174,7 @@ param(
         throw 'Phase-two initialization enabled the viewer before state outputs were validated.'
     }
 
-    foreach ($stateMode in @('missing', 'inconsistent', 'query', 'fragment', 'port', 'userinfo')) {
+    foreach ($stateMode in @('missing', 'inconsistent', 'query', 'fragment', 'port', 'userinfo', 'http', 'wrongpath', 'casepath')) {
         Remove-Item -LiteralPath $callsPath -ErrorAction SilentlyContinue
         $env:TEST_AZD_STATE_MODE = $stateMode
         $stateRejected = $false
@@ -179,6 +197,29 @@ param(
         }
     }
     $env:TEST_AZD_STATE_MODE = 'valid'
+
+    foreach ($failureMode in @('generic', 'quota-always')) {
+        Remove-Item -LiteralPath $callsPath, $profileCallsPath -ErrorAction SilentlyContinue
+        $env:TEST_AZD_VIEWER_FAILURE = $failureMode
+        $viewerFailureRejected = $false
+        try {
+            & $scriptPath `
+                -Environment 'sample-dev' `
+                -DeployViewer `
+                -IdentityScriptPath $mockIdentityPath `
+                -ProvisioningProfileScriptPath $mockProfilePath
+        }
+        catch {
+            $viewerFailureRejected = $true
+        }
+        if (!$viewerFailureRejected) {
+            throw "Phase-two initialization accepted $failureMode viewer provisioning failure."
+        }
+        if (![string]::IsNullOrEmpty($env:VIEWER_PROVISIONING_ACTIVE)) {
+            throw "Phase-two initialization did not clear transient viewer activation after $failureMode failure."
+        }
+    }
+    $env:TEST_AZD_VIEWER_FAILURE = ''
 
     Remove-Item -LiteralPath $callsPath, $profileCallsPath -ErrorAction SilentlyContinue
     $env:TEST_AZD_VIEWER_QUOTA_ONCE = 'true'
@@ -207,6 +248,7 @@ finally {
     $env:TEST_AZD_CALLS_PATH = $previousCallsPath
     $env:TEST_AZD_VIEWER_QUOTA_ONCE = $previousQuotaBehavior
     $env:TEST_AZD_STATE_MODE = $previousStateMode
+    $env:TEST_AZD_VIEWER_FAILURE = $previousViewerFailure
     Remove-Item Env:\TEST_IDENTITY_CALLS_PATH -ErrorAction SilentlyContinue
     Remove-Item Env:\TEST_PROFILE_CALLS_PATH -ErrorAction SilentlyContinue
     if (Test-Path -LiteralPath $tempRoot) {

@@ -112,7 +112,7 @@ try {
         $sessionBlobUri.Scheme -ne [Uri]::UriSchemeHttps -or
         !$sessionBlobUri.IsDefaultPort -or
         $sessionBlobUri.Host -ne "$($stateValues.STATE_STORAGE_ACCOUNT_NAME).blob.core.windows.net" -or
-        $sessionBlobUri.AbsolutePath -ne "/$($stateValues.STATE_CONTAINER_NAME)/slot.json" -or
+        $sessionBlobUri.AbsolutePath -cne "/$($stateValues.STATE_CONTAINER_NAME)/slot.json" -or
         ![string]::IsNullOrEmpty($sessionBlobUri.UserInfo) -or
         ![string]::IsNullOrEmpty($sessionBlobUri.Query) -or
         ![string]::IsNullOrEmpty($sessionBlobUri.Fragment)) {
@@ -123,30 +123,37 @@ try {
         Set-W365AzdValues -Azd $azd -Values ([ordered]@{
             DEPLOY_VIEWER = 'true'
         })
-        Write-W365ProvisioningStep 'Provisioning the ACA viewer bootstrap after shared state is ready.'
+        $previousViewerProvisioningActive = $env:VIEWER_PROVISIONING_ACTIVE
+        $env:VIEWER_PROVISIONING_ACTIVE = 'true'
         try {
-            Invoke-W365Azd -Azd $azd -Arguments @(
-                'provision', 'viewer', '--environment', $Environment, '--no-prompt'
-            ) | Out-Null
-        }
-        catch {
-            $quotaFailure = $_.Exception.Message -match
-                'MaxNumberOfGlobalEnvironmentsInSubExceeded|managed environment.{0,80}(quota|capacity)|quota.{0,80}managed environment'
-            if (!$quotaFailure -or $env:AZD_NON_INTERACTIVE -eq 'true') {
-                throw
+            Write-W365ProvisioningStep 'Provisioning the ACA viewer bootstrap after shared state is ready.'
+            try {
+                Invoke-W365Azd -Azd $azd -Arguments @(
+                    'provision', 'viewer', '--environment', $Environment, '--no-prompt'
+                ) | Out-Null
             }
+            catch {
+                $quotaFailure = $_.Exception.Message -match
+                    'MaxNumberOfGlobalEnvironmentsInSubExceeded|managed environment.{0,80}(quota|capacity)|quota.{0,80}managed environment'
+                if (!$quotaFailure -or $env:AZD_NON_INTERACTIVE -eq 'true') {
+                    throw
+                }
 
-            Write-Warning 'A new ACA managed environment could not be created because of a subscription quota or capacity limit.'
-            & $ProvisioningProfileScriptPath `
-                -Environment $Environment `
-                -ViewerOnly `
-                -ViewerMode existing
-            if (!$?) {
-                throw 'Existing ACA managed-environment selection failed after the creation quota error.'
+                Write-Warning 'A new ACA managed environment could not be created because of a subscription quota or capacity limit.'
+                & $ProvisioningProfileScriptPath `
+                    -Environment $Environment `
+                    -ViewerOnly `
+                    -ViewerMode existing
+                if (!$?) {
+                    throw 'Existing ACA managed-environment selection failed after the creation quota error.'
+                }
+                Invoke-W365Azd -Azd $azd -Arguments @(
+                    'provision', 'viewer', '--environment', $Environment, '--no-prompt'
+                ) | Out-Null
             }
-            Invoke-W365Azd -Azd $azd -Arguments @(
-                'provision', 'viewer', '--environment', $Environment, '--no-prompt'
-            ) | Out-Null
+        }
+        finally {
+            $env:VIEWER_PROVISIONING_ACTIVE = $previousViewerProvisioningActive
         }
     }
 }
