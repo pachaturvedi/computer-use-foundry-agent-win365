@@ -96,15 +96,12 @@ if ($sampleLogLevel -notin @('summary', 'verbose', 'debug')) {
 $resourcePrefix = "$Prefix-$Environment".ToLowerInvariant()
 $environmentName = $resourcePrefix
 $compactPrefix = $resourcePrefix.Replace('-', '')
-$hashInput = "$SubscriptionId|$resourcePrefix|$resolvedLocation"
-$hashBytes = [Security.Cryptography.SHA256]::HashData(
-    [Text.Encoding]::UTF8.GetBytes($hashInput))
-$suffix = [Convert]::ToHexString($hashBytes)[0..5] -join ''
-$suffix = $suffix.ToLowerInvariant()
+$accountPrefix = $compactPrefix.Substring(0, [Math]::Min($compactPrefix.Length, 12))
+$subscriptionSuffix = $SubscriptionId.ToString('N').Substring(0, 10).ToLowerInvariant()
 
 $values = [ordered]@{
     AZURE_RESOURCE_GROUP = "$resourcePrefix-$($config.foundry.resourceGroupSuffix)"
-    AZURE_AI_ACCOUNT_NAME = "$compactPrefix$($config.foundry.accountNameSuffix)$suffix"
+    AZURE_AI_ACCOUNT_NAME = "$accountPrefix$($config.foundry.accountNameSuffix)$subscriptionSuffix"
     AZURE_AI_PROJECT_NAME = "$resourcePrefix-$($config.foundry.projectNameSuffix)"
     FOUNDRY_PROJECT_ENDPOINT = $foundryProjectEndpoint
     FOUNDRY_PROJECT_OWNERSHIP = if ([string]::IsNullOrWhiteSpace($foundryProjectEndpoint)) { 'managed' } else { 'existing' }

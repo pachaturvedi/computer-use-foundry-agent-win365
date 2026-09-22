@@ -106,6 +106,7 @@ try {
 
     $foundryBicep = Get-Content -LiteralPath (Join-Path $root 'infra\foundry\main.bicep') -Raw
     $stateBicep = Get-Content -LiteralPath (Join-Path $root 'infra\state\main.bicep') -Raw
+    $keyVaultBicep = Get-Content -LiteralPath (Join-Path $root 'infra\state\keyvault.bicep') -Raw
     $viewerBicep = Get-Content -LiteralPath (Join-Path $root 'infra\viewer\main.bicep') -Raw
     $viewerFoundationBicep = Get-Content -LiteralPath (Join-Path $root 'infra\viewer-foundation.bicep') -Raw
     $viewerAppBicep = Get-Content -LiteralPath (Join-Path $root 'infra\viewer.bicep') -Raw
@@ -115,7 +116,9 @@ try {
     $viewerDeployScript = Get-Content -LiteralPath (Join-Path $root 'scripts\Deploy-ViewerBootstrap.ps1') -Raw
     $deploymentScriptPath = Join-Path $root 'scripts\Invoke-AzdDeployment.ps1'
     $deploymentScript = Get-Content -LiteralPath $deploymentScriptPath -Raw
+    $initializerScript = Get-Content -LiteralPath (Join-Path $root 'scripts\Initialize-Greenfield.ps1') -Raw
     $w365SetupFlow = Get-Content -LiteralPath (Join-Path $root 'scripts\Invoke-W365SetupFlow.ps1') -Raw
+    $foundryParameters = Get-Content -LiteralPath (Join-Path $root 'infra\foundry\main.parameters.json') -Raw
     $stateParameters = Get-Content -LiteralPath (Join-Path $root 'infra\state\main.parameters.json') -Raw
     $viewerParameters = Get-Content -LiteralPath (Join-Path $root 'infra\viewer\main.parameters.json') -Raw
     if ($foundryBicep -notmatch "resource environmentResourceGroup 'Microsoft.Resources/resourceGroups@" -or
@@ -135,6 +138,13 @@ try {
         $viewerAppBicep -notmatch "name: 'VIEWER_LIVE_ENABLED', value: viewerLiveEnabled \? 'true' : 'false'" -or
         $azureYaml -notmatch 'VIEWER_LIVE_ENABLED: \$\{VIEWER_LIVE_ENABLED:-false\}' -or
         $azureYaml -notmatch '(?ms)^\s{2}preup:\s+windows:.*Show-AzdUpContext\.ps1' -or
+        $upContextScript -notmatch 'Resolved deployment defaults' -or
+        $upContextScript -notmatch 'Model capacity' -or
+        $upContextScript -notmatch 'Disabled for bootstrap' -or
+        $upContextScript -match 'Get-DeploymentConfig\s+-' -or
+        $upContextScript -notmatch 'Read-DeploymentConfigFile' -or
+        $upContextScript -notmatch 'Existing-project mode requires these azd environment values' -or
+        $upContextScript -notmatch '\$generatedProjectName\.Substring\(0, 64\)' -or
         $upContextScript -notmatch 'informational, not failures' -or
         $planScript -notmatch 'Assert-ViewerAzureCliPrerequisites' -or
         $viewerDeployScript -notmatch 'Assert-ViewerAzureCliPrerequisites' -or
@@ -147,8 +157,21 @@ try {
         $viewerDeployScript -notmatch 'base-image-refresh' -or
         $viewerDeployScript -notmatch 'build-\$\(\$buildHash\.Substring\(0, 12\)\)' -or
         $deploymentScript -notmatch '(?ms)^function Get-W365KeyVaultName \{.*?^function Assert-LiveViewerConfiguration' -or
-        $stateParameters -notmatch '"resourceGroupName": \{ "value": "\$\{AZURE_RESOURCE_GROUP\}" \}' -or
-        $viewerParameters -notmatch '"resourceGroupName": \{ "value": "\$\{AZURE_RESOURCE_GROUP\}" \}') {
+        $foundryBicep -notmatch "var resolvedResourcePrefix = !empty\(resourcePrefix\) \? resourcePrefix : environmentName" -or
+        $foundryBicep -notmatch "var accountPrefix = take\(compactResourcePrefix, 12\)" -or
+        $foundryBicep -notmatch "var subscriptionSuffix = take\(replace\(subscription\(\)\.subscriptionId, '-', ''\), 10\)" -or
+        $foundryBicep -notmatch "param modelSkuCapacity int = 200" -or
+        $foundryBicep -match "@allowed\(\[\s*'GlobalStandard'" -or
+        $stateBicep -notmatch "resourcePrefix: resolvedResourcePrefix" -or
+        $keyVaultBicep -notmatch "@maxLength\(90\)" -or
+        $keyVaultBicep -notmatch "var compactResourcePrefix = toLower\(replace\(resourcePrefix, '-', ''\)\)" -or
+        $keyVaultBicep -notmatch "var keyVaultName = 'k\$\{take\(compactResourcePrefix, 13\)\}-kv-\$\{resourceSuffix\}'" -or
+        $initializerScript -notmatch 'Substring\(0, \[Math\]::Min\(\$compactPrefix\.Length, 12\)\)' -or
+        $initializerScript -notmatch 'Substring\(0, 10\)' -or
+        $foundryParameters -notmatch '"accountName": \{ "value": "\$\{AZURE_AI_ACCOUNT_NAME=\}" \}' -or
+        $foundryParameters -notmatch '"modelSkuCapacity": \{ "value": "\$\{FOUNDRY_MODEL_SKU_CAPACITY=200\}" \}' -or
+        $stateParameters -notmatch '"resourceGroupName": \{ "value": "\$\{AZURE_RESOURCE_GROUP=\}" \}' -or
+        $viewerParameters -notmatch '"resourceGroupName": \{ "value": "\$\{AZURE_RESOURCE_GROUP=\}" \}') {
         throw 'Infrastructure layers do not consistently reuse one AZURE_RESOURCE_GROUP.'
     }
     $statePreflightIndex = $w365SetupFlow.IndexOf('Assert-W365StateResourceReady')

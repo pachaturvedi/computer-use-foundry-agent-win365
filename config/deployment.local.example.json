@@ -9,7 +9,7 @@
     "modelName": "gpt-6-astra",
     "modelVersion": "2026-09-03",
     "modelSkuName": "GlobalStandard",
-    "modelSkuCapacity": 100
+    "modelSkuCapacity": 200
   },
   "viewer": {
     "deploy": true,

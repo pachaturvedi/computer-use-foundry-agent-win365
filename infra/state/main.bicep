@@ -7,16 +7,17 @@ param location string
   'false'
 ])
 param deployState string = 'false'
-@minLength(2)
 @maxLength(24)
-param resourcePrefix string
-param resourceGroupName string
+param resourcePrefix string = ''
+param resourceGroupName string = ''
 @minLength(36)
 @maxLength(36)
 param agentPrincipalId string = '00000000-0000-0000-0000-000000000000'
 param blueprintCredentialMode string = 'client_secret'
 
 var stateEnabled = toLower(deployState) == 'true'
+var resolvedResourcePrefix = !empty(resourcePrefix) ? resourcePrefix : environmentName
+var resolvedResourceGroupName = !empty(resourceGroupName) ? resourceGroupName : '${resolvedResourcePrefix}-rg'
 var tags = {
   'azd-env-name': environmentName
   component: 'state'
@@ -25,7 +26,7 @@ var tags = {
 }
 
 resource environmentResourceGroup 'Microsoft.Resources/resourceGroups@2023-07-01' existing = {
-  name: resourceGroupName
+  name: resolvedResourceGroupName
 }
 
 module keyVault './keyvault.bicep' = {
@@ -33,7 +34,7 @@ module keyVault './keyvault.bicep' = {
   scope: environmentResourceGroup
   params: {
     location: location
-    resourcePrefix: resourcePrefix
+    resourcePrefix: resolvedResourcePrefix
     tags: union(tags, { component: 'credentials' })
     agentPrincipalId: agentPrincipalId
     blueprintCredentialMode: blueprintCredentialMode
@@ -44,7 +45,7 @@ module storage './storage.bicep' = if (stateEnabled) {
   name: 'state-storage'
   scope: environmentResourceGroup
   params: {
-    name: resourcePrefix
+    name: resolvedResourcePrefix
     location: location
     tags: tags
     agentPrincipalId: agentPrincipalId

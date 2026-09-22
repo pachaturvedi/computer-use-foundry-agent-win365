@@ -7,10 +7,9 @@ param location string
   'false'
 ])
 param deployViewer string = 'false'
-@minLength(2)
 @maxLength(24)
-param resourcePrefix string
-param resourceGroupName string
+param resourcePrefix string = ''
+param resourceGroupName string = ''
 param viewerImageName string = 'win365-sample:v1'
 param viewerManagedEnvironmentResourceId string = ''
 @allowed([
@@ -18,7 +17,7 @@ param viewerManagedEnvironmentResourceId string = ''
   'false'
 ])
 param viewerLogAnalyticsEnabled string = 'false'
-param w365KeyVaultName string
+param w365KeyVaultName string = ''
 @allowed([
   'true'
   'false'
@@ -43,6 +42,8 @@ param screenShareAppUrl string = ''
 
 var viewerEnabled = toLower(deployViewer) == 'true'
 var liveViewerEnabled = viewerEnabled && toLower(viewerLiveEnabled) == 'true'
+var resolvedResourcePrefix = !empty(resourcePrefix) ? resourcePrefix : environmentName
+var resolvedResourceGroupName = !empty(resourceGroupName) ? resourceGroupName : '${resolvedResourcePrefix}-rg'
 var createManagedEnvironment = empty(viewerManagedEnvironmentResourceId)
 var managedEnvironmentIdSegments = split(viewerManagedEnvironmentResourceId, '/')
 var tags = {
@@ -53,7 +54,7 @@ var tags = {
 }
 
 resource environmentResourceGroup 'Microsoft.Resources/resourceGroups@2023-07-01' existing = {
-  name: resourceGroupName
+  name: resolvedResourceGroupName
 }
 
 resource existingManagedEnvironment 'Microsoft.App/managedEnvironments@2024-03-01' existing = if (viewerEnabled && !createManagedEnvironment) {
@@ -66,7 +67,7 @@ module foundation '../viewer-foundation.bicep' = if (viewerEnabled) {
   scope: environmentResourceGroup
   params: {
     location: location
-    resourcePrefix: resourcePrefix
+    resourcePrefix: resolvedResourcePrefix
     createManagedEnvironment: createManagedEnvironment
     enableLogAnalytics: toLower(viewerLogAnalyticsEnabled) == 'true'
     tags: tags
@@ -78,7 +79,7 @@ module viewer '../viewer.bicep' = if (viewerEnabled) {
   scope: environmentResourceGroup
   params: {
     location: createManagedEnvironment ? location : existingManagedEnvironment!.location
-    appName: '${resourcePrefix}-viewer'
+    appName: '${resolvedResourcePrefix}-viewer'
     managedEnvironmentResourceId: createManagedEnvironment
       ? foundation!.outputs.environmentResourceId
       : viewerManagedEnvironmentResourceId
