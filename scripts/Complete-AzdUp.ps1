@@ -3,6 +3,7 @@
 param(
     [string]$RepositoryRoot = (Split-Path $PSScriptRoot),
     [string]$ConfigPath = (Join-Path (Split-Path $PSScriptRoot) 'config\deployment.defaults.json'),
+    [string]$ProvisioningProfileScriptPath = (Join-Path $PSScriptRoot 'Resolve-AzdUpProvisioningProfile.ps1'),
     [string]$PhaseTwoPreparationScriptPath = (Join-Path $PSScriptRoot 'Initialize-AzdUpPhaseTwo.ps1'),
     [string]$W365SetupScriptPath = (Join-Path $PSScriptRoot 'Invoke-W365SetupFlow.ps1'),
     [string]$ViewerBootstrapScriptPath = (Join-Path $PSScriptRoot 'Deploy-ViewerBootstrap.ps1'),
@@ -176,6 +177,17 @@ Show-PostUpPlan `
 
 if ($enableW365 -and !$w365AlreadyEnabled) {
     Confirm-W365PostUpChanges
+    Write-SampleVerbose -Component 'postup' -Message 'Resolving Windows 365 and ACA choices after the Foundry bootstrap is available.'
+    & $ProvisioningProfileScriptPath -Environment $environmentName -RepositoryRoot $RepositoryRoot
+    if (!$?) {
+        throw 'Post-bootstrap provisioning profile resolution failed.'
+    }
+    $currentValues = Import-AzdEnvironmentValues -Root $RepositoryRoot -EnvironmentName $environmentName
+    $enableW365 = Test-EnabledValue -Value ([string]$currentValues['ENABLE_W365'])
+    $deployViewer = Test-EnabledValue -Value ([string]$currentValues['DEPLOY_VIEWER'])
+}
+
+if ($enableW365 -and !$w365AlreadyEnabled) {
     Write-SampleVerbose -Component 'postup' -Message 'Preparing shared state and viewer infrastructure after phase-one identity discovery.'
     & $PhaseTwoPreparationScriptPath `
         -Environment $environmentName `
@@ -258,6 +270,47 @@ if ($enableW365) {
             $configuredDomain = [string]$currentValues['W365_AGENT_USER_DOMAIN']
             if (![string]::IsNullOrWhiteSpace($configuredDomain)) {
                 $setupArguments.AgentUserDomain = $configuredDomain
+            }
+            $poolId = [guid]::Empty
+            if ([guid]::TryParse([string]$currentValues['W365_POOL_ID'], [ref]$poolId) -and
+                $poolId -ne [guid]::Empty) {
+                $setupArguments.PoolId = $poolId
+            }
+            $billingPlanId = [guid]::Empty
+            if ([guid]::TryParse([string]$currentValues['W365_POOL_BILLING_PLAN_ID'], [ref]$billingPlanId) -and
+                $billingPlanId -ne [guid]::Empty) {
+                $setupArguments.PoolBillingPlanId = $billingPlanId
+            }
+            foreach ($mapping in @(
+                @{ Environment = 'W365_POOL_BILLING_TYPE'; Parameter = 'PoolBillingType' },
+                @{ Environment = 'W365_POOL_GEOGRAPHIC_LOCATION_TYPE'; Parameter = 'PoolGeographicLocationType' },
+                @{ Environment = 'W365_POOL_REGION_GROUP'; Parameter = 'PoolRegionGroup' },
+                @{ Environment = 'W365_POOL_IMAGE_ID'; Parameter = 'PoolImageId' },
+                @{ Environment = 'W365_POOL_IMAGE_TYPE'; Parameter = 'PoolImageType' },
+                @{ Environment = 'W365_POOL_OS_LOCALE'; Parameter = 'PoolOsLocale' }
+            )) {
+                $value = [string]$currentValues[$mapping.Environment]
+                if (![string]::IsNullOrWhiteSpace($value)) {
+                    $setupArguments[$mapping.Parameter] = $value
+                }
+            }
+            $regions = @(([string]$currentValues['W365_POOL_REGIONS']).Split(
+                ',',
+                [StringSplitOptions]::RemoveEmptyEntries -bor [StringSplitOptions]::TrimEntries))
+            if ($regions.Count -gt 0) {
+                $setupArguments.PoolRegions = $regions
+            }
+            foreach ($mapping in @(
+                @{ Environment = 'W365_POOL_MINIMUM_COUNT'; Parameter = 'PoolMinimumCount' },
+                @{ Environment = 'W365_POOL_MAXIMUM_COUNT'; Parameter = 'PoolMaximumCount' }
+            )) {
+                $value = 0
+                if ([int]::TryParse([string]$currentValues[$mapping.Environment], [ref]$value)) {
+                    $setupArguments[$mapping.Parameter] = $value
+                }
+            }
+            if ([string]$currentValues['W365_POOL_ENABLE_SINGLE_SIGN_ON'] -eq 'true') {
+                $setupArguments.PoolEnableSingleSignOn = $true
             }
             & $W365SetupScriptPath @setupArguments
             $w365SetupRan = $true

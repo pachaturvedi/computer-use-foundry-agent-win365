@@ -55,9 +55,10 @@ function Invoke-W365Azd {
     Write-SampleVerbose -Component 'azd' -Message ($Arguments -join ' ')
     Write-SampleDebug -Component 'azd' -Message "CaptureOutput=$($CaptureOutput.IsPresent); argumentCount=$($Arguments.Count)."
     Write-Host ('[{0:HH:mm:ss}] [COMMAND] azd {1}' -f [DateTimeOffset]::Now, ($Arguments -join ' '))
-    $output = & $Azd.Path @Arguments
+    $output = @(& $Azd.Path @Arguments 2>&1)
     if ($LASTEXITCODE -ne 0) {
-        throw "azd $($Arguments -join ' ') failed with exit code $LASTEXITCODE."
+        $failure = ($output | Out-String).Trim()
+        throw "azd $($Arguments -join ' ') failed with exit code $LASTEXITCODE. $failure"
     }
 
     if ($CaptureOutput) {

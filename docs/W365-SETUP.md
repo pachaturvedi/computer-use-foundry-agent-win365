@@ -31,29 +31,31 @@ A task timeout is not a billing cap. Stop/delete unneeded pools in Intune.
 [billing](https://learn.microsoft.com/windows-365/agents/billing-w365a),
 [pool creation](https://github.com/microsoft/windows-365-for-agents/blob/main/docs/cloud-pc-pools.md).
 
-## Fresh `azd up` prerequisites
+## Fresh `azd up` onboarding
 
-Before creating the environment, save either an existing W365 agent pool or an
-approved billing-plan profile:
+Interactive `azd up` deploys the Foundry bootstrap before collecting W365
+tenant details. After bootstrap, choose one:
 
-```powershell
-pwsh -NoProfile -File .\scripts\Get-W365DiscoveryOptions.ps1 `
-    -TenantId "<tenant-guid>" `
-    -UseDeviceCode `
-    -Configure
-```
+1. reuse an existing W365 agent pool;
+2. create a new pool from the reviewed defaults; or
+3. skip W365 and retain the Foundry-only bootstrap.
 
-The helper writes only non-secret pool, region, image, and capacity settings to
-ignored `config\deployment.local.json`. Alternatively, after `azd env new`, set
-an approved billing-plan GUID directly:
+The flow performs delegated read-only Graph discovery and stores non-secret
+pool, billing, region, and image selections in
+`.azure\<environment-name>\.env`. For a new pool, the checked-in region and
+image defaults are selected automatically when available. A billing-plan GUID
+is derived from an existing pool when possible; otherwise the operator must
+enter the approved tenant billing-plan GUID.
+
+For non-interactive automation, set an existing pool ID or billing-plan GUID
+before `azd up`:
 
 ```powershell
 azd env set W365_POOL_BILLING_PLAN_ID "<billing-plan-guid>" `
     --environment "<azd-environment-name>"
 ```
 
-The `preup` hook fails before Azure changes when neither an existing pool nor a
-valid billing-plan GUID is configured. During `postup`, the operator must:
+During interactive `postup`, the operator must:
 
 1. approve W365/Entra resource changes;
 2. complete delegated Graph device-code sign-in;
@@ -64,6 +66,11 @@ valid billing-plan GUID is configured. During `postup`, the operator must:
 The hook then creates or reuses the agent user and W365 pool, persists the
 ownership manifest and non-secret identifiers, and redeploys the same hosted
 agent name. It never creates a replacement Foundry blueprint or agent identity.
+
+`Get-W365DiscoveryOptions.ps1 -Configure` remains available for staged
+deployments that need the profile reviewed before phase 1. That explicit helper
+writes ignored `config\deployment.local.json`; direct fresh `azd up` uses the
+selected azd environment instead.
 
 ## Setup permission summary
 

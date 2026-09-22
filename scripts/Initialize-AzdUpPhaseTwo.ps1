@@ -3,7 +3,8 @@
 param(
     [Parameter(Mandatory)][string]$Environment,
     [switch]$DeployViewer,
-    [string]$IdentityScriptPath = (Join-Path $PSScriptRoot 'Get-FoundryIdentity.ps1')
+    [string]$IdentityScriptPath = (Join-Path $PSScriptRoot 'Get-FoundryIdentity.ps1'),
+    [string]$ProvisioningProfileScriptPath = (Join-Path $PSScriptRoot 'Resolve-AzdUpProvisioningProfile.ps1')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -36,6 +37,13 @@ if ([string]::IsNullOrWhiteSpace($agentName)) {
     $agentName = 'win365-desktop-agent'
 }
 $agentVersion = Get-W365AzdValue -Azd $azd -Name 'AGENT_WIN365_DESKTOP_AGENT_VERSION'
+$credentialMode = Get-W365AzdValue -Azd $azd -Name 'W365_BLUEPRINT_CREDENTIAL_MODE' -AllowMissing
+if ([string]::IsNullOrWhiteSpace($credentialMode)) {
+    $credentialMode = 'client_secret'
+}
+if ($credentialMode -notin @('client_secret', 'managed_identity_federation', 'key_vault_certificate')) {
+    throw "Unsupported W365_BLUEPRINT_CREDENTIAL_MODE '$credentialMode'."
+}
 $tenantIdValue = Get-W365AzdValue -Azd $azd -Name 'AZURE_TENANT_ID'
 $tenantId = [guid]::Empty
 if (![guid]::TryParse($tenantIdValue, [ref]$tenantId) -or $tenantId -eq [guid]::Empty) {
@@ -65,6 +73,7 @@ $phaseTwoValues = [ordered]@{
     STATE_AGENT_PRINCIPAL_ID = $agentPrincipalId.ToString()
     DEPLOY_VIEWER = $DeployViewer.IsPresent.ToString().ToLowerInvariant()
     VIEWER_LIVE_ENABLED = 'false'
+    W365_BLUEPRINT_CREDENTIAL_MODE = $credentialMode
 }
 Set-W365AzdValues -Azd $azd -Values $phaseTwoValues
 
@@ -78,9 +87,30 @@ try {
 
     if ($DeployViewer) {
         Write-W365ProvisioningStep 'Provisioning the ACA viewer bootstrap after shared state is ready.'
-        Invoke-W365Azd -Azd $azd -Arguments @(
-            'provision', 'viewer', '--environment', $Environment, '--no-prompt'
-        ) | Out-Null
+        try {
+            Invoke-W365Azd -Azd $azd -Arguments @(
+                'provision', 'viewer', '--environment', $Environment, '--no-prompt'
+            ) | Out-Null
+        }
+        catch {
+            $quotaFailure = $_.Exception.Message -match
+                'MaxNumberOfGlobalEnvironmentsInSubExceeded|managed environment.{0,80}(quota|capacity)|quota.{0,80}managed environment'
+            if (!$quotaFailure -or $env:AZD_NON_INTERACTIVE -eq 'true') {
+                throw
+            }
+
+            Write-Warning 'A new ACA managed environment could not be created because of a subscription quota or capacity limit.'
+            & $ProvisioningProfileScriptPath `
+                -Environment $Environment `
+                -ViewerOnly `
+                -ViewerMode existing
+            if (!$?) {
+                throw 'Existing ACA managed-environment selection failed after the creation quota error.'
+            }
+            Invoke-W365Azd -Azd $azd -Arguments @(
+                'provision', 'viewer', '--environment', $Environment, '--no-prompt'
+            ) | Out-Null
+        }
     }
 }
 finally {

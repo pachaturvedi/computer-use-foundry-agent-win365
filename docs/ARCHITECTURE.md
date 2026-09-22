@@ -85,6 +85,7 @@ sequenceDiagram
    actor Admin as Developer / tenant administrator
    participant AZD as Azure Developer CLI (azd)
    participant Hook as Complete-AzdUp.ps1
+   participant Profile as Provisioning profile resolver
    participant Foundry as Microsoft Foundry
    participant Discovery as Get-FoundryIdentity.ps1
    participant Setup as Setup-W365.ps1
@@ -96,6 +97,9 @@ sequenceDiagram
    AZD->>Foundry: Deploy hosted agent version 1
    Foundry->>Entra: Provision blueprint and agent identity
    AZD->>Hook: Run guarded postup
+   Hook->>Profile: Select existing/new/skip W365 and ACA paths
+   Profile->>W365: Read pools, regions, and images
+   Profile-->>Hook: Persist non-secret choices per azd environment
    Hook->>Discovery: Read exact agent name and version
    Discovery->>Foundry: Read blueprint client ID and instance principal ID
    Foundry-->>Discovery: Blueprint ID and agent object ID
@@ -126,6 +130,7 @@ sequenceDiagram
 ```
 
 Relevant implementation: [`azure.yaml`](../azure.yaml),
+[`Resolve-AzdUpProvisioningProfile.ps1`](../scripts/Resolve-AzdUpProvisioningProfile.ps1),
 [`Get-FoundryIdentity.ps1`](../scripts/Get-FoundryIdentity.ps1), and
 [`Setup-W365.ps1`](../scripts/Setup-W365.ps1).
 

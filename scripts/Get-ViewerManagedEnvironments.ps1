@@ -1,7 +1,9 @@
 #Requires -Version 7.4
 [CmdletBinding()]
 param(
-    [guid]$SubscriptionId
+    [guid]$SubscriptionId,
+    [switch]$SucceededOnly,
+    [switch]$AsJson
 )
 
 $ErrorActionPreference = 'Stop'
@@ -45,4 +47,13 @@ $results = foreach ($environment in $environments) {
     }
 }
 
-$results | Sort-Object Location, ResourceGroup, Name | Format-Table -AutoSize
+$results = @($results |
+    Where-Object { !$SucceededOnly -or $_.ProvisioningState -eq 'Succeeded' } |
+    Sort-Object Location, ResourceGroup, Name)
+
+if ($AsJson) {
+    $results | ConvertTo-Json -Depth 5
+}
+else {
+    $results | Format-Table -AutoSize
+}

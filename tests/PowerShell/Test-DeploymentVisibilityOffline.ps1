@@ -144,13 +144,14 @@ try {
         $upContextScript -notmatch 'Resolved deployment defaults' -or
         $upContextScript -notmatch 'Model capacity' -or
         $upContextScript -notmatch 'Enabled after Foundry identity discovery' -or
-        $upContextScript -notmatch 'W365_POOL_BILLING_PLAN_ID' -or
+        $upContextScript -notmatch 'Non-interactive Windows 365 setup requires' -or
         $upContextScript -notmatch 'Read-DeploymentConfigFile' -or
         $upContextScript -notmatch 'Get-DeploymentConfig\s+-RepositoryRoot' -or
         $upContextScript -notmatch 'Existing-project mode requires these azd environment values' -or
         $upContextScript -notmatch '\$generatedProjectName\.Substring\(0, 64\)' -or
         $upContextScript -notmatch 'informational, not failures' -or
         $postUpScript -notmatch 'Initialize-AzdUpPhaseTwo\.ps1' -or
+        $postUpScript -notmatch 'Resolve-AzdUpProvisioningProfile\.ps1' -or
         $postUpScript -notmatch 'viewerLiveActivated -or' -or
         $phaseTwoScript -notmatch 'STATE_AGENT_PRINCIPAL_ID = \$agentPrincipalId\.ToString\(\)' -or
         $phaseTwoScript -notmatch "'provision', 'state'" -or
