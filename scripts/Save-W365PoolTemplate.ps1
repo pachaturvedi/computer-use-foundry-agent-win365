@@ -151,6 +151,7 @@ if (!(Test-GraphContext -Context $context -RequiredTenantId $TenantId -RequiredS
 
     if ($UseDeviceCode) {
         $connectParameters.UseDeviceCode = $true
+        $connectParameters.InformationAction = 'Continue'
     }
 
     try {

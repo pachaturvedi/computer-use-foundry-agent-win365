@@ -87,7 +87,7 @@ function Connect-DiscoveryGraph {
     )
 
     if (!$UseDeviceCode) {
-        Connect-MgGraph @ConnectParameters
+        Connect-MgGraph @ConnectParameters | Out-Host
         return
     }
 
@@ -104,7 +104,7 @@ function Connect-DiscoveryGraph {
             if ($MaxAttempts -gt 1) {
                 Write-Host "Starting Microsoft Graph device-code sign-in attempt $attempt of $MaxAttempts..."
             }
-            Connect-MgGraph @ConnectParameters
+            Connect-MgGraph @ConnectParameters | Out-Host
             return
         }
         catch {
@@ -134,6 +134,7 @@ if (!$hasRequiredContext) {
     }
     if ($UseDeviceCode) {
         $connectParameters.UseDeviceCode = $true
+        $connectParameters.InformationAction = 'Continue'
     }
 
     try {

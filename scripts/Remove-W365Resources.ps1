@@ -223,6 +223,7 @@ function Connect-GraphForCleanup {
         }
 
         $connectParameters.UseDeviceCode = $true
+        $connectParameters.InformationAction = 'Continue'
         Connect-MgGraph @connectParameters
         $graphContext = Get-MgContext
     }
