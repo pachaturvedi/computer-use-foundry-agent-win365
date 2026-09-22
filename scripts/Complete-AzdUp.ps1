@@ -318,6 +318,7 @@ if ($enableW365 -and !$w365AlreadyEnabled -and $credentialMode -eq 'key_vault_ce
 # The temporary Certificates Officer lease acquired above must stay valid for the certificate reads
 # performed by W365 setup readiness verification and the hosted-agent deployment preflight below.
 # It is released once, in the trailing finally, whether or not the remaining steps succeed.
+$postCertificatePrimaryError = $null
 try {
 
 if ($enableW365 -and !$w365AlreadyEnabled -and !$credentialAccessFinalized) {
@@ -564,10 +565,18 @@ if (![string]::IsNullOrWhiteSpace($env:AZURE_ENV_NAME)) {
 }
 
 }
+catch {
+    $postCertificatePrimaryError = $_
+}
 finally {
     if ($null -ne $certificateOfficerLease) {
         $completedCertificateLease = $certificateOfficerLease
         $certificateOfficerLease = $null
-        Complete-W365CertificateOfficerLease -Lease $completedCertificateLease
+        Complete-W365CertificateOfficerLease `
+            -Lease $completedCertificateLease `
+            -PrimaryError $postCertificatePrimaryError
+    }
+    elseif ($null -ne $postCertificatePrimaryError) {
+        throw $postCertificatePrimaryError
     }
 }

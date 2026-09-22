@@ -62,7 +62,8 @@ $trackedEnvironmentVariables = @(
     'SAMPLE_LOG_LEVEL',
     'TEST_AZ_BEHAVIOR',
     'TEST_CERTIFICATE_INITIALIZATION_FAILURE',
-    'TEST_CERTIFICATE_REGISTRATION_FAILURE'
+    'TEST_CERTIFICATE_REGISTRATION_FAILURE',
+    'TEST_AZ_ROLE_DELETE_FAILURE'
 )
 $savedEnvironment = @{}
 foreach ($name in $trackedEnvironmentVariables) {
@@ -102,6 +103,10 @@ function az {
     }
     if ($arguments[0] -eq 'role' -and $arguments[1] -eq 'assignment' -and $arguments[2] -eq 'delete') {
         if ($env:TEST_ORDER_PATH) { Add-Content -LiteralPath $env:TEST_ORDER_PATH -Value 'certificate-role-release' }
+        if ($env:TEST_AZ_ROLE_DELETE_FAILURE -eq 'true') {
+            $global:LASTEXITCODE = 1
+            return ''
+        }
         return
     }
     throw "Unexpected az call: $($arguments -join ' ')"
@@ -511,6 +516,54 @@ throw 'Simulated W365 setup failure.'
     }
     $env:TEST_CERTIFICATE_INITIALIZATION_FAILURE = ''
     $env:TEST_CERTIFICATE_REGISTRATION_FAILURE = ''
+
+    foreach ($roleDeleteFails in @($false, $true)) {
+        Reset-Calls
+        Write-TestEnvironment -Complete:$false -OmitDeploymentFlags
+        (Get-Content -LiteralPath $environmentPath) -replace
+            'W365_BLUEPRINT_CREDENTIAL_MODE="client_secret"',
+            'W365_BLUEPRINT_CREDENTIAL_MODE="key_vault_certificate"' |
+            Set-Content -LiteralPath $environmentPath
+        $env:ENABLE_W365 = ''
+        $env:W365_ENABLED = 'false'
+        $env:TEST_AZ_ROLE_DELETE_FAILURE = $roleDeleteFails.ToString().ToLowerInvariant()
+        $postCertificateError = $null
+        try {
+            & $scriptPath `
+                -RepositoryRoot $tempRoot `
+                -PhaseTwoPreparationScriptPath $mockPhaseTwoPath `
+                -CertificateInitializationScriptPath $mockCertificateInitializationPath `
+                -CertificateRegistrationScriptPath $mockCertificateRegistrationPath `
+                -W365SetupScriptPath $failingW365Path `
+                -ViewerBootstrapScriptPath $mockViewerPath `
+                -ViewerSecretsScriptPath $mockViewerSecretsPath
+        }
+        catch {
+            $postCertificateError = $_
+        }
+        $postCertificateOrder = @(Get-Content -LiteralPath $orderPath)
+        if ($null -eq $postCertificateError) {
+            throw 'Postup hid a failure that occurred after blueprint certificate provisioning.'
+        }
+        if ('certificate-role-release' -notin $postCertificateOrder) {
+            throw 'The temporary certificate officer lease was not released after a post-certificate failure.'
+        }
+        $postCertificateException = $postCertificateError.Exception
+        if ($roleDeleteFails) {
+            if ($postCertificateException -isnot [AggregateException] -or
+                @($postCertificateException.InnerExceptions |
+                    Where-Object { $_.Message -match 'Simulated W365 setup failure\.' }).Count -ne 1 -or
+                @($postCertificateException.InnerExceptions |
+                    Where-Object { $_.Message -match 'revoke the temporary Key Vault Certificates Officer' }).Count -ne 1) {
+                throw 'A post-certificate failure with a failing revocation did not retain both errors.'
+            }
+        }
+        elseif ($postCertificateException -is [AggregateException] -or
+            $postCertificateException.Message -notmatch 'Simulated W365 setup failure\.') {
+            throw 'A post-certificate failure did not surface the primary error.'
+        }
+    }
+    $env:TEST_AZ_ROLE_DELETE_FAILURE = ''
 
     Reset-Calls
     Write-TestEnvironment -Complete:$false
