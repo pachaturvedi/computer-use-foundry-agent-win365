@@ -15,10 +15,15 @@ $callsPath = Join-Path $tempRoot 'calls.txt'
 $environmentDirectory = Join-Path $tempRoot '.azure\sample-dev'
 $failingSummaryPath = Join-Path $tempRoot 'Failing-Summary.ps1'
 $destructiveSummaryPath = Join-Path $tempRoot 'Destructive-Summary.ps1'
+$hangStartedPath = Join-Path $tempRoot 'hang-started.txt'
+$hangSurvivedPath = Join-Path $tempRoot 'hang-survived.txt'
 $previousCallsPath = $env:TEST_AZD_UP_CALLS_PATH
 $previousEnvironmentPath = $env:TEST_AZD_UP_ENV_PATH
 $previousPrompt = $env:TEST_AZD_UP_PROMPT
 $previousSkipCompletion = $env:TEST_AZD_UP_SKIP_COMPLETION
+$previousHang = $env:TEST_AZD_UP_HANG
+$previousHangStartedPath = $env:TEST_AZD_UP_HANG_STARTED_PATH
+$previousHangSurvivedPath = $env:TEST_AZD_UP_HANG_SURVIVED_PATH
 
 try {
     New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
@@ -38,6 +43,12 @@ try {
     Set-Content -LiteralPath $fakeAzdPath -Value @'
 @echo off
 echo %*>>"%TEST_AZD_UP_CALLS_PATH%"
+if "%TEST_AZD_UP_HANG%"=="true" (
+  echo started>"%TEST_AZD_UP_HANG_STARTED_PATH%"
+  ping 127.0.0.1 -n 31 >nul
+  echo survived>"%TEST_AZD_UP_HANG_SURVIVED_PATH%"
+  exit /b 0
+)
 if "%TEST_AZD_UP_PROMPT%"=="true" (
   <nul set /p "=Type YES to continue: "
   ping 127.0.0.1 -n 3 >nul
@@ -76,6 +87,8 @@ Remove-Item -LiteralPath (Join-Path $RepositoryRoot ".azure\$Environment\.env") 
 '@
     $env:TEST_AZD_UP_CALLS_PATH = $callsPath
     $env:TEST_AZD_UP_ENV_PATH = Join-Path $environmentDirectory '.env'
+    $env:TEST_AZD_UP_HANG_STARTED_PATH = $hangStartedPath
+    $env:TEST_AZD_UP_HANG_SURVIVED_PATH = $hangSurvivedPath
 
     $output = & $scriptPath `
         -Environment 'sample-dev' `
@@ -150,6 +163,51 @@ Remove-Item -LiteralPath (Join-Path $RepositoryRoot ".azure\$Environment\.env") 
         throw "The prompt-streaming wrapper process failed: $promptError"
     }
     $env:TEST_AZD_UP_PROMPT = $null
+
+    $cancellationOutputPath = Join-Path $tempRoot 'cancellation-output.txt'
+    $cancellationErrorPath = Join-Path $tempRoot 'cancellation-error.txt'
+    $env:TEST_AZD_UP_HANG = 'true'
+    $cancellationProcess = Start-Process `
+        -FilePath (Get-Command pwsh).Source `
+        -ArgumentList @(
+            '-NoProfile',
+            '-File', $scriptPath,
+            '-Environment', 'sample-dev',
+            '-ConfirmResourceChanges',
+            '-AzdPath', $fakeAzdPath,
+            '-RepositoryRoot', $tempRoot
+        ) `
+        -RedirectStandardOutput $cancellationOutputPath `
+        -RedirectStandardError $cancellationErrorPath `
+        -NoNewWindow `
+        -PassThru
+    $cancellationDeadline = [DateTimeOffset]::UtcNow.AddSeconds(10)
+    while (!(Test-Path -LiteralPath $hangStartedPath) -and
+        [DateTimeOffset]::UtcNow -lt $cancellationDeadline) {
+        Start-Sleep -Milliseconds 100
+    }
+    if (!(Test-Path -LiteralPath $hangStartedPath)) {
+        $cancellationProcess.Kill($true)
+        throw 'The fake azd provider did not start its cancellation scenario.'
+    }
+    Stop-Process -Id $cancellationProcess.Id
+    $cancellationProcess.WaitForExit()
+    Start-Sleep -Seconds 2
+    if (Test-Path -LiteralPath $hangSurvivedPath) {
+        throw 'The azd provider survived termination of the wrapper host.'
+    }
+    $cancellationOutput = if (Test-Path -LiteralPath $cancellationOutputPath) {
+        Get-Content -LiteralPath $cancellationOutputPath -Raw
+    }
+    else {
+        ''
+    }
+    $cancellationValues = Read-AzdEnvironmentFile -Path (Join-Path $environmentDirectory '.env')
+    if ($cancellationOutput -match 'SUCCESS:' -or
+        ![string]::IsNullOrWhiteSpace([string]$cancellationValues['W365_AZD_UP_COMPLETED_RUN_ID'])) {
+        throw 'Wrapper cancellation emitted success or persisted completion state.'
+    }
+    $env:TEST_AZD_UP_HANG = $null
 
     Remove-Item -LiteralPath $callsPath
     & $scriptPath `
@@ -298,6 +356,9 @@ finally {
     $env:TEST_AZD_UP_ENV_PATH = $previousEnvironmentPath
     $env:TEST_AZD_UP_PROMPT = $previousPrompt
     $env:TEST_AZD_UP_SKIP_COMPLETION = $previousSkipCompletion
+    $env:TEST_AZD_UP_HANG = $previousHang
+    $env:TEST_AZD_UP_HANG_STARTED_PATH = $previousHangStartedPath
+    $env:TEST_AZD_UP_HANG_SURVIVED_PATH = $previousHangSurvivedPath
     Remove-Item Env:\TEST_AZD_UP_FAIL -ErrorAction SilentlyContinue
     if (Test-Path -LiteralPath $tempRoot) {
         Remove-Item -LiteralPath $tempRoot -Recurse -Force

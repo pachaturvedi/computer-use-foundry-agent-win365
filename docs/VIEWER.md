@@ -48,8 +48,10 @@ remain failures.
 Viewer infrastructure is requested only after the shared storage account,
 container, and exact undecorated HTTPS Blob URI are validated. Missing or
 inconsistent outputs stop before ACA provisioning. Fix the reported state
-configuration and rerun `azd up`; the onboarding retry re-enters phase two, and
-no viewer cleanup is required for a failure before viewer provisioning.
+configuration and rerun
+`pwsh -NoProfile -File .\scripts\Invoke-AzdUp.ps1 -Environment "<azd-environment-name>" -ConfirmResourceChanges`;
+the onboarding retry re-enters phase two, and no viewer cleanup is required for
+a failure before viewer provisioning.
 
 The one-command deployment provisions the ACA/ACR/UAMI bootstrap after shared
 state, builds and health-checks the viewer image, completes W365 setup,
@@ -60,7 +62,8 @@ or ignored `config\deployment.local.json` are carried through automatically.
 
 If the onboarding values are absent, the ACA viewer still deploys and reports
 healthy bootstrap status, but live-view and take-control routes remain disabled.
-The final summary lists the missing values; set them and rerun `azd up`.
+The final summary lists the missing values; set them and rerun
+`pwsh -NoProfile -File .\scripts\Invoke-AzdUp.ps1 -Environment "<azd-environment-name>" -ConfirmResourceChanges`.
 
 ## Bootstrap and local mode
 

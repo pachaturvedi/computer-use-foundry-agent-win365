@@ -92,8 +92,9 @@ The interactive flow then:
 7. deploys the same agent name with W365 enabled; and
 8. activates the viewer when all tenant-specific inputs are available.
 
-The wrapper streams the underlying `azd up` output without changing deployment
-behavior. It suppresses generic Foundry next steps that otherwise appear while
+The wrapper forwards line- or carriage-return-delimited `azd up` output and
+recognized interactive prompts without changing deployment behavior. It
+suppresses generic Foundry next steps that otherwise appear while
 `postup` is still configuring W365 and the viewer. After all phases succeed,
 it verifies the persisted agent, state, viewer, and W365 completion flags,
 replaces the core-only elapsed time with the end-to-end duration, and prints
@@ -629,7 +630,7 @@ retained failed environment.
 | Foundry returns 403 | Verify project-scoped Foundry data-plane roles and wait for RBAC propagation; do not grant broad roles blindly. |
 | Model validation or deployment fails | Confirm the exact deployment name, supported capabilities, SKU, quota, version, and region. No agent version is published until validation succeeds. |
 | Viewer managed-environment quota is exhausted | Explicitly select an approved existing ACA environment or request quota. The deployment never selects one automatically. |
-| Viewer remains in bootstrap mode | Obtain the approved screen-share values, complete OIDC/Key Vault setup in [Viewer](VIEWER.md), and rerun `azd up`. |
+| Viewer remains in bootstrap mode | Obtain the approved screen-share values, complete OIDC/Key Vault setup in [Viewer](VIEWER.md), and rerun `pwsh -NoProfile -File .\scripts\Invoke-AzdUp.ps1 -Environment "<azd-environment-name>" -ConfirmResourceChanges`. |
 | W365 setup is blocked | Follow the exact prerequisite or ownership error in [Windows 365 setup](W365-SETUP.md); do not bypass parent, consent, billing, or manifest checks. |
 | Agent deployment fails after W365 setup | Rerun only the guarded `DeployAgent` command after fixing the reported deployment prerequisite. |
 | Invocation is disconnected or ambiguous | Do not replay. Inspect sanitized logs and follow [fail-closed recovery](ARCHITECTURE.md#fail-closed-recovery). |

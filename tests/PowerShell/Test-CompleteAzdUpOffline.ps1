@@ -33,6 +33,8 @@ $trackedEnvironmentVariables = @(
     'W365_AGENT_USER_DOMAIN',
     'W365_RESOURCE_CHANGES_CONFIRMED',
     'W365_POSTUP_IN_PROGRESS',
+    'W365_AZD_UP_WRAPPER',
+    'W365_AZD_UP_RUN_ID',
     'AZD_NON_INTERACTIVE',
     'AZURE_ENV_NAME',
     'AZURE_TENANT_ID',
@@ -467,6 +469,43 @@ throw 'Simulated W365 setup failure.'
     if (!(Test-Path -LiteralPath $viewerCallsPath)) {
         throw 'Completed W365 environment did not continue to viewer bootstrap.'
     }
+
+    Reset-Calls
+    Write-TestEnvironment -Complete:$true
+    Write-CompleteManifest
+    $env:W365_AZD_UP_WRAPPER = 'true'
+    $env:W365_AZD_UP_RUN_ID = 'producer-run-1'
+    & $scriptPath `
+        -RepositoryRoot $tempRoot `
+        -PhaseTwoPreparationScriptPath $mockPhaseTwoPath `
+        -W365SetupScriptPath $mockW365Path `
+        -ViewerBootstrapScriptPath $mockViewerPath `
+        -ViewerSecretsScriptPath $mockViewerSecretsPath
+    $producerEnvironment = Get-Content -LiteralPath $environmentPath -Raw
+    if ($producerEnvironment -notmatch 'W365_AZD_UP_POSTUP_RUN_ID="producer-run-1"') {
+        throw 'Complete-AzdUp did not persist the wrapper current-run post-up marker.'
+    }
+
+    Write-TestEnvironment -Complete:$true
+    Write-CompleteManifest
+    $env:W365_AZD_UP_RUN_ID = ''
+    $missingRunIdFailed = $false
+    try {
+        & $scriptPath `
+            -RepositoryRoot $tempRoot `
+            -PhaseTwoPreparationScriptPath $mockPhaseTwoPath `
+            -W365SetupScriptPath $mockW365Path `
+            -ViewerBootstrapScriptPath $mockViewerPath `
+            -ViewerSecretsScriptPath $mockViewerSecretsPath
+    }
+    catch {
+        $missingRunIdFailed = $_.Exception.Message -match 'run-specific completion ID'
+    }
+    if (!$missingRunIdFailed) {
+        throw 'Complete-AzdUp accepted wrapper execution without a current run ID.'
+    }
+    $env:W365_AZD_UP_WRAPPER = ''
+    $env:W365_AZD_UP_RUN_ID = ''
 
     Reset-Calls
     Write-TestEnvironment -Complete:$true

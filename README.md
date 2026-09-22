@@ -121,7 +121,8 @@ pwsh -NoProfile -File .\scripts\Invoke-AzdUp.ps1 `
     -ConfirmResourceChanges
 ```
 
-The wrapper runs `azd up` and streams its progress, prompts, and errors. It
+The wrapper runs `azd up`, forwards line-delimited progress and recognized
+interactive prompts, and preserves errors. It
 suppresses the Foundry extension's generic service-level next steps because
 they are emitted after the bootstrap agent deploys, before Windows 365 and the
 optional viewer finish. One scenario-specific `Next` section is printed only

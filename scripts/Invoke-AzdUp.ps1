@@ -3,10 +3,10 @@
 Runs the complete azd deployment and prints final guidance only after verified completion.
 
 .DESCRIPTION
-Invokes azd up for one existing azd environment, streams deployment progress and
-interactive prompts, suppresses premature generic Foundry next steps, verifies a
-run-specific post-up handshake and persisted component state, then prints the
-repository deployment summary.
+Invokes azd up for one existing azd environment, forwards line- or
+carriage-return-delimited output and recognized interactive prompts, suppresses
+premature generic Foundry next steps, verifies a run-specific post-up handshake
+and persisted component state, then prints the repository deployment summary.
 
 .PARAMETER Environment
 The existing azd environment to deploy.
@@ -60,6 +60,129 @@ Initialize-SampleScriptLogging -ScriptName $MyInvocation.MyCommand.Name -Paramet
 if (!$IsWindows) {
     throw 'This deployment wrapper is Windows-only. Use PowerShell 7.4 or later on Windows.'
 }
+if ($null -eq ('Win365Sample.ChildProcessJob' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+
+namespace Win365Sample
+{
+    public sealed class ChildProcessJob : IDisposable
+    {
+        private const uint JobObjectLimitKillOnJobClose = 0x00002000;
+        private const int JobObjectExtendedLimitInformationClass = 9;
+        private IntPtr handle;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct JobObjectBasicLimitInformation
+        {
+            public long PerProcessUserTimeLimit;
+            public long PerJobUserTimeLimit;
+            public uint LimitFlags;
+            public UIntPtr MinimumWorkingSetSize;
+            public UIntPtr MaximumWorkingSetSize;
+            public uint ActiveProcessLimit;
+            public UIntPtr Affinity;
+            public uint PriorityClass;
+            public uint SchedulingClass;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct IoCounters
+        {
+            public ulong ReadOperationCount;
+            public ulong WriteOperationCount;
+            public ulong OtherOperationCount;
+            public ulong ReadTransferCount;
+            public ulong WriteTransferCount;
+            public ulong OtherTransferCount;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct JobObjectExtendedLimitInformation
+        {
+            public JobObjectBasicLimitInformation BasicLimitInformation;
+            public IoCounters IoInfo;
+            public UIntPtr ProcessMemoryLimit;
+            public UIntPtr JobMemoryLimit;
+            public UIntPtr PeakProcessMemoryUsed;
+            public UIntPtr PeakJobMemoryUsed;
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+        private static extern IntPtr CreateJobObject(IntPtr jobAttributes, string name);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool SetInformationJobObject(
+            IntPtr job,
+            int informationClass,
+            IntPtr information,
+            uint informationLength);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+
+        [DllImport("kernel32.dll")]
+        private static extern bool CloseHandle(IntPtr handle);
+
+        public ChildProcessJob()
+        {
+            handle = CreateJobObject(IntPtr.Zero, null);
+            if (handle == IntPtr.Zero)
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+
+            var limits = new JobObjectExtendedLimitInformation();
+            limits.BasicLimitInformation.LimitFlags = JobObjectLimitKillOnJobClose;
+            int length = Marshal.SizeOf<JobObjectExtendedLimitInformation>();
+            IntPtr information = Marshal.AllocHGlobal(length);
+            try
+            {
+                Marshal.StructureToPtr(limits, information, false);
+                if (!SetInformationJobObject(
+                    handle,
+                    JobObjectExtendedLimitInformationClass,
+                    information,
+                    (uint)length))
+                {
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                }
+            }
+            catch
+            {
+                CloseHandle(handle);
+                handle = IntPtr.Zero;
+                throw;
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(information);
+            }
+        }
+
+        public void Assign(Process process)
+        {
+            if (!AssignProcessToJobObject(handle, process.Handle))
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+        }
+
+        public void Dispose()
+        {
+            if (handle != IntPtr.Zero)
+            {
+                CloseHandle(handle);
+                handle = IntPtr.Zero;
+            }
+        }
+    }
+}
+'@
+}
 if (!$ConfirmResourceChanges -and !$WhatIfPreference) {
     throw 'Deployment can create or update billable Azure and Windows 365 resources. Re-run with -ConfirmResourceChanges after reviewing the deployment plan.'
 }
@@ -78,6 +201,9 @@ else {
 }
 if (!$resolvedAzd) {
     throw 'Azure Developer CLI 1.32.0 or later is required.'
+}
+if (!(Test-Path -LiteralPath $DeploymentSummaryScriptPath -PathType Leaf)) {
+    throw "DeploymentSummaryScriptPath '$DeploymentSummaryScriptPath' was not found."
 }
 
 $arguments = [System.Collections.Generic.List[string]]::new()
@@ -128,11 +254,10 @@ $startInfo.Environment['W365_AZD_UP_RUN_ID'] = $runId
 
 $process = [Diagnostics.Process]::new()
 $process.StartInfo = $startInfo
+$processJob = [Win365Sample.ChildProcessJob]::new()
+$processStarted = $false
+$processExitCode = $null
 $elapsed = [Diagnostics.Stopwatch]::StartNew()
-if (!$process.Start()) {
-    throw "Unable to start '$($resolvedAzd.Path)'."
-}
-
 function Write-FilteredAzdLine {
     param([AllowEmptyString()][string]$Line)
 
@@ -187,38 +312,77 @@ $script:foundryGuidanceSeen = $false
 $script:suppressNextBlock = $false
 $lineBuffer = [Text.StringBuilder]::new()
 $promptPassthrough = $false
-while (($nextCharacter = $process.StandardOutput.Read()) -ne -1) {
-    $character = [char]$nextCharacter
-    if ($promptPassthrough) {
-        Write-Host -NoNewline $character
-        if ($character -eq "`n") {
-            $promptPassthrough = $false
+$previousWasCarriageReturn = $false
+try {
+    if (!$process.Start()) {
+        throw "Unable to start '$($resolvedAzd.Path)'."
+    }
+    $processStarted = $true
+    try {
+        $processJob.Assign($process)
+    }
+    catch {
+        $process.Kill($true)
+        $process.WaitForExit()
+        throw "Unable to attach azd to the wrapper's cancellation boundary: $($_.Exception.Message)"
+    }
+
+    while (($nextCharacter = $process.StandardOutput.Read()) -ne -1) {
+        $character = [char]$nextCharacter
+        if ($promptPassthrough) {
+            Write-Host -NoNewline $character
+            if ($character -eq "`n") {
+                $promptPassthrough = $false
+            }
+            continue
         }
-        continue
+
+        if ($character -eq "`n") {
+            if ($previousWasCarriageReturn) {
+                $previousWasCarriageReturn = $false
+                continue
+            }
+            $line = $lineBuffer.ToString()
+            [void]$lineBuffer.Clear()
+            Write-FilteredAzdLine -Line $line
+            continue
+        }
+        if ($character -eq "`r") {
+            $line = $lineBuffer.ToString()
+            [void]$lineBuffer.Clear()
+            Write-FilteredAzdLine -Line $line
+            $previousWasCarriageReturn = $true
+            continue
+        }
+        $previousWasCarriageReturn = $false
+
+        [void]$lineBuffer.Append($character)
+        if (Test-InteractivePromptFragment -Text $lineBuffer.ToString()) {
+            Write-Host -NoNewline $lineBuffer.ToString()
+            [void]$lineBuffer.Clear()
+            $promptPassthrough = $true
+        }
+    }
+    if ($lineBuffer.Length -gt 0) {
+        Write-FilteredAzdLine -Line $lineBuffer.ToString()
     }
 
-    if ($character -eq "`n") {
-        $line = $lineBuffer.ToString().TrimEnd("`r")
-        [void]$lineBuffer.Clear()
-        Write-FilteredAzdLine -Line $line
-        continue
-    }
-
-    [void]$lineBuffer.Append($character)
-    if (Test-InteractivePromptFragment -Text $lineBuffer.ToString()) {
-        Write-Host -NoNewline $lineBuffer.ToString()
-        [void]$lineBuffer.Clear()
-        $promptPassthrough = $true
-    }
+    $process.WaitForExit()
+    $processExitCode = $process.ExitCode
 }
-if ($lineBuffer.Length -gt 0) {
-    Write-FilteredAzdLine -Line $lineBuffer.ToString().TrimEnd("`r")
+finally {
+    if ($processStarted -and !$process.HasExited) {
+        $process.Kill($true)
+        if (!$process.WaitForExit(10000)) {
+            throw 'The azd process tree did not stop within ten seconds after wrapper cancellation.'
+        }
+    }
+    $processJob.Dispose()
+    $process.Dispose()
 }
-
-$process.WaitForExit()
 $elapsed.Stop()
-if ($process.ExitCode -ne 0) {
-    throw "azd up failed with exit code $($process.ExitCode)."
+if ($processExitCode -ne 0) {
+    throw "azd up failed with exit code $processExitCode."
 }
 
 if (!(Test-Path -LiteralPath $environmentPath -PathType Leaf)) {
@@ -226,7 +390,7 @@ if (!(Test-Path -LiteralPath $environmentPath -PathType Leaf)) {
 }
 $values = Read-AzdEnvironmentFile -Path $environmentPath
 if ([string]$values['W365_AZD_UP_POSTUP_RUN_ID'] -ne $runId) {
-    throw "azd returned success, but the current post-deployment workflow did not complete. Correct the interrupted step and rerun this command; cleanup is not required."
+    throw "azd returned success, but the current post-deployment workflow did not complete. Inspect the reported stage and ownership evidence before retrying the same environment. If abandoning it, use the documented ownership-driven teardown."
 }
 $missing = [System.Collections.Generic.List[string]]::new()
 foreach ($name in @(
@@ -253,7 +417,7 @@ if ([string]$values['DEPLOY_VIEWER'] -eq 'true' -and
     $missing.Add('VIEWER_PUBLIC_URL')
 }
 if ($missing.Count -gt 0) {
-    throw "azd core deployment returned success, but the complete sample installation is unfinished. Missing completion state: $($missing -join ', '). Correct the interrupted step and rerun this command; cleanup is not required."
+    throw "azd core deployment returned success, but the complete sample installation is unfinished. Missing completion state: $($missing -join ', '). Inspect the reported stage and ownership evidence before retrying the same environment. If abandoning it, use the documented ownership-driven teardown."
 }
 
 $elapsedText = if ($elapsed.Elapsed.TotalHours -ge 1) {
