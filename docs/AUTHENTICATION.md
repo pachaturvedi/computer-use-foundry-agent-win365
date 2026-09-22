@@ -1,219 +1,186 @@
 # Authentication
 
+This guide defines the identity and token boundaries used by the hosted agent
+and optional viewer. Setup commands belong in
+[Windows 365 setup](W365-SETUP.md); deployment sequencing belongs in
+[Deployment](DEPLOYMENT.md).
+
 ## Identities and activation
 
 | Identity or setting | Meaning |
 | --- | --- |
-| Human operator | Invokes Foundry and signs in to the viewer. Not impersonated for W365. |
-| Foundry hosting Azure credential | Ordinary model/project and Blob access, separate from W365 token acquisition. |
-| `W365_BLUEPRINT_ID` | App/client ID of the blueprint provisioned by Foundry, not its object ID. |
-| `W365_AGENT_OBJECT_ID` | Object/principal ID of Foundry's existing agent identity. Setup accepts this as `-AgentIdentityId`. |
-| `W365_AGENT_ID` | App/client ID resolved by setup from that agent object ID; used in token exchanges. |
-| `W365_AGENT_USER_ID` | Agent-user object ID and pool assignee. An identifier, not a credential. |
-| Viewer UAMI / OIDC web app | UAMI authenticates the viewer process; a separate web app authenticates the human through OIDC. |
+| Human operator | Invokes Foundry and signs in to the viewer. The runtime does not impersonate this user for W365. |
+| Foundry hosting credential | Provides ordinary model/project and Blob access. It is separate from W365 token acquisition. |
+| `W365_BLUEPRINT_ID` | Foundry-provisioned blueprint app/client ID. |
+| `W365_AGENT_OBJECT_ID` | Foundry agent object/principal ID, used for Graph parent validation, Azure RBAC, and an optional FIC subject. |
+| `W365_AGENT_ID` | Agent app/client ID resolved from the object ID and used in token exchanges. |
+| `W365_AGENT_USER_ID` | Agent-user object ID assigned to the W365 pool. It is an identifier, not a credential. |
+| Viewer UAMI | Authenticates the ACA viewer process. |
+| Viewer OIDC web app | Authenticates the human operator separately from the W365 identity chain. |
 
-`W365_ENABLED` defaults to `false` and accepts only `true` or `false`. Bootstrap
-always pins it to `false`; successful phase-2 setup persists `true` into the
-selected azd environment. Bootstrap does not require identity, operator, model,
-state or OIDC configuration, and does not access W365/model/state credentials.
-Bootstrap starts before any model initialization. The agent exposes healthy readiness
-and a Responses 503 explaining phase 2; the viewer exposes `/health` and 503
-on other routes. `SAMPLE_LOCAL_MODE=true` is loopback-only bootstrap/offline.
-Live W365 requires a deployed identity endpoint; enabled local mode is refused.
+App/client IDs and object/principal IDs are different types even when a service
+currently returns the same GUID for both. Never substitute one for the other.
 
-When enabled, all W365 IDs must be valid. `W365_AGENT_OBJECT_ID` is required
-in both agent and viewer configuration, separately from the app/client ID in
-`W365_AGENT_ID`. Foundry, W365 and the viewer Azure
-identity must be in the same tenant (`W365_TENANT_ID`); the human OIDC tenant
-may differ. Foundry must inject `FOUNDRY_AGENT_BLUEPRINT_CLIENT_ID`, matching
-`W365_BLUEPRINT_ID`. Never set or override reserved platform variables yourself.
-Identity mode is selected by `W365_BLUEPRINT_CREDENTIAL_MODE`, never by a model,
-request argument, page or user-supplied credential. Active runtime requires shared Blob state;
-`FileSessionStore` is only an offline-test helper.
+`W365_ENABLED=false` is the bootstrap default. Bootstrap starts without W365,
+state, model, or viewer credentials; health is available and Responses requests
+return a phase-two-required 503. Live W365 requires:
 
-| `W365_BLUEPRINT_CREDENTIAL_MODE` | Status |
+- valid W365 identity IDs;
+- private Blob state;
+- one explicitly selected blueprint credential mode;
+- Foundry, W365, and the viewer Azure identity in the same tenant; and
+- the platform-injected `FOUNDRY_AGENT_BLUEPRINT_CLIENT_ID` matching
+  `W365_BLUEPRINT_ID`.
+
+The human OIDC tenant may differ. Never set reserved Foundry variables
+yourself. `SAMPLE_LOCAL_MODE=true` is loopback-only bootstrap/offline; enabled
+local W365 is refused.
+
+| `W365_BLUEPRINT_CREDENTIAL_MODE` | Current boundary |
 | --- | --- |
-| `client_secret` | Default for the E2E demo and validated end to end. The shared state-layer Key Vault stores the blueprint secret independently of whether the ACA viewer is enabled. |
-| `managed_identity_federation` | Optional hardening path. The tested Foundry-hosted identity could not chain its federated token into the blueprint exchange (`AADSTS700231`). |
-| `key_vault_certificate` | Self-signed, non-exportable Key Vault certificate. The agent's runtime principal signs the client assertion remotely inside Key Vault; the private key never leaves Key Vault and is never read by the agent process. Agent-only (not selectable for the viewer). |
+| `client_secret` | Checked-in default and validated for the bounded W365 lifecycle. The agent and viewer read the approved secret from Key Vault through separate managed identities. |
+| `managed_identity_federation` | Selectable only with explicit FIC approval. The tested Responses host is blocked by Entra `AADSTS700231` when chaining the federated assertion. |
+| `key_vault_certificate` | Agent-only. Uses a self-signed, non-exportable Key Vault certificate and remote signing. Implemented and offline-validated; live tenant acceptance is still required. |
 
-The modes are explicit and mutually exclusive. There is no fallback from one
-mode to another. In particular, a managed-identity failure never falls back to
-a secret, certificate, Azure CLI token or local user credential.
+Modes are explicit and mutually exclusive. A failure never falls back to
+another mode, Azure CLI, developer credentials, or an interactive user.
 
 ## Blueprint client secret delivery
 
-In `client_secret` mode, the hosted agent never receives the raw secret value
-as an environment variable. `infra/state/keyvault.bicep` grants the agent's
-own runtime principal (the same principal already used for shared Blob state
-access; see `STATE_AGENT_PRINCIPAL_ID`) a least-privilege **Key Vault Secrets
-User** role on the shared vault. At startup, `KeyVaultBlueprintSecretResolver`
-uses that identity to fetch `w365-blueprint-client-secret` directly from
-`W365_KEY_VAULT_NAME` (the only client-secret-mode configuration the agent
-requires) and caches it in memory for the process lifetime; rotating the
-secret requires a redeploy so a fresh process fetches the new value.
-`BlueprintTokenProvider` falls back to reading a plain `W365_CLIENT_SECRET`
-value only when no resolver is configured, which keeps the **viewer**
-(a Container App) working unchanged: it still receives the secret through its
-own native Key Vault secret reference (`infra/viewer.bicep`), using its own
-UAMI's separately granted Key Vault Secrets User role. Never print, hash for
-display, serialize into documentation, or commit the resolved value.
+In `client_secret` mode, the hosted agent receives only
+`W365_KEY_VAULT_NAME`. Its runtime principal has **Key Vault Secrets User** on
+the shared vault and retrieves `w365-blueprint-client-secret` directly at
+startup. The value is cached only in process memory; rotation requires a
+redeploy so a new process retrieves the new version.
+
+The viewer uses its own UAMI and native Key Vault secret reference. It does not
+share the agent's Azure identity. The shared vault exists even when the viewer
+is disabled.
+
+Never place the secret in source, JSON, azd state, logs, documentation, or a
+plain hosted-agent environment variable.
 
 ## Blueprint certificate delivery
 
-In `key_vault_certificate` mode, the agent authenticates the blueprint using a
-signed JWT client assertion instead of a shared secret. `infra/state/keyvault.bicep`
-grants the agent's runtime principal least-privilege **Key Vault Certificate
-User** (read public certificate metadata) and **Key Vault Crypto User**
-(sign/verify only) roles scoped to only the `w365-blueprint-certificate`
-certificate and its backing key objects — not the shared vault as a whole, so
-the agent's runtime identity has no standing access to unrelated secrets
-(such as the viewer OIDC client secret) also stored there, and never the
-roles needed to retrieve the private key or the paired secret. At startup,
-`KeyVaultBlueprintCertificateAssertionProvider` reads the public bytes of the
-`w365-blueprint-certificate` certificate from `W365_KEY_VAULT_NAME` (the only
-key_vault_certificate-mode configuration the agent requires), builds a JWT
-client assertion, and signs it by calling Key Vault's `sign` REST API — the
-private key is never retrieved, exported, or held in agent process memory.
-Certificate metadata is cached in memory for the process lifetime and retried
-after a failure; rotating the certificate requires a redeploy so a fresh
-process picks up the new key. This mode is agent-only: `Settings.Validate`
-rejects it for the viewer.
+In `key_vault_certificate` mode, the agent builds a JWT client assertion and
+asks Key Vault to sign it. The runtime principal receives:
 
-Provisioning is a two-step, explicitly confirmed process (see
-`docs/W365-SETUP.md`): `scripts\Initialize-W365BlueprintCertificate.ps1`
-creates or rotates the self-signed, non-exportable certificate in Key Vault,
-and `scripts\Register-W365BlueprintCertificate.ps1` registers only its public
-bytes as a `keyCredential` on the Foundry Agent ID Blueprint application via
-Microsoft Graph (`AgentIdentityBlueprint.AddRemoveCreds.All`, the least
-privileged credential-management scope for the blueprint — not tenant-wide
-application write), preserving any existing credentials already on the
-blueprint. `scripts\Invoke-W365SetupFlow.ps1` also verifies, via a read-only
-Graph call, that the exact same certificate is registered exactly once on the
-discovered blueprint before proceeding — Key Vault presence alone is not
-sufficient. Neither script reads, exports, or transmits private key material.
+- **Key Vault Certificate User** on the named certificate; and
+- **Key Vault Crypto User** on its backing key.
+
+These assignments are object-scoped, not vault-wide. The private key is
+non-exportable and is never returned to the agent process.
+
+Provisioning has two explicit steps:
+
+1. `Initialize-W365BlueprintCertificate.ps1` creates or rotates
+   `w365-blueprint-certificate` in Key Vault.
+2. `Register-W365BlueprintCertificate.ps1` registers only its public bytes as a
+   blueprint `keyCredential`.
+
+Setup verifies that the exact certificate is registered before W365 mutation.
+Key Vault presence alone is insufficient. The viewer rejects this mode.
 
 ## Three-stage agent-user tokens
 
-The selected credential mode changes only how the runtime obtains blueprint
-T1:
+The selected mode changes only how the runtime obtains blueprint T1:
 
-1. **T1:** authenticate the blueprint with either the explicitly approved
-   managed-identity FIC, the Key Vault-backed client secret, or the
-   Key Vault-backed certificate assertion. The viewer supports the first two
-   paths; certificate mode is agent-only.
-2. **T2:** the agent identity (`W365_AGENT_ID`, app/client ID) uses T1 as
+1. **T1 — blueprint assertion:** authenticate the blueprint using the approved
+   managed-identity FIC, Key Vault-backed client secret, or Key Vault-backed
+   certificate assertion.
+2. **T2 — agent assertion:** the agent app/client ID uses T1 as
    `client_assertion` to request the exchange scope.
-3. **T3:** the agent identity requests the resource token with
-   `grant_type=user_fic`, T1 as `client_assertion`, T2 as
-   `user_federated_identity_credential`, and the agent-user ID as `user_id`.
+3. **T3 — resource token:** the agent identity uses T1, T2, and
+   `W365_AGENT_USER_ID` with `grant_type=user_fic` to request the ATG or ARI
+   resource token.
 
-Only T3 is sent to ATG/W365 or ARI. Tokens remain in memory and are cached by
-resource/permission purpose with a five-minute refresh margin and serialized
-refresh. No token or exchange request/response body is logged.
-
-There is **no DefaultAzureCredential (DAC) or Azure CLI fallback for W365**.
-The checked-in deployment default is the explicit `client_secret` mode, with
-the secret stored in Key Vault rather than an environment variable. Ordinary
-Azure model/state access uses the normal Azure credential path; an `az login`
-session is not an alternative W365 identity. No IdentityRM auxiliary token is
-sent.
-
-## Stale-state recovery identity
-
-The guarded stale-state command uses the configured blueprint path to exchange
-for the deployed agent identity's `https://storage.azure.com/.default` token.
-This method is internal and fixed to that one scope. Its one-token credential
-rejects any other scope and, when the token is a parseable JWT, requires the
-`https://storage.azure.com` audience. Tokens and claims are never printed.
-
-Recovery also compares persisted `OwnerTenantId` and `OwnerObjectId` with the
-selected azd environment's `OPERATOR_TENANT_ID` and `OPERATOR_OBJECT_ID` before
-breaking a lease. This is an ownership check, not permission to adopt state from
-another environment or agent. The mutating process independently resolves the
-deployed agent name/version from the selected environment and checks its hosted
-sessions; it does not accept a caller assertion that this check already happened.
-
-`client_secret` mode has completed the bounded W365 lifecycle: blueprint T1,
-agent-identity T2, agent-user T3, MCP initialization, `StartSession`, readiness
-identified by the returned HTTPS `screenShareUrl`, fresh transport/catalog
-discovery, and `EndSession`. Optional tools are used only when advertised by
-the live catalog.
+Only T3 is sent to Agent 365/W365. T1 and T2 stay in process memory. Tokens are
+cached by resource and permission purpose with bounded refresh; token values
+and exchange bodies are never logged.
 
 | Purpose | Scope |
 | --- | --- |
 | MCP through ATG | `da81128c-e5b5-4f9e-8d89-50d906f107c5/.default` |
-| Watch only | `90ecec28-f5a6-42b3-9bde-dae1ca98f8b5/Computer.See` |
-| Take control | ARI `Computer.See`, `Computer.Control`, `Computer.Do`, and `Computer.Get` |
+| Observe | `90ecec28-f5a6-42b3-9bde-dae1ca98f8b5/Computer.See` |
+| Control | ARI `Computer.See`, `Computer.Control`, `Computer.Do`, and `Computer.Get` |
+
+There is no DefaultAzureCredential or Azure CLI fallback for W365. Ordinary
+Azure model and Blob access continues to use the normal hosting credential.
+
+## Stale-state recovery identity
+
+The recovery workflow exchanges through the configured blueprint mode for one
+fixed `https://storage.azure.com/.default` token. Its credential rejects every
+other scope and does not print tokens or claims.
+
+Before breaking a lease, recovery compares persisted owner tenant/object IDs
+with `OPERATOR_TENANT_ID` and `OPERATOR_OBJECT_ID`, resolves the deployed agent
+name/version from the selected azd environment, and verifies hosted and W365
+session state independently. This is authority to repair the selected
+environment's state, not to adopt another environment's session.
+
+Use the complete [fail-closed recovery workflow](ARCHITECTURE.md#fail-closed-recovery).
 
 ## Runtime federation is a blueprint trust
 
-Hosted setup adds a FIC only with both
-`-HostedRuntimeIdentityObjectId` and
-`-AuthorizeHostedRuntimeFederation`. The hosted subject must exactly match the
-existing Foundry agent identity object ID. Viewer federation remains separately
-opt-in.
+Hosted-runtime federation requires both:
 
-Setup adds a viewer FIC only with both `-ViewerManagedIdentityObjectId` and
-`-AuthorizeViewerFederation`. The subject is the **existing UAMI object/principal
-ID**, not its client ID; issuer is
-`https://login.microsoftonline.com/<tenant>/v2.0` and audience is
-`api://AzureADTokenExchange`.
+- `-HostedRuntimeIdentityObjectId` matching the discovered agent object ID; and
+- `-AuthorizeHostedRuntimeFederation`.
 
-This trust authorizes the UAMI to impersonate the **blueprint**, potentially
-including sibling agent identities. It is **not ARI-only**, even though the
-viewer normally requests screen-share tokens. An administrator must explicitly
-approve this boundary. Use a dedicated blueprint when possible; do not grant
-the trust if a shared blueprint or administrator policy disallows it. Leave
-the viewer disabled instead; the agent may return unavailable viewer links.
-Configure only an approved viewer, and do not run workflows needing human
-handoff without a usable approved viewer.
+Viewer federation separately requires:
 
-The viewer OIDC client secret is a separate credential for the human sign-in
-web app. The shared W365 vault exists even in agent-only deployments. When the
-viewer is enabled, ACA retrieves the OIDC and blueprint credentials through
-separate secret references in that vault.
+- `-ViewerManagedIdentityObjectId` containing the viewer UAMI object/principal
+  ID, not its client ID; and
+- `-AuthorizeViewerFederation`.
+
+Both FICs use the tenant v2.0 issuer and
+`api://AzureADTokenExchange` audience. They authorize blueprint
+impersonation, potentially including sibling agent identities; they are not
+limited to W365 or screen sharing. Use a dedicated blueprint where possible
+and do not grant either trust when shared-blueprint or tenant policy disallows
+it.
+
+The viewer OIDC credential is unrelated to blueprint federation. It
+authenticates the human to the companion viewer only.
 
 ## Browser authorization
 
-The viewer does not treat the SDK's `viewOnly` flag as an authorization boundary:
-watch requests ask Entra for See-only scope. Control token issuance pauses the
-desktop under the same lock used for actions. Validate returned scopes during
-live acceptance; never fall back to an overprivileged watch token.
+Observation requests obtain `Computer.See` only. Control token issuance first
+pauses the agent under the same state lock used for desktop actions, then
+requests the broader control scopes. Do not use the SDK's `viewOnly` flag as
+the authorization boundary.
 
-The browser necessarily receives an ARI bearer for the screen-share SDK. A
-control token is returned only to the authenticated session owner in a
-CSRF-protected, `no-store` response and held in memory. The See-only redirect
-passes its short-lived token in the URL fragment to the approved W365 static
-viewer; fragments are not sent to the companion viewer server. Tokens are
-never stored in localStorage or returned to the model. Previously issued bearer
-tokens cannot be revoked by the sample's pause flag. The authorized
-operator/browser is trusted, not a hostile competing controller.
+The authenticated browser necessarily receives a short-lived ARI token:
+
+- control tokens are returned in CSRF-protected, `no-store` responses;
+- See-only tokens are passed in the URL fragment to the approved W365 static
+  viewer, so the fragment is not sent to the companion viewer server;
+- tokens remain in browser memory and are not stored in localStorage or
+  returned to the model.
+
+Pause cannot revoke an already issued bearer token. The authorized
+operator/browser is trusted; it is not treated as a hostile competing
+controller.
 
 ## SDK and hosting boundary
 
-The public helper uses blueprint-selected managed identity in an
-**activity/autopilot sample**. It does not establish support on ordinary
-Responses hosted agents. This implementation instead selects the discovered
-hosted agent identity and, when explicitly approved, uses its exact-subject FIC
-to authenticate the blueprint with `fmi_path`. This sample does not publish
-autopilot and does not require a hiring workflow.
+The public managed-identity helper comes from an activity/autopilot sample and
+does not prove support on ordinary Responses hosting. This sample uses the
+discovered Foundry agent identity and requires live acceptance for the actual
+host.
 
-The tested Foundry-hosted managed-identity path acquires the initial assertion,
-but Entra rejects using that federated token as another federated credential
-with `AADSTS700231`. The explicit client-secret mode proved the downstream
-agent-user and W365 path independently. Certificate mode is implemented and
-offline-validated but has not completed live tenant acceptance.
+The tested hosted managed-identity path obtains an initial assertion, but Entra
+rejects the chained federation with `AADSTS700231`. The explicit
+`client_secret` path validates the downstream T1/T2/T3 and W365 lifecycle
+independently. Certificate mode requires separate live acceptance.
 
-The Foundry T1 -> T2 -> T3 flow follows the public helper; narrow raw protocol
-handling is retained for the final exchanges with no bodies logged. For
-production, use the approved identity SDK when the host offers it (for example,
-the applicable Agent 365 SDK / Microsoft.Identity.Web integration), preserving
-scope separation and never exposing T1/T2. Preview contracts and offline tests
-are not a production compatibility guarantee.
+For production, use an approved identity SDK when the host provides one while
+preserving the same scope separation and never exposing T1 or T2. Preview
+contracts and offline tests are not production compatibility guarantees.
 
 Sources: [Foundry agent identity](https://learn.microsoft.com/azure/foundry/agents/concepts/agent-identity),
 [agent-user OAuth flow](https://learn.microsoft.com/entra/agent-id/agent-user-oauth-flow),
 [managed identity federation](https://learn.microsoft.com/entra/workload-id/workload-identity-federation-config-app-trust-managed-identity),
-[W365 auth](https://github.com/microsoft/windows-365-for-agents/blob/main/docs/authentication.md),
-[screen sharing](https://github.com/microsoft/windows-365-for-agents/blob/main/docs/screen-sharing.md).
+[W365 authentication](https://github.com/microsoft/windows-365-for-agents/blob/main/docs/authentication.md),
+and [screen sharing](https://github.com/microsoft/windows-365-for-agents/blob/main/docs/screen-sharing.md).
