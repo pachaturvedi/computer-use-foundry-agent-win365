@@ -30,12 +30,29 @@ if (!$getAzdCommandAst) {
 }
 
 $commandDiscoveryTempRoot = Join-Path ([IO.Path]::GetTempPath()) ("w365-azd-discovery-{0}" -f ([guid]::NewGuid()))
-$fakeAzdPath = Join-Path $commandDiscoveryTempRoot 'azd.cmd'
+$malformedAzdRoot = Join-Path $commandDiscoveryTempRoot 'malformed'
+$validAzdRoot = Join-Path $commandDiscoveryTempRoot 'valid'
+$fakeAzdFileName = if ($IsWindows) { 'azd.cmd' } else { 'azd' }
+$malformedAzdPath = Join-Path $malformedAzdRoot $fakeAzdFileName
+$fakeAzdPath = Join-Path $validAzdRoot $fakeAzdFileName
 $previousPath = $env:PATH
 try {
-    New-Item -ItemType Directory -Path $commandDiscoveryTempRoot -Force | Out-Null
-    Set-Content -LiteralPath $fakeAzdPath -Value '@echo azd version 9.99.9 (commit offline-test)'
-    $env:PATH = "$commandDiscoveryTempRoot;$previousPath"
+    New-Item -ItemType Directory -Path $malformedAzdRoot -Force | Out-Null
+    New-Item -ItemType Directory -Path $validAzdRoot -Force | Out-Null
+    if ($IsWindows) {
+        Set-Content -LiteralPath $malformedAzdPath -Value '@echo azd version 999999999999.1.1 (commit malformed-test)'
+        Set-Content -LiteralPath $fakeAzdPath -Value '@echo azd version 9.99.9 (commit offline-test)'
+    }
+    else {
+        Set-Content -LiteralPath $malformedAzdPath -Value "#!/bin/sh`necho 'azd version 999999999999.1.1 (commit malformed-test)'"
+        Set-Content -LiteralPath $fakeAzdPath -Value "#!/bin/sh`necho 'azd version 9.99.9 (commit offline-test)'"
+        $executableMode = [IO.UnixFileMode]::UserRead -bor
+            [IO.UnixFileMode]::UserWrite -bor
+            [IO.UnixFileMode]::UserExecute
+        [IO.File]::SetUnixFileMode($malformedAzdPath, $executableMode)
+        [IO.File]::SetUnixFileMode($fakeAzdPath, $executableMode)
+    }
+    $env:PATH = @($malformedAzdRoot, $validAzdRoot, $previousPath) -join [IO.Path]::PathSeparator
 
     $commandDiscoveryModule = New-Module -Name W365AzdCommandDiscovery -ScriptBlock ([scriptblock]::Create(@"
 $($getAzdCommandAst.Extent.Text)
@@ -43,7 +60,7 @@ function azd { 'profile shadow' }
 "@))
     $azd = & $commandDiscoveryModule { Get-AzdCommand }
     if ($null -eq $azd -or $azd.Path -ne $fakeAzdPath -or $azd.Version -ne ([version]'9.99.9')) {
-        throw 'Cleanup azd discovery did not ignore a non-application command shadow or select the highest supported executable.'
+        throw 'Cleanup azd discovery did not ignore invalid candidates or select the highest supported executable.'
     }
 }
 finally {
@@ -53,6 +70,33 @@ finally {
     }
     if (Test-Path -LiteralPath $commandDiscoveryTempRoot) {
         Remove-Item -LiteralPath $commandDiscoveryTempRoot -Recurse -Force
+    }
+}
+
+$noStateTempRoot = Join-Path ([IO.Path]::GetTempPath()) ("w365-no-state-{0}" -f ([guid]::NewGuid()))
+$noStateEnvironmentPath = Join-Path $noStateTempRoot '.env'
+try {
+    New-Item -ItemType Directory -Path $noStateTempRoot -Force | Out-Null
+    Set-Content -LiteralPath $noStateEnvironmentPath -Value @(
+        'AZURE_SUBSCRIPTION_ID="00000000-0000-0000-0000-000000000000"'
+        'W365_ENABLED="false"'
+    )
+
+    $noStateOutput = @(
+        & $cleanupScriptPath `
+            -EnvironmentName 'no-state-test' `
+            -EnvironmentFilePath $noStateEnvironmentPath `
+            -OwnershipManifestPath (Join-Path $noStateTempRoot 'missing-ownership.json') `
+            -Confirm:$false
+    )
+    $expectedNoStateOutput = "Pre-teardown cleanup completed for 'no-state-test': no configured W365 state remains. Azure resource deletion can continue."
+    if ($noStateOutput.Count -ne 1 -or $noStateOutput[0] -ne $expectedNoStateOutput) {
+        throw "No-state cleanup emitted unexpected output: [$($noStateOutput -join ' | ')]"
+    }
+}
+finally {
+    if (Test-Path -LiteralPath $noStateTempRoot) {
+        Remove-Item -LiteralPath $noStateTempRoot -Recurse -Force
     }
 }
 
@@ -316,8 +360,28 @@ try {
     Write-TestManifest
 
     $env:W365_CLEANUP_CONFIRMED = 'true'
-    & "$scriptsRoot\Remove-W365Resources.ps1" -EnvironmentName $envName -EnvironmentFilePath $envFilePath -OwnershipManifestPath $manifestPath
+    $cleanupOutput = @(
+        & "$scriptsRoot\Remove-W365Resources.ps1" -EnvironmentName $envName -EnvironmentFilePath $envFilePath -OwnershipManifestPath $manifestPath
+    )
     $env:W365_CLEANUP_CONFIRMED = ''
+    $assignmentPlan = "Deleting W365 pool assignment 'assignment-created' from pool '55555555-5555-5555-5555-555555555555' for principal 'agent-user'."
+    $assignmentResult = 'Removed pool assignment assignment-created.'
+    $rolePlan = "Deleting delegated permission grant 'grant-created-tools' for resource application 'da81128c-e5b5-4f9e-8d89-50d906f107c5'."
+    $roleResult = 'Removed permission grant for da81128c-e5b5-4f9e-8d89-50d906f107c5.'
+    $poolPlan = "Deleting sample-owned W365 pool '55555555-5555-5555-5555-555555555555'."
+    $poolResult = 'Removed sample-owned pool 55555555-5555-5555-5555-555555555555.'
+    foreach ($pair in @(
+        @($assignmentPlan, $assignmentResult),
+        @($rolePlan, $roleResult),
+        @($poolPlan, $poolResult)
+    )) {
+        $planIndex = $cleanupOutput.IndexOf($pair[0])
+        $resultIndex = $cleanupOutput.IndexOf($pair[1])
+        if ($planIndex -lt 0 -or $resultIndex -lt 0 -or $planIndex -ge $resultIndex) {
+            throw "Cleanup did not log '$($pair[0])' before '$($pair[1])'."
+        }
+    }
+
     $state = Get-MockGraphState
     if ($null -ne $state.Pool -or $null -ne $state.AgentUser) {
         throw 'Created pool or agent user was not deleted.'
