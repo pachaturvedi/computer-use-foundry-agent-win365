@@ -179,6 +179,33 @@ $environments | ConvertTo-Json -Depth 5
         throw 'Viewer-only ACA quota recovery changed the phase-two-owned viewer activation state.'
     }
 
+    $failingViewerDiscoveryPath = Join-Path $tempRoot 'Mock-ViewerDiscoveryFailure.ps1'
+    Set-Content -LiteralPath $failingViewerDiscoveryPath -Value @'
+param(
+    [guid]$SubscriptionId,
+    [switch]$SucceededOnly,
+    [switch]$AsJson
+)
+throw 'ACA managed-environment discovery ran even though a selection was already recorded.'
+'@
+    $rememberedResourceId = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/shared-rg/providers/Microsoft.App/managedEnvironments/shared-aca'
+    Write-EnvironmentFile -AdditionalValues @(
+        'W365_POOL_ID="22222222-2222-2222-2222-222222222222"',
+        'VIEWER_HOSTING_MODE="existing"',
+        "VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID=`"$rememberedResourceId`""
+    )
+    & $scriptPath `
+        -Environment $environmentName `
+        -RepositoryRoot $tempRoot `
+        -ConfigPath (Join-Path $root 'config\deployment.defaults.json') `
+        -W365DiscoveryScriptPath $w365DiscoveryPath `
+        -ViewerDiscoveryScriptPath $failingViewerDiscoveryPath
+    $rememberedValues = Read-AzdEnvironmentFile -Path $environmentPath
+    if ($rememberedValues['VIEWER_HOSTING_MODE'] -ne 'existing' -or
+        $rememberedValues['VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID'] -ne $rememberedResourceId) {
+        throw 'A recorded ACA managed-environment selection was not reused for the same azd environment.'
+    }
+
     Write-EnvironmentFile
     & $scriptPath `
         -Environment $environmentName `

@@ -392,6 +392,11 @@ if ($w365StillEnabled) {
             [string]$environmentValues['VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID']
         }
         if ([string]::IsNullOrWhiteSpace($resolvedResourceId)) {
+            # Reuse the managed environment already chosen for this azd environment so a
+            # repeated azd up does not re-ask. Validation below still rejects a stale ID.
+            $resolvedResourceId = [string]$environmentValues['VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID']
+        }
+        if ([string]::IsNullOrWhiteSpace($resolvedResourceId)) {
             $subscriptionId = [guid]::Empty
             if (![guid]::TryParse([string]$environmentValues['AZURE_SUBSCRIPTION_ID'], [ref]$subscriptionId) -or
                 $subscriptionId -eq [guid]::Empty) {
