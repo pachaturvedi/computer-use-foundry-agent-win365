@@ -102,16 +102,22 @@ function Write-DeploymentEvent {
 function Invoke-Azd {
     param(
         [Parameter(Mandatory)][string[]]$Arguments,
-        [switch]$CaptureOutput
+        [switch]$CaptureOutput,
+        [switch]$DetailedOutput
     )
 
     Write-DeploymentEvent COMMAND "azd $($Arguments -join ' ')"
     $output = & $azd.Path @Arguments
     if ($LASTEXITCODE -ne 0) {
+        $output | Write-Host
         throw "azd $($Arguments -join ' ') failed with exit code $LASTEXITCODE."
     }
     if ($CaptureOutput) {
         return ($output | Out-String).Trim()
+    }
+    if ($DetailedOutput -and (Get-SampleLogLevel) -eq 'summary') {
+        Write-DeploymentEvent RESULT 'Preview completed; detailed resource changes are hidden in summary mode. Set SAMPLE_LOG_LEVEL=verbose or debug to show them.'
+        return
     }
     $output | Write-Host
 }
@@ -418,7 +424,7 @@ function Invoke-FoundryLocalValidation {
 
 function Preview-FoundryLayer {
     Write-DeploymentEvent STEP 'Previewing the Foundry infrastructure layer.'
-    Invoke-Azd @('provision', 'foundry', '--preview', '--no-prompt')
+    Invoke-Azd -Arguments @('provision', 'foundry', '--preview', '--no-prompt') -DetailedOutput
 }
 
 function Provision-FoundryLayer {
@@ -479,7 +485,7 @@ try {
         }
         Write-DeploymentEvent DECISION "State access principal: $stateAgentPrincipalId"
         Write-DeploymentEvent STEP 'Previewing the explicitly enabled state layer.'
-        Invoke-Azd @('provision', 'state', '--preview', '--no-prompt')
+        Invoke-Azd -Arguments @('provision', 'state', '--preview', '--no-prompt') -DetailedOutput
     }
     else {
         Write-DeploymentEvent DECISION 'State preview skipped because DEPLOY_STATE=false.'
@@ -496,7 +502,7 @@ try {
             -SessionBlobUri (Get-AzdValue 'SESSION_BLOB_URI')
         Assert-LiveViewerConfiguration
         Write-DeploymentEvent STEP 'Previewing the explicitly enabled viewer layer.'
-        Invoke-Azd @('provision', 'viewer', '--preview', '--no-prompt')
+        Invoke-Azd -Arguments @('provision', 'viewer', '--preview', '--no-prompt') -DetailedOutput
     }
     else {
         Write-DeploymentEvent DECISION 'Viewer preview skipped because DEPLOY_VIEWER=false.'

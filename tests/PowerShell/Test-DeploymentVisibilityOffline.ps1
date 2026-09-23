@@ -251,10 +251,13 @@ try {
         param($node)
         $node -is [Management.Automation.Language.FunctionDefinitionAst]
     }, $true))
+    $invokeAzdFunction = $functions | Where-Object Name -eq 'Invoke-Azd' | Select-Object -First 1
     $keyVaultFunction = $functions | Where-Object Name -eq 'Get-W365KeyVaultName' | Select-Object -First 1
     $accessCheckFunction = $functions | Where-Object Name -eq 'Assert-W365AgentKeyVaultAccessConfigured' | Select-Object -First 1
-    if ($null -eq $keyVaultFunction -or $null -eq $accessCheckFunction) {
-        throw 'Blueprint-secret deployment helpers are missing or scoped inside another function.'
+    if ($null -eq $invokeAzdFunction -or
+        $null -eq $keyVaultFunction -or
+        $null -eq $accessCheckFunction) {
+        throw 'Deployment output or blueprint-secret helpers are missing or scoped inside another function.'
     }
     $ancestor = $keyVaultFunction.Parent
     while ($null -ne $ancestor) {
@@ -291,6 +294,62 @@ $($accessCheckFunction.Extent.Text)
 Assert-W365AgentKeyVaultAccessConfigured
 "@)
     & $accessRegression
+
+    $previewRegression = [scriptblock]::Create(@"
+`$script:testLogLevel = 'summary'
+function Get-SampleLogLevel { `$script:testLogLevel }
+function Write-DeploymentEvent {
+    param([string]`$Kind, [string]`$Message)
+    Write-Output "EVENT:`${Kind}:`${Message}"
+}
+function Invoke-TestAzd {
+    param([Parameter(ValueFromRemainingArguments)][string[]]`$Arguments)
+    if (`$Arguments -contains 'fail') {
+        `$global:LASTEXITCODE = 1
+        Write-Output 'PREVIEW-FAILURE-DETAIL'
+        return
+    }
+    `$global:LASTEXITCODE = 0
+    Write-Output 'Creating a deployment plan'
+    Write-Output 'Modify : Container App : sample-viewer'
+}
+`$azd = [pscustomobject]@{ Path = (Get-Command Invoke-TestAzd) }
+$($invokeAzdFunction.Extent.Text)
+
+`$summaryOutput = Invoke-Azd -Arguments @('provision', 'viewer', '--preview') -DetailedOutput *>&1 | Out-String
+if (`$summaryOutput -match 'Creating a deployment plan|Modify : Container App' -or
+    `$summaryOutput -notmatch 'detailed resource changes are hidden in summary mode') {
+    throw "Summary logging exposed or failed to explain detailed preview output: `$summaryOutput"
+}
+
+`$script:testLogLevel = 'verbose'
+`$verboseOutput = Invoke-Azd -Arguments @('provision', 'viewer', '--preview') -DetailedOutput *>&1 | Out-String
+if (`$verboseOutput -notmatch 'Creating a deployment plan' -or
+    `$verboseOutput -notmatch 'Modify : Container App') {
+    throw "Verbose logging did not show detailed preview output: `$verboseOutput"
+}
+
+`$failureOutput = & {
+    try {
+        Invoke-Azd -Arguments @('provision', 'viewer', '--preview', 'fail') -DetailedOutput
+    }
+    catch {
+        Write-Output `$_.Exception.Message
+    }
+} *>&1 | Out-String
+if (`$failureOutput -notmatch 'PREVIEW-FAILURE-DETAIL' -or
+    `$failureOutput -notmatch 'failed with exit code 1') {
+    throw "Failed preview did not remain visible and actionable: `$failureOutput"
+}
+"@)
+    & $previewRegression
+
+    $detailedPreviewCalls = [regex]::Matches(
+        $deploymentScript,
+        "(?ms)Invoke-Azd\s+-Arguments\s+@\('provision',\s*'(foundry|state|viewer)',\s*'--preview',\s*'--no-prompt'\)\s+-DetailedOutput")
+    if ($detailedPreviewCalls.Count -ne 3) {
+        throw 'Foundry, state, and viewer previews must all use log-level-controlled detailed output.'
+    }
 
 }
 finally {
