@@ -193,6 +193,16 @@ param(
         throw 'Certificate-scoped state/viewer RBAC is not gated by orchestration readiness.'
     }
 
+    $viewerMainTemplate = Get-Content -LiteralPath (Join-Path $root 'infra\viewer\main.bicep') -Raw
+    if ($viewerTemplate -notmatch
+        "(?s)resource identity 'Microsoft\.ManagedIdentity/userAssignedIdentities@[^']+' = \{.*?location: location" -or
+        $viewerTemplate -notmatch
+        "(?s)resource viewer 'Microsoft\.App/containerApps@[^']+' = \{.*?location: containerAppLocation" -or
+        $viewerMainTemplate -notmatch
+        'containerAppLocation: createManagedEnvironment \? location : existingManagedEnvironment!\.location') {
+        throw 'Viewer identity must stay in the deployment region while the container app follows its managed environment region.'
+    }
+
     & $scriptPath `
         -Environment 'sample-dev' `
         -IdentityScriptPath $mockIdentityPath

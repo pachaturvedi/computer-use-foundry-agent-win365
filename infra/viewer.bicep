@@ -1,6 +1,9 @@
 targetScope = 'resourceGroup'
 
 param location string = resourceGroup().location
+
+@description('Region for the Container App. Defaults to the deployment region and must match the managed environment when an existing one is reused.')
+param containerAppLocation string = location
 param appName string
 param managedEnvironmentResourceId string
 param registryName string
@@ -101,7 +104,7 @@ resource registryRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
 
 resource viewer 'Microsoft.App/containerApps@2024-03-01' = {
   name: appName
-  location: location
+  location: containerAppLocation
   tags: union(tags, { 'azd-service-name': 'viewer' })
   identity: {
     type: 'UserAssigned'

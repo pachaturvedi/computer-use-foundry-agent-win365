@@ -103,7 +103,8 @@ module viewer '../viewer.bicep' = if (viewerEnabled) {
   name: 'viewer-bootstrap'
   scope: environmentResourceGroup
   params: {
-    location: createManagedEnvironment ? location : existingManagedEnvironment!.location
+    location: location
+    containerAppLocation: createManagedEnvironment ? location : existingManagedEnvironment!.location
     appName: '${resolvedResourcePrefix}-viewer'
     managedEnvironmentResourceId: createManagedEnvironment
       ? foundation!.outputs.environmentResourceId
