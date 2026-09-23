@@ -498,10 +498,15 @@ try {
     }
     $savedOperations = @($state.Operations)
 
-    & "$scriptsRoot\Remove-W365Resources.ps1" -EnvironmentName $envName -EnvironmentFilePath $envFilePath -OwnershipManifestPath $manifestPath -Confirm:$false
+    $rerunOutput = @(
+        & "$scriptsRoot\Remove-W365Resources.ps1" -EnvironmentName $envName -EnvironmentFilePath $envFilePath -OwnershipManifestPath $manifestPath -Confirm:$false
+    )
     $state = Get-MockGraphState
     if ($state.Operations.Count -ne $savedOperations.Count) {
         throw 'Cleanup rerun should have been idempotent.'
+    }
+    if ($rerunOutput -notcontains 'W365 ownership cleanup was already completed. Azure resource deletion can continue.') {
+        throw "Cleanup rerun did not short-circuit completed ownership state: $($rerunOutput -join ' | ')"
     }
 
     Reset-MockGraphState

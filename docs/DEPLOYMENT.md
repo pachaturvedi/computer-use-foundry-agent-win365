@@ -844,7 +844,7 @@ retained failed environment.
 | W365 setup is blocked | Follow the exact prerequisite or ownership error in [Windows 365 setup](W365-SETUP.md); do not bypass parent, consent, billing, or manifest checks. |
 | Agent deployment fails after W365 setup or viewer configuration changes | Fix the reported prerequisite, then rerun `azd up` for the same environment so the durable redeployment marker is reconciled. |
 | Invocation is disconnected or ambiguous | Do not replay. Inspect sanitized logs and follow [fail-closed recovery](ARCHITECTURE.md#fail-closed-recovery). |
-| Teardown reports a missing layer deployment | Use `Invoke-AzdDown.ps1`; it continues to remaining layers and verifies residual resource groups. |
+| Teardown is rerun after partial or completed deletion | Rerun `azd down`; completed ownership cleanup is skipped, and viewer RBAC beneath a confirmed-missing resource group is treated as already absent. Use `Invoke-AzdDown.ps1` if a layer deployment is missing. |
 | Teardown reports any other error | Stop and resolve the exact authentication, authorization, ownership, provider, or residual-resource failure. |
 
 ## Next steps
