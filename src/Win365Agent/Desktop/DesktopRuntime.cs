@@ -9,6 +9,7 @@ namespace Win365Agent;
 /// </summary>
 public sealed class DesktopRuntime : IDisposable
 {
+    private static readonly TimeSpan _taskLifetime = TimeSpan.FromMinutes(15);
     private static readonly Action<ILogger, string, Exception?> _logDesktopReleased =
         LoggerMessage.Define<string>(
             LogLevel.Information,
@@ -94,19 +95,16 @@ public sealed class DesktopRuntime : IDisposable
             await using var tx = await _store.OpenAsync(ct);
             if (tx.State is { } existing)
             {
-                if (existing.ExpiresAt <= DateTimeOffset.UtcNow)
-                {
-                    throw new InvalidOperationException(
-                        "Desktop state has expired and requires guarded operator recovery.");
-                }
                 if (existing.RequestId != _requestId &&
                     existing.Phase == DesktopSessionPhase.Starting &&
                     existing.OperationInFlight &&
+                    existing.SessionId is null &&
                     !string.IsNullOrWhiteSpace(existing.AllocationIdempotencyKey) &&
                     existing.OwnerTenantId == _settings.Required("OPERATOR_TENANT_ID") &&
                     existing.OwnerObjectId == _settings.Required("OPERATOR_OBJECT_ID"))
                 {
                     existing.RequestId = _requestId;
+                    existing.ExpiresAt = DateTimeOffset.UtcNow.Add(_taskLifetime);
                     await tx.SaveAsync(ct);
                     _ownsSlot = true;
                     _allocationAttempted = true;
@@ -114,6 +112,11 @@ public sealed class DesktopRuntime : IDisposable
                 }
                 else
                 {
+                    if (existing.ExpiresAt <= DateTimeOffset.UtcNow)
+                    {
+                        throw new InvalidOperationException(
+                            "Desktop state has expired and requires guarded operator recovery.");
+                    }
                     if (existing.RequestId != _requestId)
                     {
                         throw new InvalidOperationException("Desktop slot is occupied. End or recover the existing task first.");
@@ -141,6 +144,7 @@ public sealed class DesktopRuntime : IDisposable
                 OwnerTenantId = _settings.Required("OPERATOR_TENANT_ID"),
                 OwnerObjectId = _settings.Required("OPERATOR_OBJECT_ID"),
                 AllocationIdempotencyKey = Guid.NewGuid().ToString(),
+                ExpiresAt = DateTimeOffset.UtcNow.Add(_taskLifetime),
                 OperationInFlight = true
             };
             await tx.SaveAsync(ct);
@@ -211,7 +215,23 @@ public sealed class DesktopRuntime : IDisposable
         DesktopSession state,
         CancellationToken ct)
     {
-        var start = await StartSessionWithCapacityRetryAsync(state.AllocationIdempotencyKey, ct);
+        JsonElement start;
+        try
+        {
+            start = await StartSessionWithCapacityRetryAsync(state.AllocationIdempotencyKey, ct);
+        }
+        catch (McpToolException exception) when (exception.IsCapacityExhausted)
+        {
+            // W365 explicitly reported that no session was available, so no allocation occurred.
+            // Retaining this known-failed intent would permanently block the slot without a remote
+            // session to recover. Other tool errors remain fail-closed because their outcome may
+            // still be ambiguous.
+            tx.State = null;
+            await tx.SaveAsync(ct);
+            _ownsSlot = false;
+            throw;
+        }
+
         state.SessionId = McpConnection.Field(start, "sessionId")
                 ?? throw new InvalidOperationException("StartSession omitted sessionId. Operator recovery is required.");
         // Checkpoint the remote ID before parsing readiness fields so failures remain recoverable without reallocation.

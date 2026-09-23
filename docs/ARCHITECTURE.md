@@ -307,6 +307,18 @@ Runtime lease acquisition waits for at most ten seconds. Continued lease
 conflict becomes `desktop_state_locked` with an instruction not to retry
 automatically.
 
+`StartSession` distinguishes W365's exact capacity rejection from ambiguous
+failures. After the bounded retry policy is exhausted, a structured MCP error
+containing `No free W365 sessions` proves that no allocation occurred, so the
+unallocated intent is cleared before the safe error is returned. Other tool
+errors, HTTP failures, cancellation, malformed success results, and lost
+responses remain blocked with the original idempotency key because they do not
+prove whether W365 allocated a session. A later authorized request automatically
+adopts an expired `Starting` intent that still has no session ID, renews its
+bounded task lifetime, and retries `StartSession` with that same key. It never
+allocates a replacement key. Expired active, paused, ending, malformed, or
+owner-mismatched records remain blocked for guarded operator recovery.
+
 Before recovery:
 
 - stop every active hosted session for the selected environment;

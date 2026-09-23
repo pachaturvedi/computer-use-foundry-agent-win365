@@ -11,6 +11,7 @@ internal sealed class McpHandler : HttpMessageHandler
 
     public bool FailClick { get; set; }
     public bool FailStart { get; set; }
+    public string? StartErrorMessage { get; set; }
     public int AmbiguousStartsRemaining { get; set; }
     public bool SessionScopedCatalog { get; set; }
     public bool SawTransportSession { get; private set; }
@@ -89,6 +90,22 @@ internal sealed class McpHandler : HttpMessageHandler
                     if (FailStart || AmbiguousStartsRemaining-- > 0)
                     {
                         throw new HttpRequestException("ambiguous start");
+                    }
+                    if (StartErrorMessage is not null)
+                    {
+                        result = new
+                        {
+                            isError = true,
+                            content = new[]
+                            {
+                                new
+                                {
+                                    type = "text",
+                                    text = StartErrorMessage
+                                }
+                            }
+                        };
+                        break;
                     }
                 }
 
