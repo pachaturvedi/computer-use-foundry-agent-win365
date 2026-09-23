@@ -27,6 +27,9 @@ param resourcePrefix string = ''
 param resourceGroupName string = ''
 param viewerImageName string = 'win365-sample:v1'
 param viewerManagedEnvironmentResourceId string = ''
+
+@description('Region of an already-deployed viewer identity. Empty means use the deployment region. A managed identity region is immutable, so an existing identity must keep its original region.')
+param viewerIdentityLocation string = ''
 @allowed([
   'true'
   'false'
@@ -105,6 +108,7 @@ module viewer '../viewer.bicep' = if (viewerEnabled) {
   params: {
     location: location
     containerAppLocation: createManagedEnvironment ? location : existingManagedEnvironment!.location
+    identityLocation: empty(viewerIdentityLocation) ? location : viewerIdentityLocation
     appName: '${resolvedResourcePrefix}-viewer'
     managedEnvironmentResourceId: createManagedEnvironment
       ? foundation!.outputs.environmentResourceId

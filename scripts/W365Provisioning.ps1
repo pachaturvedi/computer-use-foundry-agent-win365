@@ -554,6 +554,140 @@ function Invoke-W365AzureCliRead {
     return ($output | Out-String).Trim()
 }
 
+function ConvertTo-W365LocationToken {
+    param([Parameter(Mandatory)][string]$Value)
+
+    return ($Value.Trim().ToLowerInvariant() -replace '[^a-z0-9]', '')
+}
+
+function Resolve-W365ViewerResourceNames {
+    param(
+        [Parameter(Mandatory)][string]$EnvironmentName,
+        [string]$ResourcePrefix = '',
+        [string]$ResourceGroupName = ''
+    )
+
+    $prefix = if (![string]::IsNullOrWhiteSpace($ResourcePrefix)) { $ResourcePrefix } else { $EnvironmentName }
+    if ([string]::IsNullOrWhiteSpace($prefix)) {
+        throw 'Cannot resolve viewer resource names without RESOURCE_PREFIX or AZURE_ENV_NAME.'
+    }
+
+    $group = if (![string]::IsNullOrWhiteSpace($ResourceGroupName)) { $ResourceGroupName } else { "$prefix-rg" }
+
+    return [pscustomobject]@{
+        ResourceGroupName = $group
+        IdentityName = "$prefix-viewer-identity"
+        ContainerAppName = "$prefix-viewer"
+    }
+}
+
+function Get-W365ExistingResourceLocation {
+    param(
+        [Parameter(Mandatory)][string]$ResourceGroupName,
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string]$ResourceType
+    )
+
+    $groupExists = Invoke-W365AzureCliRead -Arguments @('group', 'exists', '--name', $ResourceGroupName)
+    if ($groupExists -ne 'true') {
+        return ''
+    }
+
+    return Invoke-W365AzureCliRead -Arguments @(
+        'resource', 'list',
+        '--resource-group', $ResourceGroupName,
+        '--resource-type', $ResourceType,
+        '--query', "[?name=='$Name'].location | [0]",
+        '--output', 'tsv'
+    )
+}
+
+function Resolve-W365ViewerIdentityLocation {
+    param(
+        [Parameter(Mandatory)][string]$EnvironmentName,
+        [string]$ResourcePrefix = '',
+        [string]$ResourceGroupName = ''
+    )
+
+    $names = Resolve-W365ViewerResourceNames `
+        -EnvironmentName $EnvironmentName `
+        -ResourcePrefix $ResourcePrefix `
+        -ResourceGroupName $ResourceGroupName
+
+    return Get-W365ExistingResourceLocation `
+        -ResourceGroupName $names.ResourceGroupName `
+        -Name $names.IdentityName `
+        -ResourceType 'Microsoft.ManagedIdentity/userAssignedIdentities'
+}
+
+function Assert-W365ViewerContainerAppRegion {
+    param(
+        [Parameter(Mandatory)][string]$EnvironmentName,
+        [string]$ResourcePrefix = '',
+        [string]$ResourceGroupName = '',
+        [string]$ManagedEnvironmentResourceId = ''
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ManagedEnvironmentResourceId)) {
+        return
+    }
+
+    $names = Resolve-W365ViewerResourceNames `
+        -EnvironmentName $EnvironmentName `
+        -ResourcePrefix $ResourcePrefix `
+        -ResourceGroupName $ResourceGroupName
+
+    $existingAppLocation = Get-W365ExistingResourceLocation `
+        -ResourceGroupName $names.ResourceGroupName `
+        -Name $names.ContainerAppName `
+        -ResourceType 'Microsoft.App/containerApps'
+    if ([string]::IsNullOrWhiteSpace($existingAppLocation)) {
+        return
+    }
+
+    $managedEnvironmentLocation = Invoke-W365AzureCliRead -Arguments @(
+        'resource', 'show',
+        '--ids', $ManagedEnvironmentResourceId,
+        '--query', 'location',
+        '--output', 'tsv'
+    )
+
+    if ((ConvertTo-W365LocationToken $existingAppLocation) -ne (ConvertTo-W365LocationToken $managedEnvironmentLocation)) {
+        throw @"
+Viewer container app '$($names.ContainerAppName)' already exists in '$existingAppLocation', but the selected ACA managed environment is in '$managedEnvironmentLocation'. A container app cannot change region.
+Either select a managed environment in '$existingAppLocation', or delete the existing container app before rerunning:
+    az containerapp delete --name $($names.ContainerAppName) --resource-group $($names.ResourceGroupName) --yes
+"@
+    }
+}
+
+function Initialize-W365ViewerRegionEnvironment {
+    param(
+        [Parameter(Mandatory)][string]$EnvironmentName,
+        [string]$ResourcePrefix = '',
+        [string]$ResourceGroupName = '',
+        [string]$ManagedEnvironmentResourceId = ''
+    )
+
+    Assert-W365ViewerContainerAppRegion `
+        -EnvironmentName $EnvironmentName `
+        -ResourcePrefix $ResourcePrefix `
+        -ResourceGroupName $ResourceGroupName `
+        -ManagedEnvironmentResourceId $ManagedEnvironmentResourceId
+
+    $identityLocation = Resolve-W365ViewerIdentityLocation `
+        -EnvironmentName $EnvironmentName `
+        -ResourcePrefix $ResourcePrefix `
+        -ResourceGroupName $ResourceGroupName
+
+    $env:VIEWER_IDENTITY_LOCATION = $identityLocation
+    if (![string]::IsNullOrWhiteSpace($identityLocation)) {
+        Write-W365ProvisioningStep "Reusing the existing viewer identity region '$identityLocation'; a managed identity cannot change region."
+    }
+
+    return $identityLocation
+}
+
 function Resolve-W365SessionBlobLocation {
     param([Parameter(Mandatory)][uri]$SessionBlobUri)
 

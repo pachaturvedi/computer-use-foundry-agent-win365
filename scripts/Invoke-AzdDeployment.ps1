@@ -31,6 +31,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 . (Join-Path $PSScriptRoot 'ViewerConfiguration.ps1')
+. (Join-Path $PSScriptRoot 'W365Provisioning.ps1')
 Initialize-SampleScriptLogging -ScriptName $MyInvocation.MyCommand.Name -Parameters $PSBoundParameters
 
 if (!$IsWindows) {
@@ -550,6 +551,12 @@ try {
 
             if ($viewerEnabled -eq 'true') {
                 Write-DeploymentEvent STEP 'Provisioning the explicitly enabled viewer layer.'
+                Initialize-W365ViewerRegionEnvironment `
+                    -EnvironmentName (Get-AzdValue 'AZURE_ENV_NAME') `
+                    -ResourcePrefix (Get-AzdOptionalValue 'RESOURCE_PREFIX') `
+                    -ResourceGroupName (Get-AzdOptionalValue 'AZURE_RESOURCE_GROUP') `
+                    -ManagedEnvironmentResourceId (
+                        Get-AzdOptionalValue 'VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID') | Out-Null
                 Invoke-Azd @('provision', 'viewer', '--no-prompt')
             }
 

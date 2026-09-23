@@ -34,6 +34,9 @@ $testCertificate = [System.Security.Cryptography.X509Certificates.CertificateReq
 $testCertificateBase64Url = [Convert]::ToBase64String($testCertificate.RawData).Replace('+', '-').Replace('/', '_').TrimEnd('=')
 $testCertificateKeyIdentifier = [Convert]::ToBase64String($testCertificate.GetCertHash())
 
+$global:azGroupExistsCalls = @()
+$global:azResourceListCalls = @()
+
 function az {
     $arguments = @($args)
     $global:LASTEXITCODE = 0
@@ -49,6 +52,20 @@ function az {
     }
     if ($arguments[0] -eq 'account' -and $arguments[1] -eq 'get-access-token') {
         return 'mock-access-token'
+    }
+    if ($arguments[0] -eq 'group' -and $arguments[1] -eq 'exists') {
+        $global:azGroupExistsCalls = @($global:azGroupExistsCalls) + ($arguments -join ' ')
+        return $env:TEST_RESOURCE_GROUP_EXISTS
+    }
+    if ($arguments[0] -eq 'resource' -and $arguments[1] -eq 'list') {
+        $global:azResourceListCalls = @($global:azResourceListCalls) + ($arguments -join ' ')
+        if ($arguments -contains 'Microsoft.ManagedIdentity/userAssignedIdentities') {
+            return $env:TEST_EXISTING_IDENTITY_LOCATION
+        }
+        return $env:TEST_EXISTING_CONTAINER_APP_LOCATION
+    }
+    if ($arguments[0] -eq 'resource' -and $arguments[1] -eq 'show') {
+        return $env:TEST_MANAGED_ENVIRONMENT_LOCATION
     }
     throw "Unexpected az call: $($arguments -join ' ')"
 }
@@ -195,12 +212,20 @@ param(
 
     $viewerMainTemplate = Get-Content -LiteralPath (Join-Path $root 'infra\viewer\main.bicep') -Raw
     if ($viewerTemplate -notmatch
-        "(?s)resource identity 'Microsoft\.ManagedIdentity/userAssignedIdentities@[^']+' = \{.*?location: location" -or
+        "(?s)resource identity 'Microsoft\.ManagedIdentity/userAssignedIdentities@[^']+' = \{.*?location: identityLocation" -or
+        $viewerTemplate -notmatch 'param identityLocation string = location' -or
         $viewerTemplate -notmatch
         "(?s)resource viewer 'Microsoft\.App/containerApps@[^']+' = \{.*?location: containerAppLocation" -or
         $viewerMainTemplate -notmatch
-        'containerAppLocation: createManagedEnvironment \? location : existingManagedEnvironment!\.location') {
-        throw 'Viewer identity must stay in the deployment region while the container app follows its managed environment region.'
+        'containerAppLocation: createManagedEnvironment \? location : existingManagedEnvironment!\.location' -or
+        $viewerMainTemplate -notmatch
+        'identityLocation: empty\(viewerIdentityLocation\) \? location : viewerIdentityLocation') {
+        throw 'Viewer identity must default to the deployment region, honour an existing identity region, and the container app must follow its managed environment region.'
+    }
+
+    $viewerParameters = Get-Content -LiteralPath (Join-Path $root 'infra\viewer\main.parameters.json') -Raw
+    if ($viewerParameters -notmatch '"viewerIdentityLocation"\s*:\s*\{\s*"value"\s*:\s*"\$\{VIEWER_IDENTITY_LOCATION=\}"') {
+        throw 'viewerIdentityLocation is not wired to VIEWER_IDENTITY_LOCATION.'
     }
 
     & $scriptPath `

@@ -56,6 +56,12 @@ Invoke-W365Azd -Azd $azd -Arguments @(
     'env', 'set', 'VIEWER_LIVE_ENABLED', 'true'
 ) | Out-Null
 Write-SampleVerbose -Component 'viewer-activation' -Message 'Reprovisioning the existing viewer with Key Vault secret references.'
+Initialize-W365ViewerRegionEnvironment `
+    -EnvironmentName $environmentName `
+    -ResourcePrefix (Get-W365AzdValue -Azd $azd -Name 'RESOURCE_PREFIX' -AllowMissing) `
+    -ResourceGroupName (Get-W365AzdValue -Azd $azd -Name 'AZURE_RESOURCE_GROUP' -AllowMissing) `
+    -ManagedEnvironmentResourceId (
+        Get-W365AzdValue -Azd $azd -Name 'VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID' -AllowMissing) | Out-Null
 Invoke-W365Azd -Azd $azd -Arguments @(
     'provision', 'viewer', '--no-prompt'
 ) | Out-Null

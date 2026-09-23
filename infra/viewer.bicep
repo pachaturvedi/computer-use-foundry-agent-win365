@@ -4,6 +4,9 @@ param location string = resourceGroup().location
 
 @description('Region for the Container App. Defaults to the deployment region and must match the managed environment when an existing one is reused.')
 param containerAppLocation string = location
+
+@description('Region for the viewer user-assigned identity. Defaults to the deployment region. A managed identity region is immutable, so this must keep matching an already-deployed identity.')
+param identityLocation string = location
 param appName string
 param managedEnvironmentResourceId string
 param registryName string
@@ -51,7 +54,7 @@ resource registry 'Microsoft.ContainerRegistry/registries@2023-07-01' existing =
 resource vault 'Microsoft.KeyVault/vaults@2023-07-01' existing = { name: keyVaultName }
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: '${appName}-identity'
-  location: location
+  location: identityLocation
   tags: tags
 }
 
