@@ -570,12 +570,12 @@ $scopes = @(
     'AgentIdentityBlueprint.ReadWrite.All', 'AgentIdentityBlueprint.UpdateAuthProperties.All',
     'AgentIdUser.ReadWrite.All', 'DelegatedPermissionGrant.ReadWrite.All', 'CloudPC.ReadWrite.All'
 )
-if ((List-MapValues $manifest.graph.federatedIdentityCredentials).Count -gt 0) {
+if (@(List-MapValues $manifest.graph.federatedIdentityCredentials).Count -gt 0) {
     $scopes += 'AgentIdentityBlueprint.AddRemoveCreds.All'
 }
 
 if ($viewerManifest -and !$viewerCleanupCompleted -and
-    ($viewerManifest.application -is [System.Collections.IDictionary])) {
+    ((Get-OptionalObjectValue -Object $viewerManifest -Name 'application') -is [System.Collections.IDictionary])) {
     $scopes += 'Application.ReadWrite.All'
 }
 Connect-GraphForCleanup -TenantId $tenantId -Scopes $scopes

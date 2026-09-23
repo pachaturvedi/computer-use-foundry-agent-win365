@@ -341,7 +341,10 @@ function Write-TestEnvironment {
 }
 
 function Write-TestManifest {
-    param([string]$ProjectOwnership = 'managed')
+    param(
+        [string]$ProjectOwnership = 'managed',
+        [switch]$EmptyFederatedIdentityCredentials
+    )
 
     $manifest = [ordered]@{
         schemaVersion = 1
@@ -388,8 +391,10 @@ function Write-TestManifest {
                 createdMeta = [ordered]@{ resourceAppId = 'ea9ffc3e-8a23-4a7d-836d-234d7c7565c1'; entryId = 'inherit-created-meta'; disposition = 'created' }
                 reusedComputer = [ordered]@{ resourceAppId = '90ecec28-f5a6-42b3-9bde-dae1ca98f8b5'; entryId = 'inherit-reused-computer'; disposition = 'reused' }
             }
-            federatedIdentityCredentials = [ordered]@{
-                hosted = [ordered]@{ id = 'fic-created'; name = 'w365-hosted-22222222-2222-2222-2222-222222222222'; subject = '22222222-2222-2222-2222-222222222222'; disposition = 'created' }
+            federatedIdentityCredentials = if ($EmptyFederatedIdentityCredentials) { [ordered]@{} } else {
+                [ordered]@{
+                    hosted = [ordered]@{ id = 'fic-created'; name = 'w365-hosted-22222222-2222-2222-2222-222222222222'; subject = '22222222-2222-2222-2222-222222222222'; disposition = 'created' }
+                }
             }
         }
     }
@@ -633,7 +638,68 @@ try {
         throw 'Reused-inheritance preflight should block cleanup before any deletions run.'
     }
 
-    Write-Output 'Offline cleanup: protected approval, reverse-order deletion, idempotent rerun, shared-project guard, and fail-closed partial cleanup passed.'
+    # Regression: an empty (but present) graph.federatedIdentityCredentials manifest map must not
+    # crash the Graph-scope calculation. List-MapValues returns zero items in this case, and a
+    # PowerShell function that outputs zero items collapses to $null for the caller even when the
+    # function's own return statement wraps the result in @(); the *call site* must also wrap the
+    # result in @() before calling .Count, or accessing .Count throws under strict mode.
+    Reset-MockGraphState
+    Reset-MockGraphSignIn
+    Write-TestEnvironment
+    Write-TestManifest -EmptyFederatedIdentityCredentials
+    $env:W365_CLEANUP_CONFIRMED = 'true'
+    & "$scriptsRoot\Remove-W365Resources.ps1" -EnvironmentName $envName -EnvironmentFilePath $envFilePath -OwnershipManifestPath $manifestPath -Confirm:$false | Out-Null
+    $env:W365_CLEANUP_CONFIRMED = ''
+    if ('AgentIdentityBlueprint.AddRemoveCreds.All' -in (Get-MgContext).Scopes) {
+        throw 'Cleanup requested the federated-credential-management scope with no recorded federated identity credentials.'
+    }
+
+    # Regression: a viewer ownership manifest without an 'application' section (for example, one
+    # recorded before the viewer app was owned, or where only Key Vault RBAC assignments were
+    # recorded) must not crash the Graph-scope calculation. Dot-notation property access on a
+    # hashtable/ordered-dictionary for a key that does not exist throws under strict mode; safe
+    # access must go through Get-OptionalObjectValue like the rest of this script.
+    function az {
+        # Never actually invoked in this scenario: the only recorded RBAC assignment has
+        # disposition 'reused', so Remove-ViewerArtifacts skips it before any az call.
+        throw "Unexpected az call: $($args -join ' ')"
+    }
+    $viewerOnlyManifestDirectory = Join-Path $repoRoot ".azure\$envName"
+    $viewerOnlyManifestPath = Join-Path $viewerOnlyManifestDirectory 'viewer-ownership.json'
+    try {
+        New-Item -ItemType Directory -Path $viewerOnlyManifestDirectory -Force | Out-Null
+        Set-Content -LiteralPath $viewerOnlyManifestPath -Value (ConvertTo-Json ([ordered]@{
+            schemaVersion = 1
+            environmentName = $envName
+            keyVaultRoleAssignments = [ordered]@{
+                operatorSecretsOfficer = [ordered]@{
+                    assignmentId = '/subscriptions/sub/providers/Microsoft.Authorization/roleAssignments/operator'
+                    principalId = 'operator-object'
+                    principalType = 'User'
+                    roleDefinitionId = '/subscriptions/sub/providers/Microsoft.Authorization/roleDefinitions/b86a8fe4-44ce-4948-aee5-eccb2c155cd7'
+                    roleName = 'Key Vault Secrets Officer'
+                    scope = '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.KeyVault/vaults/w365-vault'
+                    disposition = 'reused'
+                }
+            }
+        }) -Depth 20)
+
+        Reset-MockGraphState
+        Reset-MockGraphSignIn
+        Write-TestEnvironment
+        Add-Content -LiteralPath $envFilePath -Value 'AZURE_SUBSCRIPTION_ID="00000000-0000-0000-0000-000000000000"'
+        Write-TestManifest
+        $env:W365_CLEANUP_CONFIRMED = 'true'
+        & "$scriptsRoot\Remove-W365Resources.ps1" -EnvironmentName $envName -EnvironmentFilePath $envFilePath -OwnershipManifestPath $manifestPath -Confirm:$false | Out-Null
+        $env:W365_CLEANUP_CONFIRMED = ''
+    }
+    finally {
+        if (Test-Path -LiteralPath $viewerOnlyManifestDirectory) {
+            Remove-Item -LiteralPath $viewerOnlyManifestDirectory -Recurse -Force
+        }
+    }
+
+    Write-Output 'Offline cleanup: protected approval, reverse-order deletion, idempotent rerun, shared-project guard, fail-closed partial cleanup, empty federated-credential map, and application-less viewer manifest passed.'
 }
 finally {
     [Environment]::SetEnvironmentVariable('W365_CLEANUP_CONFIRMED', $previousCleanupApproval, 'Process')
