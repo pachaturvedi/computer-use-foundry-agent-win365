@@ -243,9 +243,6 @@ W365 MCP endpoint.
 Blueprint inherited grants and optional viewer federation may affect sibling
 agents. The FIC grants blueprint impersonation, not ARI-only access. Shared
 blueprints need explicit administrator approval; the viewer can stay disabled.
-The public token helper is an activity/autopilot reference: ordinary Responses
-hosting support requires actual live acceptance, with no fallback if unsupported.
-This sample neither publishes autopilot nor requires a hiring workflow.
 
 That same shared-boundary concern drives teardown. Cleanup removes only manifest
 entries recorded as `created`. Reused permission grants are restored to their

@@ -21,13 +21,12 @@ and optional viewer. Setup commands belong in
 App/client IDs and object/principal IDs are different types even when a service
 currently returns the same GUID for both. Never substitute one for the other.
 
-When enabled, all W365 IDs must be valid. `W365_AGENT_OBJECT_ID` is required
-in both agent and viewer configuration, separately from the app/client ID in
-`W365_AGENT_ID`. Existing azd environments with an explicit mode keep that
-mode; changing the fresh default does not migrate them.
-Identity mode is selected by `W365_BLUEPRINT_CREDENTIAL_MODE`, never by a model,
-request argument, page or user-supplied credential. Active runtime requires shared Blob state;
-`FileSessionStore` is only an offline-test helper.
+When enabled, all W365 IDs must be valid. `W365_AGENT_OBJECT_ID` is required in
+both agent and viewer configuration, separately from the app/client ID in
+`W365_AGENT_ID`. The credential mode is selected only by
+`W365_BLUEPRINT_CREDENTIAL_MODE`, never by a model or request. An existing azd
+environment keeps the mode it already has; the fresh-deployment default does
+not migrate it.
 
 `W365_ENABLED=false` is the bootstrap default. Bootstrap starts without W365,
 state, model, or viewer credentials; health is available and Responses requests
@@ -70,49 +69,28 @@ plain hosted-agent environment variable.
 
 ## Blueprint certificate delivery
 
-In `key_vault_certificate` mode, the agent authenticates the blueprint using a
-signed JWT client assertion instead of a shared secret. `infra/state/keyvault.bicep`
-grants the agent's runtime principal least-privilege **Key Vault Certificate
-User** (read public certificate metadata) and **Key Vault Crypto User**
-(sign/verify only) roles scoped to only the `w365-blueprint-certificate`
-certificate and its backing key objects — not the shared vault as a whole, so
-the agent and viewer runtime identities have no standing access to unrelated secrets
-(such as the viewer OIDC client secret) also stored there, and never the
-roles needed to retrieve the private key or the paired secret. At startup,
-`KeyVaultBlueprintCertificateAssertionProvider` reads the public bytes of the
-`w365-blueprint-certificate` certificate from `W365_KEY_VAULT_NAME` (the only
-key_vault_certificate-mode configuration the agent requires), builds a JWT
-client assertion, and signs it by calling Key Vault's `sign` REST API — the
-private key is never retrieved, exported, or held in agent process memory.
-Certificate metadata is cached in memory for the process lifetime and retried
-after a failure; rotating the certificate requires a redeploy so a fresh
-process picks up the new key. The viewer uses the same provider abstraction,
-its UAMI, and certificate/key-scoped Certificate User and Crypto User roles.
+In `key_vault_certificate` mode, the hosted agent receives only
+`W365_KEY_VAULT_NAME`. It reads the public bytes of
+`w365-blueprint-certificate`, builds a JWT client assertion, and asks Key Vault
+to sign it. The private key is non-exportable and is never returned to the
+agent process. Certificate metadata is cached only in process memory; rotation
+requires a redeploy.
 
-Fresh `azd up` orchestrates the two explicitly confirmed operations before
-W365 setup (see `docs/W365-SETUP.md`): `scripts\Initialize-W365BlueprintCertificate.ps1`
-creates or rotates the self-signed, non-exportable certificate in Key Vault,
-and `scripts\Register-W365BlueprintCertificate.ps1` registers only its public
-bytes as a `keyCredential` on the Foundry Agent ID Blueprint application via
-Microsoft Graph (`AgentIdentityBlueprint.AddRemoveCreds.All`, the least
-privileged credential-management scope for the blueprint — not tenant-wide
-application write), preserving any existing credentials already on the
-blueprint. `scripts\Invoke-W365SetupFlow.ps1` also verifies, via a read-only
-Graph call, that the exact same certificate is registered exactly once on the
-discovered blueprint before proceeding — Key Vault presence alone is not
-sufficient. Neither script reads, exports, or transmits private key material.
+The agent and the viewer each use their own identity and receive **Key Vault
+Certificate User** and **Key Vault Crypto User** scoped to that certificate and
+its backing key, not to the vault. Neither identity can read unrelated secrets
+in the shared vault, including the viewer OIDC secret.
 
-Fresh deployment provisions base state without certificate/key role
-assignments, creates and registers the certificate, reuses the existing
-certificate readiness preflight, then reprovisions state and provisions the
-viewer with object-scoped RBAC. The internal
-`W365_CERTIFICATE_PROVISIONING_ACTIVE` gate is process-local and must never be
-persisted or supplied by an operator.
+Provisioning has two explicit steps, which `azd up` runs for you:
 
-For established deployments, `W365_ENABLED=true` is the persisted readiness
-proof used by state/viewer Bicep during preview, live activation, and routine
-reprovisioning. Fresh deployments cannot use that proof because setup has not
-completed, so they still require the transient post-registration gate.
+1. `Initialize-W365BlueprintCertificate.ps1` creates or rotates
+   `w365-blueprint-certificate` in Key Vault.
+2. `Register-W365BlueprintCertificate.ps1` registers only its public bytes as a
+   blueprint `keyCredential` and preserves existing credentials.
+
+Setup verifies that the exact certificate is registered on the discovered
+blueprint before any W365 mutation. Key Vault presence alone is insufficient.
+Neither script reads, exports, or transmits private key material.
 
 ## Three-stage agent-user tokens
 

@@ -174,14 +174,12 @@ pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
 
 #### `key_vault_certificate` mode
 
-For `key_vault_certificate` mode (self-signed, non-exportable; the private key
-never leaves Key Vault): first create the certificate, then register only its
-public bytes with the Foundry Agent ID Blueprint application via Graph.
-This staged sequence requires the operator to already hold Key Vault
-Certificates Officer through the final `Invoke-W365SetupFlow.ps1` readiness
-check; the standalone initializer does not leave a self-granted temporary role
-behind. Prefer fresh `azd up`, which owns one bounded temporary lease across
-initialization, registration, and readiness and then revokes it automatically.
+This mode uses a self-signed, non-exportable certificate whose private key
+never leaves Key Vault. Create the certificate, then register only its public
+bytes on the blueprint. Prefer `azd up`, which also grants and revokes the
+temporary Key Vault Certificates Officer role the operator needs across these
+steps. Running the staged sequence manually requires you to hold that role
+through the final `Invoke-W365SetupFlow.ps1` readiness check.
 
 ```powershell
 azd env set W365_BLUEPRINT_CREDENTIAL_MODE key_vault_certificate `
@@ -198,13 +196,8 @@ pwsh -NoProfile -File .\scripts\Register-W365BlueprintCertificate.ps1 `
     -ConfirmResourceChanges `
     -UseDeviceCode
 
-# infra/state/keyvault.bicep only grants the certificate/key Key Vault RBAC
-# roles to the agent principal when W365_BLUEPRINT_CREDENTIAL_MODE is
-# key_vault_certificate at *state* provisioning time. If state was already
-# provisioned in client_secret mode before you switched modes
-# above, you must re-provision state now so the agent actually receives that
-# access before the redeploy below; otherwise the next step fails fast with a
-# clear remediation message instead of deploying a broken agent.
+# Required if state was last provisioned in another credential mode: it grants
+# the agent the certificate-scoped Key Vault roles before the redeploy below.
 azd provision state --environment $environment --no-prompt
 
 pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
@@ -216,56 +209,47 @@ pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
     -UseDeviceCode
 ```
 
-<!-- certificate registration details -->
-`Register-W365BlueprintCertificate.ps1` requires a delegated Graph sign-in
-with `AgentIdentityBlueprint.AddRemoveCreds.All` (the least-privileged Blueprint
-credential-management scope; it does not grant tenant-wide application write)
-and reads/writes only the blueprint application's `keyCredentials`; it
-preserves any existing credentials already on the blueprint (for example, a
-`client_secret` you may still have configured) and is idempotent by certificate
-thumbprint — re-running it after the certificate already exists on the
-blueprint is a no-op. Re-running `Initialize-W365BlueprintCertificate.ps1`
-without `-Rotate` reuses the existing certificate; pass `-Rotate` to issue a
-new one (and re-run the registration step so Entra trusts the new public key).
-Reuse fails closed unless the existing policy is non-exportable RSA 2048 with
-digital-signature usage; deliberately rotate an incompatible certificate.
-`Invoke-W365SetupFlow.ps1` re-verifies, via a read-only Graph call, that the
-certificate is actually registered on the blueprint before mutating W365
-resources — Key Vault presence alone does not satisfy this check.
+`Register-W365BlueprintCertificate.ps1` needs a delegated Graph sign-in with
+`AgentIdentityBlueprint.AddRemoveCreds.All` and touches only the blueprint's
+`keyCredentials`. It preserves existing credentials and is idempotent by
+certificate thumbprint. Re-running `Initialize-W365BlueprintCertificate.ps1`
+without `-Rotate` reuses the existing certificate; `-Rotate` issues a new one,
+after which you must re-run the registration step. Reuse fails closed unless
+the existing policy is non-exportable RSA 2048 with digital-signature usage.
 
-The wrapper validates the exact certificate registration before any W365
-mutation. Certificate mode is implemented and offline-validated but still
-requires live tenant acceptance.
+Before mutating W365 resources, `Invoke-W365SetupFlow.ps1` re-verifies through
+a read-only Graph call that the exact certificate is registered on the
+blueprint. Key Vault presence alone does not satisfy this check. Certificate
+mode is implemented and offline-validated but still requires live tenant
+acceptance.
 
 `PoolIdOrUrl` accepts a raw pool GUID or an Intune URL containing
 `poolId/<guid>`. `-BillingConfirmed` acknowledges an already approved billing
 plan; it does not activate billing.
 
-During fresh `azd up`, one temporary Key Vault Certificates Officer lease is
-held across certificate create/reuse, Graph registration, exact readiness
-verification, and the hosted-agent deployment preflight, because those later
-steps also read the certificate through the Key Vault data plane as the same
-operator. Recognized RBAC-propagation authorization failures are retried
-with bounded backoff; terminal errors stop immediately. The lease is revoked
-once, in an outer `finally`, whether or not the remaining steps succeed. A
-primary operation failure remains the primary error;
-if revocation also fails, both errors are retained. A cleanup-only failure
-marks deployment incomplete. Rerun `azd up` after correcting the reported
-cause: certificate creation and Graph registration are idempotent. If the
-diagnostic reports residual temporary RBAC, remove only the reported role
-assignment before retrying; do not delete the certificate or unrelated roles.
+During `azd up`, a temporary Key Vault Certificates Officer role is held across
+certificate creation, Graph registration, readiness verification, and the
+agent deployment preflight, because those steps read the certificate through
+the Key Vault data plane as the same operator. RBAC-propagation failures are
+retried with bounded backoff; terminal errors stop immediately. The role is
+revoked once, whether or not the remaining steps succeed, and a failure in
+those steps stays the reported error. If revocation also fails, both errors are
+reported. A revocation-only failure marks the deployment incomplete.
 
-Certificate/key-scoped agent RBAC is applied only when the orchestration-owned
-readiness gate is active or `W365_ENABLED` is already persisted as `true`. If
-setup fails after the certificate is registered but before `W365_ENABLED`
+Rerun `azd up` after correcting the reported cause; certificate creation and
+registration are idempotent. If the output reports residual temporary RBAC,
+remove only the reported role assignment before retrying. Do not delete the
+certificate or unrelated role assignments.
+
+If setup fails after the certificate is registered but before `W365_ENABLED`
 becomes `true`, do not run `azd provision state` on its own: that pass would
-revoke the roles just granted. `Invoke-AzdDeployment.ps1` detects this window
-and fails closed. Complete setup so `W365_ENABLED=true` is persisted, then
-reprovision state and redeploy.
+revoke the certificate-scoped agent roles just granted. Deployment detects this
+window and fails closed. Complete setup so `W365_ENABLED=true` is persisted,
+then reprovision state and redeploy.
 
-For repeatable no-`PoolId` creates, store reusable pool settings in
-`config\deployment.local.json`. `Setup-W365.ps1` now reads the `w365` section
-automatically when the corresponding command-line argument is omitted.
+For repeatable creates without `-PoolId`, store reusable pool settings in the
+`w365` section of `config\deployment.local.json`. `Setup-W365.ps1` reads it
+when the corresponding argument is omitted.
 
 Use `-UseDeviceCode` in terminals where WAM cannot obtain a parent window. The
 scripts display the Microsoft device-login URL and retry a timed-out prompt

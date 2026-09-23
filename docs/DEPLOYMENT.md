@@ -303,39 +303,39 @@ Before W365 or Entra mutation:
 5. confirm W365 billing and pool inputs; and
 6. review inherited blueprint grants, especially for shared projects.
 
-Prepare private shared Blob state before enabling; live runtime requires Blob.
-`FileSessionStore` is an offline-test helper, not a local live backend.
-Grant the correct deployed
-Foundry identity model/project invocation under current Foundry RBAC guidance
-and Storage Blob Data Contributor on the state container. In `client_secret`
-mode the agent's principal is also granted Key Vault Secrets User (read-only)
-on the shared vault so it can fetch `w365-blueprint-client-secret` directly
-(see `infra/state/keyvault.bicep`); **it still does not need Key Vault
-certificate access.** In `key_vault_certificate` mode the agent's principal is
-instead granted Key Vault Certificate User and Key Vault Crypto User, scoped to
-the `w365-blueprint-certificate` certificate and its backing key specifically
-(not the whole vault). The viewer UAMI receives equivalent object-scoped roles.
-Because the agent grant is applied at *state* provisioning
-time, switching `W365_BLUEPRINT_CREDENTIAL_MODE` to `key_vault_certificate`
-after state was already provisioned requires re-running `azd provision state`
-before the next agent deploy; `Invoke-AzdDeployment.ps1` verifies this RBAC is
-actually present before every `DeployAgent`/`DeployAll` run and fails fast with
-remediation guidance if it is missing, instead of deploying an agent that
-cannot sign with its certificate. Ordinary Azure model/state credentials remain separate
-from the W365 flow. Viewer Bicep grants roles only to its own UAMI, not to the
-Foundry principal. Verify the actual Azure principal used for model/state
-access rather than substituting an app/client ID in RBAC. Role assignments
-need appropriately scoped authorization (for example Role Based Access Control
-Administrator); do not blindly grant Owner.
+Live runtime requires private shared Blob state; `FileSessionStore` is an
+offline-test helper, not a live backend. Grant the deployed Foundry identity
+model/project invocation under current Foundry RBAC guidance and
+`Storage Blob Data Contributor` on the state container.
 
-The legacy `client_secret` E2E path is not self-contained. An authorized Entra
+The agent's Key Vault access depends on the selected credential mode:
+
+| Mode | Agent roles on the shared vault |
+| --- | --- |
+| `client_secret` | `Key Vault Secrets User`, to read `w365-blueprint-client-secret`. No certificate access. |
+| `key_vault_certificate` | `Key Vault Certificate User` and `Key Vault Crypto User`, scoped to `w365-blueprint-certificate` and its backing key, not the vault. |
+
+The viewer UAMI receives equivalent object-scoped roles from viewer Bicep,
+which never grants roles to the Foundry principal. These grants are applied at
+*state* provisioning time, so after changing
+`W365_BLUEPRINT_CREDENTIAL_MODE` on an already-provisioned environment, re-run
+`azd provision state` before the next agent deploy. Deployment verifies the
+required RBAC and fails fast with remediation guidance rather than deploying an
+agent that cannot authenticate.
+
+Ordinary Azure model/state credentials remain separate from the W365 flow.
+Verify the actual Azure principal used for model/state access rather than
+substituting an app/client ID. Role assignments need appropriately scoped
+authorization (for example Role Based Access Control Administrator); do not
+grant Owner.
+
+Legacy `client_secret` mode is not self-contained. An authorized Entra
 administrator must create and approve a short-lived credential for the existing
-Foundry blueprint under tenant policy. The repository does not create that
-credential. Transfer it outside source control, logs, command history, JSON,
-and `.azure`; store it only through the secure
-`Set-ViewerSecrets.ps1 -BlueprintOnly` prompt, record its owner and expiry,
-rotate it under tenant policy, and revoke it after validation. Explicitly set
-`W365_BLUEPRINT_CREDENTIAL_MODE`; never fall back between credential modes.
+Foundry blueprint under tenant policy; the repository does not create it.
+Transfer it outside source control, logs, command history, JSON, and `.azure`;
+store it only through the secure `Set-ViewerSecrets.ps1 -BlueprintOnly` prompt;
+record its owner and expiry; rotate it under tenant policy; and revoke it after
+validation.
 
 Credential modes and their current validation status are documented in
 [Authentication](AUTHENTICATION.md). The checked-in default is
@@ -361,29 +361,12 @@ The state layer creates the shared W365 Key Vault and private
 `Storage Blob Data Contributor` on that container, and emits
 `SESSION_BLOB_URI`. Live runtime does not support local file state.
 
-In the fresh `key_vault_certificate` path, the first state pass deliberately
-omits certificate/key RBAC. `postup` then creates or reuses the certificate,
-registers its public bytes on the exact blueprint, runs the existing readiness
-preflight, reprovisions state with certificate-scoped hosted-agent RBAC, and
+In the fresh `key_vault_certificate` path, `postup` creates or reuses the
+certificate, registers its public bytes on the exact blueprint, verifies
+readiness, reprovisions state with certificate-scoped agent RBAC, and
 provisions the viewer last. `W365_CERTIFICATE_PROVISIONING_ACTIVE` is an
-internal, process-local orchestration gate; never persist or set it with
-`azd env set`. A persisted or externally supplied active value fails closed.
-
-Legacy development deployments may still have state in a separate
-`*-state-rg`. The templates do not move or delete those resources
-automatically. A new deployment uses the environment resource group and a new
-storage account; migrate any required session state deliberately before
-removing the legacy resource group.
-
-The earlier validated development deployment created:
-
-| Item | Value |
-| --- | --- |
-| Resource group | `fawin365-dev-state-rg` |
-| Storage account | `fawin365devstsq53oc` |
-| Container | `desktop-state` |
-| Session Blob URI | `https://fawin365devstsq53oc.blob.core.windows.net/desktop-state/slot.json` |
-| Data principal | `5ff7789e-bb85-4e15-9667-bf83c94465e1` |
+internal orchestration gate; never set it with `azd env set`. A persisted value
+fails closed.
 
 The application creates `slot.json` atomically on first enabled use; the
 infrastructure deployment intentionally does not seed the Blob.
@@ -455,7 +438,7 @@ Set non-secret values using `azd env set KEY VALUE`:
 | `W365_TENANT_ID`, `W365_BLUEPRINT_ID` | Setup output; Foundry/W365/viewer Azure tenant and blueprint app ID. |
 | `W365_AGENT_ID`, `W365_AGENT_OBJECT_ID`, `W365_AGENT_USER_ID` | Setup output; agent app ID, agent object ID, agent-user object ID. |
 | `SESSION_BLOB_URI` | `https://<storage>.blob.core.windows.net/desktop-state/slot.json` |
-| `W365_KEY_VAULT_NAME` | State-layer output naming the shared vault for the blueprint secret or certificate, and the optional viewer OIDC secret. The hosted agent uses this (plus its own RBAC-granted identity) to fetch `w365-blueprint-client-secret` or sign with `w365-blueprint-certificate` directly; it never receives raw secret/private-key material as an environment variable. |
+| `W365_KEY_VAULT_NAME` | State-layer output naming the shared vault that holds the blueprint credential and the optional viewer OIDC secret. The agent reads it with its own identity; raw secret or private-key material is never passed as an environment variable. |
 | `OPERATOR_TENANT_ID`, `OPERATOR_OBJECT_ID` | Exact human operator's tenant/object IDs. |
 | `HOSTED_ALLOWED_USER_ID` | **Foundry agent only:** platform user partition or `sha256:` fingerprint; see binding below. Not a viewer parameter. |
 | `VIEWER_PUBLIC_URL` | Optional for an agent-only deployment. When omitted, desktop execution remains available but live-view/take-control links are returned as unavailable. Required for the viewer itself. |
@@ -477,33 +460,24 @@ viewer, separately from `W365_AGENT_ID` (app/client ID). Set viewer `agentObject
 from the corresponding setup output, not the agent's app ID. The viewer has no
 `hostedAllowedUserId` Bicep parameter; its authorization uses the human OIDC claims.
 
-Finish [OIDC/SDK configuration](VIEWER.md#enable-the-hosted-viewer). The
-certificate-primary Windows activation sequence keeps
-`W365_BLUEPRINT_CREDENTIAL_MODE=key_vault_certificate` and creates only the
-viewer’s separate OIDC secret:
+Finish [OIDC/SDK configuration](VIEWER.md#enable-the-hosted-viewer). In
+certificate mode this creates only the viewer's own OIDC secret and never
+prompts for a blueprint credential:
 
 ```powershell
 $environment = "<azd-environment-name>"
 pwsh -NoProfile -File .\scripts\Enable-ViewerLive.ps1 -Environment $environment
 ```
 
-`Configure-ViewerOidc.ps1` creates or reconciles the single-tenant web app,
-exact `https://<viewer-host>/signin-oidc` callback, service principal, operator
-binding, and `w365-viewer-client-secret`. `Set-ViewerSecrets.ps1
--BlueprintOnly` is legacy-only: it prompts securely for a blueprint credential and stores
-it as `w365-blueprint-client-secret`. Neither secret is stored in `.azure`,
-JSON, Bicep parameters, `azure.yaml`, or the image. In `client_secret` mode,
-the hosted agent retrieves the blueprint secret from Key Vault at runtime with
-its own managed identity.
-
-Live activation always references the viewer OIDC secret. It references a
-blueprint secret only in explicit legacy `client_secret` mode. The Windows
-hook grants the viewer UAMI Key Vault Secrets User for its OIDC reference and
-uses Key Vault Secrets Officer for the signed-in setup operator while creating
-or reconciling that OIDC credential. Certificate mode keeps its separate
-certificate/key-scoped roles and never prompts for a blueprint secret.
-`managed_identity_federation` also omits the blueprint secret, but fails unless
-the exact viewer UAMI federation is present in the W365 ownership manifest.
+`Configure-ViewerOidc.ps1` creates or reconciles the single-tenant web app, the
+exact `https://<viewer-host>/signin-oidc` callback, its service principal, the
+operator binding, and `w365-viewer-client-secret`. Live activation always
+references that OIDC secret; it references a blueprint secret only in legacy
+`client_secret` mode, collected through `Set-ViewerSecrets.ps1 -BlueprintOnly`.
+`managed_identity_federation` omits the blueprint secret but fails unless the
+exact viewer UAMI federation is recorded in the W365 ownership manifest.
+No secret is stored in `.azure`, JSON, Bicep parameters, `azure.yaml`, or the
+image.
 
 ### Run W365 setup and deploy the enabled version
 
