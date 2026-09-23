@@ -321,8 +321,10 @@ when the corresponding argument is omitted.
 Use `-UseDeviceCode` in terminals where WAM cannot obtain a parent window. The
 scripts display the Microsoft device-login URL. Microsoft Graph enforces its
 own device-code inactivity timeout and it cannot be extended, so a timed-out
-code is reissued automatically for up to three sign-in attempts. Use
-`-DeviceCodeMaxAttempts` to change that.
+code is reissued automatically for up to three sign-in attempts. Every script
+that signs in to Graph behaves this way, including setup, discovery, pool
+capture, blueprint certificate registration, viewer sign-in configuration, and
+cleanup. Use `-DeviceCodeMaxAttempts` to change that.
 
 ### Discover and save a pool profile
 

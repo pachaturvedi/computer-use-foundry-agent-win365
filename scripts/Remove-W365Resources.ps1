@@ -23,13 +23,15 @@ param(
     [switch]$AllowExistingProjectCleanup,
     [switch]$ConfirmViewerOnlyCleanup,
     [switch]$UseDeviceCode,
-    [ValidateRange(30, 3600)][int]$GraphClientTimeoutSeconds = 600
+    [ValidateRange(30, 3600)][int]$GraphClientTimeoutSeconds = 600,
+    [ValidateRange(1, 5)][int]$DeviceCodeMaxAttempts = 3
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'W365OwnershipManifest.ps1')
+. (Join-Path $PSScriptRoot 'GraphSignIn.ps1')
 Initialize-SampleScriptLogging -ScriptName $MyInvocation.MyCommand.Name -Parameters $PSBoundParameters
 
 function Get-AzdCommand {
@@ -191,26 +193,6 @@ function List-MapValues {
 
     return @($Map.Keys | Sort-Object | ForEach-Object { $Map[$_] })
 }
-function Test-GraphContext {
-    param(
-        $Context,
-        [guid]$RequiredTenantId,
-        [string[]]$RequiredScopes
-    )
-
-    if ($null -eq $Context) {
-        return $false
-    }
-    if ($Context.TenantId -ne $RequiredTenantId.ToString()) {
-        return $false
-    }
-    if ($Context.AuthType -ne 'Delegated') {
-        return $false
-    }
-
-    $missingScopes = @($RequiredScopes | Where-Object { $_ -notin $Context.Scopes })
-    return $missingScopes.Count -eq 0
-}
 function Connect-GraphForCleanup {
     param(
         [Parameter(Mandatory)][guid]$TenantId,
@@ -230,20 +212,10 @@ function Connect-GraphForCleanup {
         ContextScope = 'CurrentUser'
         NoWelcome = $true
     }
-    try {
-        Connect-MgGraph @connectParameters
-        $graphContext = Get-MgContext
-    }
-    catch {
-        if (!$UseDeviceCode) {
-            throw
-        }
-
-        $connectParameters.UseDeviceCode = $true
-        $connectParameters.InformationAction = 'Continue'
-        Connect-MgGraph @connectParameters
-        $graphContext = Get-MgContext
-    }
+    $graphContext = Connect-W365GraphContext `
+        -ConnectParameters $connectParameters `
+        -FallbackToDeviceCode:$UseDeviceCode `
+        -DeviceCodeMaxAttempts $DeviceCodeMaxAttempts
 
     if (!(Test-GraphContext -Context $graphContext -RequiredTenantId $TenantId -RequiredScopes $requiredScopes)) {
         throw 'A delegated Graph connection in the requested tenant is required for cleanup.'

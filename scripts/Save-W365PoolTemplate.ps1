@@ -35,6 +35,7 @@ if (!$IsWindows) {
 }
 
 . (Join-Path $PSScriptRoot 'DeploymentConfig.ps1')
+. (Join-Path $PSScriptRoot 'GraphSignIn.ps1')
 Initialize-SampleScriptLogging -ScriptName $MyInvocation.MyCommand.Name -Parameters $PSBoundParameters
 
 function TryParse-GuidValue {
@@ -63,84 +64,6 @@ function Resolve-PoolId {
     throw 'PoolIdOrUrl must be a pool GUID or an Intune pool URL containing poolId/<guid>.'
 }
 
-function Test-GraphContext {
-    param(
-        $Context,
-        [guid]$RequiredTenantId,
-        [string[]]$RequiredScopes
-    )
-
-    if ($null -eq $Context) {
-        return $false
-    }
-    if ($RequiredTenantId -ne [guid]::Empty -and $Context.TenantId -ne $RequiredTenantId.ToString()) {
-        return $false
-    }
-    if ($Context.AuthType -ne 'Delegated') {
-        return $false
-    }
-
-    $missingScopes = @($RequiredScopes | Where-Object { $_ -notin $Context.Scopes })
-    return @($missingScopes).Count -eq 0
-}
-
-function Test-IsDeviceCodeTimeoutError {
-    param([Parameter(Mandatory)]$ErrorRecord)
-
-    $message = [string]$ErrorRecord.Exception.Message
-    return $message -match 'Authentication timed out after \d+ seconds? due to inactivity'
-}
-
-function Connect-GraphWithRetries {
-    param(
-        [Parameter(Mandatory)][hashtable]$ConnectParameters,
-        [switch]$UseDeviceCode,
-        [ValidateRange(1, 5)][int]$DeviceCodeMaxAttempts
-    )
-
-    if ($UseDeviceCode) {
-        Write-Host ''
-        Write-Host 'Microsoft Graph sign-in is required to read the source W365 pool.'
-        Write-Host 'When the device code appears, open https://login.microsoft.com/device,'
-        Write-Host 'enter the displayed code, and complete sign-in within 120 seconds.'
-        Write-Host 'This command waits for the authentication result.'
-        Write-Host ''
-
-        for ($attempt = 1; $attempt -le $DeviceCodeMaxAttempts; $attempt++) {
-            try {
-                if ($DeviceCodeMaxAttempts -gt 1) {
-                    Write-Host "Starting Microsoft Graph device-code sign-in attempt $attempt of $DeviceCodeMaxAttempts..."
-                }
-
-                Connect-MgGraph @ConnectParameters
-                return Get-MgContext
-            }
-            catch {
-                if (!(Test-IsDeviceCodeTimeoutError -ErrorRecord $_) -or $attempt -eq $DeviceCodeMaxAttempts) {
-                    throw
-                }
-
-                Write-Warning 'Microsoft Graph device-code sign-in timed out. Retrying with a fresh code...'
-            }
-        }
-    }
-
-    try {
-        Connect-MgGraph @ConnectParameters
-        return Get-MgContext
-    }
-    catch {
-        $deviceCodeParameters = @{}
-        foreach ($entry in $ConnectParameters.GetEnumerator()) {
-            $deviceCodeParameters[$entry.Key] = $entry.Value
-        }
-
-        $deviceCodeParameters.UseDeviceCode = $true
-        Connect-MgGraph @deviceCodeParameters
-        return Get-MgContext
-    }
-}
-
 function Graph([string]$Method, [string]$Path) {
     $uri = if ($Path.StartsWith('https://')) { $Path } else { "https://graph.microsoft.com/$Path" }
     if (!([uri]$uri).Host.Equals('graph.microsoft.com')) {
@@ -166,12 +89,13 @@ if (!(Test-GraphContext -Context $context -RequiredTenantId $TenantId -RequiredS
     }
 
     if ($UseDeviceCode) {
-        $connectParameters.UseDeviceCode = $true
-        $connectParameters.InformationAction = 'Continue'
+        Write-W365DeviceCodeGuidance `
+            -Purpose 'to read the source W365 pool' `
+            -DeviceCodeMaxAttempts $DeviceCodeMaxAttempts
     }
 
     try {
-        $context = Connect-GraphWithRetries -ConnectParameters $connectParameters -UseDeviceCode:$UseDeviceCode -DeviceCodeMaxAttempts $DeviceCodeMaxAttempts
+        $context = Connect-W365GraphContext -ConnectParameters $connectParameters -UseDeviceCode:$UseDeviceCode -FallbackToDeviceCode -DeviceCodeMaxAttempts $DeviceCodeMaxAttempts
     }
     catch {
         throw @"

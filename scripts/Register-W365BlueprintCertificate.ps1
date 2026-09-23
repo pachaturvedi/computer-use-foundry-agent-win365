@@ -31,12 +31,14 @@ param(
     [Parameter(Mandatory)][string]$PublicCertificateBase64,
     [switch]$UseDeviceCode,
     [ValidateRange(30, 3600)][int]$GraphClientTimeoutSeconds = 600,
+    [ValidateRange(1, 5)][int]$DeviceCodeMaxAttempts = 3,
     [switch]$ConfirmResourceChanges
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'Logging.ps1')
+. (Join-Path $PSScriptRoot 'GraphSignIn.ps1')
 Initialize-SampleScriptLogging -ScriptName $MyInvocation.MyCommand.Name -Parameters $PSBoundParameters
 
 if (!$ConfirmResourceChanges) {
@@ -56,20 +58,6 @@ Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
 # (agentIdentityBlueprint: update / addKey); this does not grant tenant-wide application write.
 $scopes = @('AgentIdentityBlueprint.AddRemoveCreds.All')
 
-function Test-GraphContext {
-    param(
-        $Context,
-        [guid]$RequiredTenantId,
-        [string[]]$RequiredScopes
-    )
-
-    if ($null -eq $Context) { return $false }
-    if ($Context.TenantId -ne $RequiredTenantId.ToString()) { return $false }
-    if ($Context.AuthType -ne 'Delegated') { return $false }
-    $missingScopes = @($RequiredScopes | Where-Object { $_ -notin $Context.Scopes })
-    return $missingScopes.Count -eq 0
-}
-
 $context = Get-MgContext
 if (!(Test-GraphContext -Context $context -RequiredTenantId $TenantId -RequiredScopes $scopes)) {
     $connectParameters = @{
@@ -80,15 +68,15 @@ if (!(Test-GraphContext -Context $context -RequiredTenantId $TenantId -RequiredS
         NoWelcome = $true
     }
     if ($UseDeviceCode) {
-        $connectParameters.UseDeviceCode = $true
-        $connectParameters.InformationAction = 'Continue'
-        Write-Host ''
-        Write-Host 'Microsoft Graph administrator sign-in is required to register the blueprint certificate.'
-        Write-Host 'When the device code appears, open https://login.microsoft.com/device and sign in as an authorized tenant administrator.'
-        Write-Host ''
+        Write-W365DeviceCodeGuidance `
+            -Purpose 'to register the blueprint certificate' `
+            -DeviceCodeMaxAttempts $DeviceCodeMaxAttempts
     }
-    Connect-MgGraph @connectParameters
-    $context = Get-MgContext
+
+    $context = Connect-W365GraphContext `
+        -ConnectParameters $connectParameters `
+        -UseDeviceCode:$UseDeviceCode `
+        -DeviceCodeMaxAttempts $DeviceCodeMaxAttempts
 }
 if ($context.TenantId -ne $TenantId.ToString() -or $context.AuthType -ne 'Delegated') {
     throw 'A delegated Graph connection in the requested tenant is required.'

@@ -35,6 +35,7 @@ if (!$IsWindows) {
 }
 
 . (Join-Path $PSScriptRoot 'DeploymentConfig.ps1')
+. (Join-Path $PSScriptRoot 'GraphSignIn.ps1')
 Initialize-SampleScriptLogging -ScriptName $MyInvocation.MyCommand.Name -Parameters $PSBoundParameters
 
 function Select-DiscoveryOption {
@@ -89,50 +90,6 @@ function Select-DiscoveryOption {
     }
 }
 
-function Test-IsDeviceCodeTimeoutError {
-    param([Parameter(Mandatory)]$ErrorRecord)
-
-    return [string]$ErrorRecord.Exception.Message -match 'Authentication timed out after \d+ seconds? due to inactivity'
-}
-
-function Connect-DiscoveryGraph {
-    param(
-        [Parameter(Mandatory)][hashtable]$ConnectParameters,
-        [switch]$UseDeviceCode,
-        [ValidateRange(1, 5)][int]$MaxAttempts
-    )
-
-    if (!$UseDeviceCode) {
-        Connect-MgGraph @ConnectParameters | Out-Host
-        return
-    }
-
-    Write-Host ''
-    Write-Host 'Microsoft Graph sign-in is required for read-only W365 discovery.'
-    Write-Host 'When the device code appears:'
-    Write-Host '  1. Open https://login.microsoft.com/device in a browser.'
-    Write-Host '  2. Enter the displayed code and sign in with an authorized tenant account.'
-    Write-Host '  3. Complete the prompt within 120 seconds; this command waits for the result.'
-    Write-Host "     A timed-out code is reissued automatically up to $DeviceCodeMaxAttempts times."
-    Write-Host ''
-
-    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
-        try {
-            if ($MaxAttempts -gt 1) {
-                Write-Host "Starting Microsoft Graph device-code sign-in attempt $attempt of $MaxAttempts..."
-            }
-            Connect-MgGraph @ConnectParameters | Out-Host
-            return
-        }
-        catch {
-            if (!(Test-IsDeviceCodeTimeoutError -ErrorRecord $_) -or $attempt -eq $MaxAttempts) {
-                throw
-            }
-            Write-Warning 'Microsoft Graph device-code sign-in timed out. Retrying with a fresh code...'
-        }
-    }
-}
-
 Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
 $scope = 'CloudPC.Read.All'
 $context = Get-MgContext
@@ -150,15 +107,16 @@ if (!$hasRequiredContext) {
         NoWelcome = $true
     }
     if ($UseDeviceCode) {
-        $connectParameters.UseDeviceCode = $true
-        $connectParameters.InformationAction = 'Continue'
+        Write-W365DeviceCodeGuidance `
+            -Purpose 'for read-only W365 discovery' `
+            -DeviceCodeMaxAttempts $DeviceCodeMaxAttempts
     }
 
     try {
-        Connect-DiscoveryGraph `
+        Connect-W365GraphContext `
             -ConnectParameters $connectParameters `
             -UseDeviceCode:$UseDeviceCode `
-            -MaxAttempts $DeviceCodeMaxAttempts
+            -DeviceCodeMaxAttempts $DeviceCodeMaxAttempts | Out-Null
     }
     catch {
         throw @"
