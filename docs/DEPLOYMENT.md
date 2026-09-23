@@ -844,7 +844,8 @@ retained failed environment.
 | W365 setup is blocked | Follow the exact prerequisite or ownership error in [Windows 365 setup](W365-SETUP.md); do not bypass parent, consent, billing, or manifest checks. |
 | Agent deployment fails after W365 setup or viewer configuration changes | Fix the reported prerequisite, then rerun `azd up` for the same environment so the durable redeployment marker is reconciled. |
 | Invocation is disconnected or ambiguous | Do not replay. Inspect sanitized logs and follow [fail-closed recovery](ARCHITECTURE.md#fail-closed-recovery). |
-| Teardown is rerun after partial or completed deletion | Rerun `azd down`; completed ownership cleanup is skipped, and viewer RBAC beneath a confirmed-missing resource group is treated as already absent. Use `Invoke-AzdDown.ps1` if a layer deployment is missing. |
+| Teardown is rerun after partial or completed deletion | Rerun `azd down`; completed ownership cleanup is skipped, and viewer RBAC beneath a confirmed-missing resource group or a confirmed-missing Key Vault scope (resource group still present) is treated as already absent. Use `Invoke-AzdDown.ps1` if a layer deployment is missing. |
+| `azd down` fails with `deleting infrastructure: error deleting Azure resources: deployment not found` for a layer | This is a known azd layered-infra limitation ([Azure/azure-dev#8064](https://github.com/Azure/azure-dev/issues/8064)): once a layer's Azure resources are already removed, native `azd down` cannot find that layer's ARM deployment record and stops instead of skipping it. Rerun teardown with `.\scripts\Invoke-AzdDown.ps1 -EnvironmentName <azd-environment-name> -Purge -Force`, which treats each already-missing layer deployment as complete and continues through the remaining layers. |
 | Teardown reports any other error | Stop and resolve the exact authentication, authorization, ownership, provider, or residual-resource failure. |
 
 ## Next steps
