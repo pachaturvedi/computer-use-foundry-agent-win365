@@ -353,25 +353,48 @@ function SingleOrNone($Items, [string]$Label) {
 }
 function Get-AzdCommand {
     $azdPaths = [System.Collections.Generic.List[string]]::new()
-    foreach ($command in @(Get-Command azd -All -ErrorAction SilentlyContinue)) {
-        if ($null -ne $command -and !$azdPaths.Contains($command.Source)) {
-            $azdPaths.Add($command.Source)
+    foreach ($command in @(Get-Command azd -All -CommandType Application -ErrorAction SilentlyContinue)) {
+        if ($null -eq $command) {
+            continue
+        }
+
+        $source = $command.Source
+        if ([string]::IsNullOrWhiteSpace($source) -or !(Test-Path -LiteralPath $source -PathType Leaf)) {
+            continue
+        }
+
+        if (!$azdPaths.Contains($source)) {
+            $azdPaths.Add($source)
         }
     }
-    foreach ($path in @(
-        (Join-Path $env:LOCALAPPDATA 'Programs\Azure Dev CLI\azd.exe'),
-        (Join-Path $env:ProgramFiles 'Azure Dev CLI\azd.exe')
-    )) {
-        if (![string]::IsNullOrWhiteSpace($path) -and (Test-Path $path) -and !$azdPaths.Contains($path)) {
+    $knownAzdPaths = @()
+    if (![string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+        $knownAzdPaths += Join-Path $env:LOCALAPPDATA 'Programs\Azure Dev CLI\azd.exe'
+    }
+    if (![string]::IsNullOrWhiteSpace($env:ProgramFiles)) {
+        $knownAzdPaths += Join-Path $env:ProgramFiles 'Azure Dev CLI\azd.exe'
+    }
+
+    foreach ($path in $knownAzdPaths) {
+        if (![string]::IsNullOrWhiteSpace($path) -and
+            (Test-Path -LiteralPath $path -PathType Leaf) -and
+            !$azdPaths.Contains($path)) {
             $azdPaths.Add($path)
         }
     }
 
     $azdCandidates = $azdPaths |
         ForEach-Object {
-            $versionOutput = & $_ version 2>$null
-            if ($LASTEXITCODE -eq 0 -and $versionOutput -match 'azd version\s+(\d+\.\d+\.\d+)') {
-                [pscustomobject]@{ Path = $_; Version = [version]$Matches[1] }
+            $candidatePath = $_
+            $versionOutput = $null
+            try {
+                $versionOutput = & $candidatePath version 2>$null
+                if ($LASTEXITCODE -eq 0 -and ($versionOutput | Out-String) -match 'azd version\s+(\d+\.\d+\.\d+)') {
+                    [pscustomobject]@{ Path = $candidatePath; Version = [version]$Matches[1] }
+                }
+            }
+            catch {
+                return
             }
         } |
         Sort-Object Version -Descending
