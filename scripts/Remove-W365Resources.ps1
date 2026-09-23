@@ -7,7 +7,7 @@ Removes sample-owned W365, Entra, viewer, and RBAC artifacts.
 Loads the ownership manifests, validates reused shared dependencies, connects to Graph, and removes or restores recorded resources in reverse dependency order before Azure teardown.
 
 
-Key inputs: EnvironmentName and optional environment/manifest paths, shared-project override, device-code option, and Graph timeout.
+Key inputs: EnvironmentName and optional environment/manifest paths, shared-project override, viewer-only confirmation, device-code option, and Graph timeout.
 
 .OUTPUTS
 Redacted cleanup progress and an explicit indication that Azure resource deletion may continue.
@@ -21,6 +21,7 @@ param(
     [string]$EnvironmentFilePath,
     [string]$OwnershipManifestPath,
     [switch]$AllowExistingProjectCleanup,
+    [switch]$ConfirmViewerOnlyCleanup,
     [switch]$UseDeviceCode,
     [ValidateRange(30, 3600)][int]$GraphClientTimeoutSeconds = 600
 )
@@ -260,8 +261,10 @@ function Assert-CleanupApproved {
     }
 
     $protectedCleanupApproved = $cleanupApproval -eq 'true'
-    if ($RequireProtectedApproval -and !$protectedCleanupApproved) {
-        throw 'Viewer-only cleanup requires W365_CLEANUP_CONFIRMED=true before any mutation runs.'
+    if ($RequireProtectedApproval -and
+        !$protectedCleanupApproved -and
+        !$ConfirmViewerOnlyCleanup) {
+        throw 'Viewer-only cleanup requires -ConfirmViewerOnlyCleanup or W365_CLEANUP_CONFIRMED=true before any mutation runs.'
     }
 
     if (!$protectedCleanupApproved -and
