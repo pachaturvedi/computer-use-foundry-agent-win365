@@ -525,6 +525,21 @@ Scopes and Entra roles are separate requirements. Use PIM and organizational
 consent processes rather than permanent broad administrator roles. Runtime
 identities do not receive these setup scopes.
 
+Each script states its own minimum before prompting for a device code:
+
+| Step | Minimum Entra access |
+| --- | --- |
+| Read-only discovery (`Get-W365DiscoveryOptions.ps1`, `Save-W365PoolTemplate.ps1`) | Cloud PC Reader |
+| Blueprint certificate registration (`Register-W365BlueprintCertificate.ps1`) | Owner of the agent identity blueprint |
+| W365 setup (`Setup-W365.ps1`) | Agent ID Administrator (or blueprint owner) plus Cloud PC Administrator; Privileged Role Administrator for delegated permission grants |
+| Viewer sign-in (`Configure-ViewerOidc.ps1`, optional) | Application Administrator or Cloud Application Administrator |
+
+Global Administrator is not required for any step. Blueprint owners can manage
+their own blueprint and its agents without an Agent ID role; creating a
+blueprint with the Agent ID Developer role makes the creator an owner
+automatically. An administrator still has to consent to the delegated scopes
+above once per tenant.
+
 ## W365 runtime permissions
 
 | Resource app ID | Delegated scopes |

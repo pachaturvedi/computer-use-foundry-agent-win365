@@ -46,14 +46,16 @@ function Test-IsDeviceCodeTimeoutError {
 function Write-W365DeviceCodeGuidance {
     param(
         [Parameter(Mandatory)][string]$Purpose,
+        [Parameter(Mandatory)][string]$RequiredAccess,
         [ValidateRange(1, 5)][int]$DeviceCodeMaxAttempts = 3
     )
 
     Write-Host ''
-    Write-Host "Microsoft Graph administrator sign-in is required $Purpose."
+    Write-Host "Microsoft Graph sign-in is required $Purpose."
+    Write-Host "Minimum access for this step: $RequiredAccess."
     Write-Host 'When the device code appears:'
     Write-Host '  1. Open https://login.microsoft.com/device in a browser.'
-    Write-Host '  2. Enter the displayed code and sign in with the authorized tenant administrator.'
+    Write-Host '  2. Enter the displayed code and sign in with an account holding the access above.'
     Write-Host '  3. Complete the prompt before the code expires; the caller waits for the result.'
     Write-Host "     A timed-out code is reissued automatically up to $DeviceCodeMaxAttempts times."
     Write-Host ''

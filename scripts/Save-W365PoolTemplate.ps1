@@ -91,6 +91,7 @@ if (!(Test-GraphContext -Context $context -RequiredTenantId $TenantId -RequiredS
     if ($UseDeviceCode) {
         Write-W365DeviceCodeGuidance `
             -Purpose 'to read the source W365 pool' `
+            -RequiredAccess 'Cloud PC Reader; no write access is used' `
             -DeviceCodeMaxAttempts $DeviceCodeMaxAttempts
     }
 

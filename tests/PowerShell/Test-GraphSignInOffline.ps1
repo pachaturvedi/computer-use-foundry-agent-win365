@@ -173,6 +173,53 @@ if (Test-GraphContext -Context $appOnlyContext -RequiredTenantId $tenant -Requir
     throw 'An app-only context was accepted where delegated access is required.'
 }
 
+# Device-code guidance names the minimum access for the step instead of implying tenant admin.
+$guidance = (Write-W365DeviceCodeGuidance `
+        -Purpose 'to register the blueprint certificate' `
+        -RequiredAccess 'owner of the agent identity blueprint' `
+        -DeviceCodeMaxAttempts 3 6>&1) -join "`n"
+
+if ($guidance -notmatch 'owner of the agent identity blueprint') {
+    throw 'The device-code guidance did not state the minimum required access.'
+}
+if ($guidance -match 'administrator sign-in is required') {
+    throw 'The device-code guidance still asserts that administrator sign-in is required.'
+}
+if ($guidance -match 'authorized tenant administrator') {
+    throw 'The device-code guidance still directs the operator to sign in as a tenant administrator.'
+}
+if ($guidance -notmatch 'up to 3 times') {
+    throw 'The device-code guidance did not report the bounded retry count.'
+}
+
+# The minimum access is a required, caller-supplied statement; it is never guessed centrally.
+$requiredAccessParameter = (Get-Command Write-W365DeviceCodeGuidance).Parameters['RequiredAccess']
+if ($null -eq $requiredAccessParameter) {
+    throw 'Write-W365DeviceCodeGuidance does not accept a RequiredAccess statement.'
+}
+$isMandatory = @($requiredAccessParameter.Attributes |
+        Where-Object { $_ -is [System.Management.Automation.ParameterAttribute] -and $_.Mandatory }).Count -gt 0
+if (!$isMandatory) {
+    throw 'RequiredAccess is optional, so a caller could prompt without stating the minimum access.'
+}
+
+# Every device-code prompt in the repository states its own minimum access.
+$guidanceCallers = @(Get-ChildItem -LiteralPath (Join-Path $root 'scripts') -Filter '*.ps1' |
+        Where-Object { $_.Name -ne 'GraphSignIn.ps1' } |
+        Where-Object { (Get-Content -LiteralPath $_.FullName -Raw) -match 'Write-W365DeviceCodeGuidance' })
+if ($guidanceCallers.Count -eq 0) {
+    throw 'No device-code guidance callers were found; the coverage check is not exercising anything.'
+}
+foreach ($caller in $guidanceCallers) {
+    $text = Get-Content -LiteralPath $caller.FullName -Raw
+    foreach ($call in [regex]::Matches($text, 'Write-W365DeviceCodeGuidance(?:[^\r\n]*`\r?\n)*[^\r\n]*')) {
+        if ($call.Value -notmatch '-RequiredAccess') {
+            throw "$($caller.Name) prompts for a device code without stating the minimum required access."
+        }
+    }
+}
+
+
 # Connect-MgGraph emits the device-code prompt on the success stream, so piping it
 # to Out-Null silently hides the code and the operator can never sign in. Run the
 # real helper in a child process and assert the prompt still reaches stdout.
