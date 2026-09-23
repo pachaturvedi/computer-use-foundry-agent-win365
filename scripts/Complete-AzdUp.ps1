@@ -424,6 +424,17 @@ Write-SampleDebug -Component 'postup' -Message "Viewer URL existed before bootst
 $currentValues = Import-AzdEnvironmentValues -Root $RepositoryRoot -EnvironmentName $environmentName
 $deployViewer = Test-EnabledValue -Value ([string]$currentValues['DEPLOY_VIEWER'])
 
+if (![string]::IsNullOrWhiteSpace($environmentName)) {
+    # Only Initialize-Greenfield.ps1 seeds RESOURCE_PREFIX, so environments created
+    # any other way reach W365 setup without it and fail late. Resolve it from the
+    # deployed resource group tag, or the azd environment name, and persist it.
+    Write-SampleVerbose -Component 'postup' -Message 'Resolving RESOURCE_PREFIX before viewer and W365 provisioning.'
+    $currentValues = Resolve-W365ResourcePrefix `
+        -EnvironmentFilePath (Join-Path (Join-Path $RepositoryRoot ".azure\$environmentName") '.env') `
+        -EnvironmentName $environmentName `
+        -EnvironmentValues $currentValues
+}
+
 if ($hostedAgentPossible -and ![string]::IsNullOrWhiteSpace($environmentName)) {
     Write-SampleVerbose -Component 'postup' -Message 'Resolving hosted-agent operator defaults (OPERATOR_TENANT_ID, OPERATOR_OBJECT_ID, HOSTED_ALLOWED_USER_ID) before any hosted-agent deployment.'
     $environmentFilePath = Join-Path (Join-Path $RepositoryRoot ".azure\$environmentName") '.env'

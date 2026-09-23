@@ -998,6 +998,10 @@ if ($manifestTarget -and ![string]::IsNullOrWhiteSpace($manifestTarget.Environme
         '.env'
     if (Test-Path -LiteralPath $environmentFilePath) {
         $environmentValues = Read-AzdEnvironmentFile -Path $environmentFilePath
+        $environmentValues = Resolve-W365ResourcePrefix `
+            -EnvironmentFilePath $environmentFilePath `
+            -EnvironmentName $manifestTarget.EnvironmentName `
+            -EnvironmentValues $environmentValues
     }
 }
 $domains = @(List 'v1.0/domains?$select=id,isDefault,isVerified')
