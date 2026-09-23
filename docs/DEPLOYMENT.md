@@ -365,6 +365,24 @@ Credential modes and their current validation status are documented in
 `key_vault_certificate`. There is no automatic fallback between
 credential modes.
 
+### Approving resource changes
+
+Before W365 or viewer changes, `azd up` asks for explicit confirmation. Answer:
+
+| Answer | Effect |
+| --- | --- |
+| `YES` | Approve this run only. |
+| `ALWAYS` | Approve this run and remember the approval for this azd environment. |
+| anything else | Stop without changing resources. |
+
+`ALWAYS` records `W365_RESOURCE_CHANGES_CONFIRMED` or
+`VIEWER_LIVE_CHANGES_CONFIRMED` in the azd environment. To be asked again:
+
+```powershell
+azd env set W365_RESOURCE_CHANGES_CONFIRMED false --environment $environment
+azd env set VIEWER_LIVE_CHANGES_CONFIRMED false --environment $environment
+```
+
 ### Provision shared state
 
 ```powershell
