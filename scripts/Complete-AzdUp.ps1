@@ -393,9 +393,9 @@ if ($enableW365 -and !$w365AlreadyEnabled -and !$credentialAccessFinalized) {
     if (!$?) {
         throw 'Credential-access finalization or viewer provisioning failed.'
     }
-    $currentValues = Import-AzdEnvironmentValues -Root $RepositoryRoot -EnvironmentName $environmentName
 }
 
+$currentValues = Import-AzdEnvironmentValues -Root $RepositoryRoot -EnvironmentName $environmentName
 $w365VaultName = [string]$currentValues['W365_KEY_VAULT_NAME']
 if ([string]::IsNullOrWhiteSpace($w365VaultName)) {
     $w365VaultName = [string]$currentValues['VIEWER_KEY_VAULT_NAME']
