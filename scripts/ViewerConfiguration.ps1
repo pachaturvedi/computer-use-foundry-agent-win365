@@ -90,8 +90,8 @@ function Assert-ViewerManagedEnvironmentResourceId {
 function Assert-ViewerCredentialMode {
     param([Parameter(Mandatory)][string]$CredentialMode)
 
-    if ($CredentialMode -notin @('client_secret', 'managed_identity_federation')) {
-        throw 'W365_BLUEPRINT_CREDENTIAL_MODE must be client_secret or managed_identity_federation.'
+    if ($CredentialMode -notin @('client_secret', 'managed_identity_federation', 'key_vault_certificate')) {
+        throw 'W365_BLUEPRINT_CREDENTIAL_MODE must be client_secret, managed_identity_federation, or key_vault_certificate.'
     }
 }
 
@@ -123,13 +123,17 @@ function Assert-ViewerIdentityModeConfiguration {
         return
     }
 
-    if (!(Test-Path -LiteralPath $OwnershipManifestPath)) {
-        throw 'Managed-identity viewer authentication requires the W365 ownership manifest.'
-    }
     $principalId = [guid]::Empty
     if (![guid]::TryParse($ViewerPrincipalId, [ref]$principalId) -or
         $principalId -eq [guid]::Empty) {
         throw 'Managed-identity viewer authentication requires VIEWER_IDENTITY_PRINCIPAL_ID.'
+    }
+    if ($CredentialMode -eq 'key_vault_certificate') {
+        return
+    }
+
+    if (!(Test-Path -LiteralPath $OwnershipManifestPath)) {
+        throw 'Managed-identity viewer authentication requires the W365 ownership manifest.'
     }
 
     $manifest = Get-Content -LiteralPath $OwnershipManifestPath -Raw |

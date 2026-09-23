@@ -103,7 +103,7 @@ public sealed class SettingsTests
     }
 
     [Fact]
-    public void KeyVaultCertificateModeIsAgentOnly()
+    public void KeyVaultCertificateModeSupportsViewerManagedIdentity()
     {
         var values = EnabledValues();
         values["W365_BLUEPRINT_CREDENTIAL_MODE"] = "key_vault_certificate";
@@ -112,8 +112,15 @@ public sealed class SettingsTests
         values["AZURE_CLIENT_ID"] = "99999999-9999-9999-9999-999999999999";
         values["VIEWER_LIVE_ENABLED"] = "true";
 
-        var error = Assert.Throws<InvalidOperationException>(() => Config(values).Validate(viewerMode: true));
-        Assert.Contains("agent-only", error.Message);
+        Config(values).Validate(viewerMode: true);
+    }
+
+    [Fact]
+    public void UnsetCredentialModeDefaultsToKeyVaultCertificate()
+    {
+        var values = EnabledValues();
+        values.Remove("W365_BLUEPRINT_CREDENTIAL_MODE");
+        Assert.Equal("key_vault_certificate", Config(values).BlueprintCredentialMode);
     }
 
     [Fact]
@@ -193,6 +200,7 @@ public sealed class SettingsTests
         ["FOUNDRY_AGENT_BLUEPRINT_CLIENT_ID"] = "22222222-2222-2222-2222-222222222222",
         ["VIEWER_PUBLIC_URL"] = "https://viewer.example.com",
         ["SESSION_BLOB_URI"] = "https://storage.example.com/state/slot.json",
-        ["HOSTED_ALLOWED_USER_ID"] = "operator"
+        ["HOSTED_ALLOWED_USER_ID"] = "operator",
+        ["W365_BLUEPRINT_CREDENTIAL_MODE"] = "managed_identity_federation"
     };
 }

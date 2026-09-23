@@ -20,6 +20,50 @@ $previousCallsPath = $env:TEST_AZD_CALLS_PATH
 $previousQuotaBehavior = $env:TEST_AZD_VIEWER_QUOTA_ONCE
 $previousStateMode = $env:TEST_AZD_STATE_MODE
 $previousViewerFailure = $env:TEST_AZD_VIEWER_FAILURE
+$previousCredentialMode = $env:TEST_AZD_CREDENTIAL_MODE
+$previousPersistedCertificateGate = $env:TEST_AZD_PERSISTED_CERT_GATE
+$previousCertificateGate = $env:W365_CERTIFICATE_PROVISIONING_ACTIVE
+$previousCertificatePreflightFailure = $env:TEST_CERTIFICATE_PREFLIGHT_FAILURE
+
+$testCertificate = [System.Security.Cryptography.X509Certificates.CertificateRequest]::new(
+    'CN=w365-blueprint-certificate',
+    [System.Security.Cryptography.RSA]::Create(2048),
+    [System.Security.Cryptography.HashAlgorithmName]::SHA256,
+    [System.Security.Cryptography.RSASignaturePadding]::Pkcs1
+).CreateSelfSigned([DateTimeOffset]::UtcNow.AddDays(-1), [DateTimeOffset]::UtcNow.AddYears(1))
+$testCertificateBase64Url = [Convert]::ToBase64String($testCertificate.RawData).Replace('+', '-').Replace('/', '_').TrimEnd('=')
+$testCertificateKeyIdentifier = [Convert]::ToBase64String($testCertificate.GetCertHash())
+
+function az {
+    $arguments = @($args)
+    $global:LASTEXITCODE = 0
+    if ($arguments[0] -eq 'keyvault' -and $arguments[1] -eq 'certificate') {
+        if ($env:TEST_CERTIFICATE_PREFLIGHT_FAILURE -eq 'true') {
+            $global:LASTEXITCODE = 1
+            return ''
+        }
+        return 'https://sample-w365-vault.vault.azure.net/certificates/w365-blueprint-certificate/version'
+    }
+    if ($arguments[0] -eq 'keyvault' -and $arguments[1] -eq 'show') {
+        return 'https://sample-w365-vault.vault.azure.net/'
+    }
+    if ($arguments[0] -eq 'account' -and $arguments[1] -eq 'get-access-token') {
+        return 'mock-access-token'
+    }
+    throw "Unexpected az call: $($arguments -join ' ')"
+}
+
+function Invoke-RestMethod {
+    param($Method, $Uri, $Headers)
+
+    if ($Uri -like 'https://sample-w365-vault.vault.azure.net/certificates/*') {
+        return @{ cer = $testCertificateBase64Url }
+    }
+    if ($Uri -like 'https://graph.microsoft.com/*') {
+        return @{ keyCredentials = @(@{ customKeyIdentifier = $testCertificateKeyIdentifier }) }
+    }
+    throw "Unexpected REST request: $Method $Uri"
+}
 
 try {
     New-Item -ItemType Directory -Path $binPath -Force | Out-Null
@@ -35,6 +79,10 @@ if ($CommandArgs[0] -eq 'version') {
     return
 }
 Add-Content -LiteralPath $env:TEST_AZD_CALLS_PATH -Value ($CommandArgs -join ' ')
+if ($CommandArgs[0] -eq 'provision') {
+    Add-Content -LiteralPath $env:TEST_AZD_CALLS_PATH -Value (
+        "certificate-gate=$($env:W365_CERTIFICATE_PROVISIONING_ACTIVE) before $($CommandArgs -join ' ')")
+}
 if ($env:TEST_AZD_VIEWER_QUOTA_ONCE -eq 'true' -and
     $CommandArgs -join ' ' -eq 'provision viewer --environment sample-dev --no-prompt') {
     $viewerCalls = @(Get-Content -LiteralPath $env:TEST_AZD_CALLS_PATH |
@@ -80,10 +128,14 @@ if ($CommandArgs[0] -eq 'env' -and $CommandArgs[1] -eq 'get-value') {
         FOUNDRY_AGENT_NAME = 'win365-desktop-agent'
         AGENT_WIN365_DESKTOP_AGENT_VERSION = '1'
         AZURE_TENANT_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+        AZURE_SUBSCRIPTION_ID = 'dddddddd-dddd-dddd-dddd-dddddddddddd'
         DEPLOY_STATE = 'true'
         STATE_STORAGE_ACCOUNT_NAME = $storageName
         STATE_CONTAINER_NAME = 'desktop-state'
         SESSION_BLOB_URI = $sessionBlobUri
+        W365_BLUEPRINT_CREDENTIAL_MODE = $env:TEST_AZD_CREDENTIAL_MODE
+        W365_KEY_VAULT_NAME = 'sample-w365-vault'
+        W365_CERTIFICATE_PROVISIONING_ACTIVE = $env:TEST_AZD_PERSISTED_CERT_GATE
     }
     Write-Output $values[$CommandArgs[2]]
 }
@@ -130,9 +182,19 @@ param(
     $env:TEST_IDENTITY_CALLS_PATH = $identityCallsPath
     $env:TEST_PROFILE_CALLS_PATH = $profileCallsPath
 
+    $stateKeyVaultTemplate = Get-Content -LiteralPath (Join-Path $root 'infra\state\keyvault.bicep') -Raw
+    $viewerTemplate = Get-Content -LiteralPath (Join-Path $root 'infra\viewer.bicep') -Raw
+    if ($stateKeyVaultTemplate -notmatch
+        'agentCertificateRoleAssignmentEnabled\s*=\s*\(certificateProvisioningActive \|\| certificateRbacReady\)' -or
+        $viewerTemplate -notmatch
+        "certificateEnabled\s*=\s*w365Enabled\s*&&\s*blueprintCredentialMode == 'key_vault_certificate'\s*&&\s*certificateConfigurationReady" -or
+        $viewerTemplate -notmatch
+        'certificateConfigurationReady\s*=\s*w365Enabled\s*&&') {
+        throw 'Certificate-scoped state/viewer RBAC is not gated by orchestration readiness.'
+    }
+
     & $scriptPath `
         -Environment 'sample-dev' `
-        -DeployViewer `
         -IdentityScriptPath $mockIdentityPath
 
     $identityCall = Get-Content -LiteralPath $identityCallsPath -Raw | ConvertFrom-Json
@@ -151,10 +213,11 @@ param(
         'env set STATE_AGENT_PRINCIPAL_ID cccccccc-cccc-cccc-cccc-cccccccccccc',
         'env set DEPLOY_VIEWER false',
         'env set VIEWER_LIVE_ENABLED false',
-        'env set W365_BLUEPRINT_CREDENTIAL_MODE client_secret',
+        'env set W365_BLUEPRINT_CREDENTIAL_MODE key_vault_certificate',
+        'env set W365_BLUEPRINT_ID bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+        'env set W365_AGENT_OBJECT_ID cccccccc-cccc-cccc-cccc-cccccccccccc',
         'provision state --environment sample-dev --no-prompt',
-        'env set DEPLOY_VIEWER true',
-        'provision viewer --environment sample-dev --no-prompt'
+        'certificate-gate=false before provision state --environment sample-dev --no-prompt'
     )
     foreach ($requiredCall in $requiredCalls) {
         if ($requiredCall -notin $calls) {
@@ -162,19 +225,39 @@ param(
         }
     }
     $stateIndex = [array]::IndexOf($calls, 'provision state --environment sample-dev --no-prompt')
-    $viewerIndex = [array]::IndexOf($calls, 'provision viewer --environment sample-dev --no-prompt')
-    if ($stateIndex -lt 0 -or $viewerIndex -le $stateIndex) {
-        throw 'Phase-two initialization did not provision shared state before the viewer.'
+    if ($stateIndex -lt 0 -or
+        'provision viewer --environment sample-dev --no-prompt' -in $calls -or
+        'env set DEPLOY_VIEWER true' -in $calls) {
+        throw 'Base phase-two initialization provisioned the viewer before certificate readiness.'
     }
     if ([array]::IndexOf($calls, 'env get-value STATE_STORAGE_ACCOUNT_NAME') -le $stateIndex -or
         [array]::IndexOf($calls, 'env get-value SESSION_BLOB_URI') -le $stateIndex) {
         throw 'Phase-two initialization did not reload state outputs before viewer provisioning.'
     }
-    $viewerEnableIndex = [array]::IndexOf($calls, 'env set DEPLOY_VIEWER true')
-    if ($viewerEnableIndex -le [array]::IndexOf($calls, 'env get-value SESSION_BLOB_URI') -or
-        $viewerIndex -le $viewerEnableIndex) {
-        throw 'Phase-two initialization enabled the viewer before state outputs were validated.'
+    Remove-Item -LiteralPath $callsPath -ErrorAction SilentlyContinue
+    & $scriptPath `
+        -Environment 'sample-dev' `
+        -FinalizeCredentialAccess `
+        -DeployViewer `
+        -IdentityScriptPath $mockIdentityPath
+    $finalizeCalls = @(Get-Content -LiteralPath $callsPath)
+    $finalStateIndex = [array]::IndexOf($finalizeCalls, 'provision state --environment sample-dev --no-prompt')
+    $viewerIndex = [array]::IndexOf($finalizeCalls, 'provision viewer --environment sample-dev --no-prompt')
+    if ($finalStateIndex -lt 0 -or $viewerIndex -le $finalStateIndex -or
+        'certificate-gate=true before provision state --environment sample-dev --no-prompt' -notin $finalizeCalls -or
+        'certificate-gate=true before provision viewer --environment sample-dev --no-prompt' -notin $finalizeCalls) {
+        throw 'Credential finalization did not apply certificate RBAC before provisioning the viewer.'
     }
+
+    Remove-Item -LiteralPath $callsPath -ErrorAction SilentlyContinue
+    $env:TEST_AZD_CREDENTIAL_MODE = 'client_secret'
+    & $scriptPath -Environment 'sample-dev' -IdentityScriptPath $mockIdentityPath
+    $explicitModeCalls = @(Get-Content -LiteralPath $callsPath)
+    if ('env set W365_BLUEPRINT_CREDENTIAL_MODE client_secret' -notin $explicitModeCalls -or
+        'env set W365_BLUEPRINT_CREDENTIAL_MODE key_vault_certificate' -in $explicitModeCalls) {
+        throw 'Phase-two initialization did not preserve an explicitly configured credential mode.'
+    }
+    $env:TEST_AZD_CREDENTIAL_MODE = ''
 
     foreach ($stateMode in @('missing', 'inconsistent', 'query', 'fragment', 'port', 'userinfo', 'http', 'wrongpath', 'casepath', 'dotsegment', 'encoded')) {
         Remove-Item -LiteralPath $callsPath -ErrorAction SilentlyContinue
@@ -183,7 +266,6 @@ param(
         try {
             & $scriptPath `
                 -Environment 'sample-dev' `
-                -DeployViewer `
                 -IdentityScriptPath $mockIdentityPath
         }
         catch {
@@ -200,6 +282,27 @@ param(
     }
     $env:TEST_AZD_STATE_MODE = 'valid'
 
+    Remove-Item -LiteralPath $callsPath -ErrorAction SilentlyContinue
+    $env:TEST_CERTIFICATE_PREFLIGHT_FAILURE = 'true'
+    $preflightFailureRejected = $false
+    try {
+        & $scriptPath `
+            -Environment 'sample-dev' `
+            -FinalizeCredentialAccess `
+            -DeployViewer `
+            -IdentityScriptPath $mockIdentityPath
+    }
+    catch {
+        $preflightFailureRejected = $true
+    }
+    $preflightFailureCalls = @(Get-Content -LiteralPath $callsPath)
+    if (!$preflightFailureRejected -or
+        'provision state --environment sample-dev --no-prompt' -in $preflightFailureCalls -or
+        'provision viewer --environment sample-dev --no-prompt' -in $preflightFailureCalls) {
+        throw 'Certificate readiness failure did not stop before state RBAC and viewer provisioning.'
+    }
+    $env:TEST_CERTIFICATE_PREFLIGHT_FAILURE = ''
+
     foreach ($failureMode in @('generic', 'quota-always')) {
         Remove-Item -LiteralPath $callsPath, $profileCallsPath -ErrorAction SilentlyContinue
         $env:TEST_AZD_VIEWER_FAILURE = $failureMode
@@ -207,6 +310,7 @@ param(
         try {
             & $scriptPath `
                 -Environment 'sample-dev' `
+                -FinalizeCredentialAccess `
                 -DeployViewer `
                 -IdentityScriptPath $mockIdentityPath `
                 -ProvisioningProfileScriptPath $mockProfilePath
@@ -220,6 +324,9 @@ param(
         if (![string]::IsNullOrEmpty($env:VIEWER_PROVISIONING_ACTIVE)) {
             throw "Phase-two initialization did not clear transient viewer activation after $failureMode failure."
         }
+        if (![string]::IsNullOrEmpty($env:W365_CERTIFICATE_PROVISIONING_ACTIVE)) {
+            throw "Phase-two initialization did not clear transient certificate activation after $failureMode failure."
+        }
     }
     $env:TEST_AZD_VIEWER_FAILURE = ''
 
@@ -227,6 +334,7 @@ param(
     $env:TEST_AZD_VIEWER_QUOTA_ONCE = 'true'
     & $scriptPath `
         -Environment 'sample-dev' `
+        -FinalizeCredentialAccess `
         -DeployViewer `
         -IdentityScriptPath $mockIdentityPath `
         -ProvisioningProfileScriptPath $mockProfilePath
@@ -243,6 +351,21 @@ param(
         throw 'ACA managed-environment quota recovery did not request explicit existing-environment selection.'
     }
 
+    Remove-Item -LiteralPath $callsPath -ErrorAction SilentlyContinue
+    $env:TEST_AZD_PERSISTED_CERT_GATE = 'true'
+    $persistedGateRejected = $false
+    try {
+        & $scriptPath -Environment 'sample-dev' -IdentityScriptPath $mockIdentityPath
+    }
+    catch {
+        $persistedGateRejected = $_.Exception.Message -match 'orchestration-owned'
+    }
+    $persistedGateProvisionedState = (Test-Path -LiteralPath $callsPath) -and
+        ('provision state --environment sample-dev --no-prompt' -in @(Get-Content -LiteralPath $callsPath))
+    if (!$persistedGateRejected -or $persistedGateProvisionedState) {
+        throw 'Phase-two initialization accepted an unsafe persisted certificate activation gate.'
+    }
+
     Write-Host 'azd up phase-two initialization offline test passed.'
 }
 finally {
@@ -251,6 +374,12 @@ finally {
     $env:TEST_AZD_VIEWER_QUOTA_ONCE = $previousQuotaBehavior
     $env:TEST_AZD_STATE_MODE = $previousStateMode
     $env:TEST_AZD_VIEWER_FAILURE = $previousViewerFailure
+    $env:TEST_AZD_CREDENTIAL_MODE = $previousCredentialMode
+    $env:TEST_AZD_PERSISTED_CERT_GATE = $previousPersistedCertificateGate
+    $env:W365_CERTIFICATE_PROVISIONING_ACTIVE = $previousCertificateGate
+    $env:TEST_CERTIFICATE_PREFLIGHT_FAILURE = $previousCertificatePreflightFailure
+    Remove-Item Function:\az -ErrorAction SilentlyContinue
+    Remove-Item Function:\Invoke-RestMethod -ErrorAction SilentlyContinue
     Remove-Item Env:\TEST_IDENTITY_CALLS_PATH -ErrorAction SilentlyContinue
     Remove-Item Env:\TEST_PROFILE_CALLS_PATH -ErrorAction SilentlyContinue
     if (Test-Path -LiteralPath $tempRoot) {

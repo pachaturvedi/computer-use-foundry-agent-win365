@@ -41,6 +41,8 @@ $testCertificateDerBase64Url = [Convert]::ToBase64String($testCertificate.RawDat
 $global:testCertificateExists = $false
 $global:testCreateCalled = $false
 $global:testRoleGranted = $true
+$global:testRoleDeleted = $false
+$global:testPolicyCompatible = $true
 
 function azd {
     $arguments = @($args)
@@ -75,10 +77,20 @@ function az {
         return ''
     }
     if ($arguments[0] -eq 'role' -and $arguments[1] -eq 'assignment' -and $arguments[2] -eq 'create') {
+        return '/subscriptions/11111111-1111-1111-1111-111111111111/providers/Microsoft.Authorization/roleAssignments/temporary'
+    }
+    if ($arguments[0] -eq 'role' -and $arguments[1] -eq 'assignment' -and $arguments[2] -eq 'delete') {
+        $global:testRoleDeleted = $true
         return
     }
     if ($arguments[0] -eq 'keyvault' -and $arguments[1] -eq 'certificate' -and $arguments[2] -eq 'show') {
         if ($global:testCertificateExists) {
+            if ($arguments -contains 'policy') {
+                if ($global:testPolicyCompatible) {
+                    return '{"keyProperties":{"exportable":false,"keySize":2048,"keyType":"RSA"},"x509CertificateProperties":{"keyUsage":["digitalSignature"]}}'
+                }
+                return '{"keyProperties":{"exportable":true,"keySize":2048,"keyType":"RSA"},"x509CertificateProperties":{"keyUsage":["digitalSignature"]}}'
+            }
             return 'https://sample-w365-vault.vault.azure.net/certificates/w365-blueprint-certificate/version'
         }
         $global:LASTEXITCODE = 1
@@ -87,6 +99,9 @@ function az {
     if ($arguments[0] -eq 'keyvault' -and $arguments[1] -eq 'certificate' -and $arguments[2] -eq 'create') {
         $global:testCreateCalled = $true
         $global:testCertificateExists = $true
+        return
+    }
+    if ($arguments[0] -eq 'keyvault' -and $arguments[1] -eq 'certificate' -and $arguments[2] -eq 'list') {
         return
     }
     if ($arguments[0] -eq 'keyvault' -and $arguments[1] -eq 'certificate' -and $arguments[2] -eq 'pending') {
@@ -135,6 +150,12 @@ try {
         throw 'Reusing an existing certificate returned different public bytes.'
     }
 
+    $global:testPolicyCompatible = $false
+    Assert-Throws {
+        & $scriptPath -ConfirmResourceChanges -Confirm:$false
+    } 'An incompatible exportable certificate policy was reused.'
+    $global:testPolicyCompatible = $true
+
     $global:testCreateCalled = $false
     $rotateResult = & $scriptPath -Rotate -ConfirmResourceChanges -Confirm:$false
     if (!$global:testCreateCalled) {
@@ -145,6 +166,10 @@ try {
     }
 
     $global:testRoleGranted = $false
+    $temporaryRoleResult = & $scriptPath -ConfirmResourceChanges -Confirm:$false
+    if (!$global:testRoleDeleted -or $null -eq $temporaryRoleResult.PublicCertificateBase64) {
+        throw 'A temporary Key Vault Certificates Officer assignment was not revoked after certificate reuse.'
+    }
     Assert-Throws {
         & $scriptPath -Confirm:$false
     } 'Missing Key Vault Certificates Officer role was not enforced without -ConfirmResourceChanges.'
@@ -153,7 +178,7 @@ finally {
     Remove-Item Function:\az -ErrorAction SilentlyContinue
     Remove-Item Function:\azd -ErrorAction SilentlyContinue
     Remove-Item Function:\Invoke-RestMethod -ErrorAction SilentlyContinue
-    Remove-Variable -Name testCertificateExists, testCreateCalled, testRoleGranted -Scope Global -ErrorAction SilentlyContinue
+    Remove-Variable -Name testCertificateExists, testCreateCalled, testRoleGranted, testRoleDeleted, testPolicyCompatible -Scope Global -ErrorAction SilentlyContinue
 }
 
 Write-Host 'Initialize-W365BlueprintCertificate offline tests passed.'

@@ -133,11 +133,12 @@ reuse an existing compatible environment, or skip the viewer. Non-secret
 choices are saved only in the selected azd environment.
 
 After approval and delegated Graph sign-in, the command discovers the exact
-Foundry principal, provisions shared state and the selected viewer topology,
-configures W365, and redeploys the same agent name. The default demo collects
-the existing blueprint credential through a secure prompt and stores it in
-Azure Key Vault; it is not written to source, JSON, `.azure`, logs, or command
-history.
+Foundry principal, provisions shared state, creates or reuses a non-exportable
+Key Vault certificate and registers only its public bytes on that exact
+blueprint, provisions the selected viewer topology, configures W365, and
+redeploys the same agent name. It does not ask for a blueprint client secret.
+An existing environment that explicitly selected another credential mode keeps
+it.
 
 The reviewed model defaults are `gpt-6-astra`, version `2026-09-03`,
 `GlobalStandard`, and capacity `200` (200K TPM). If approved screen-share

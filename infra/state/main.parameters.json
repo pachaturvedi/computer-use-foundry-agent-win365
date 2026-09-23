@@ -5,9 +5,11 @@
     "environmentName": { "value": "${AZURE_ENV_NAME}" },
     "location": { "value": "${AZURE_LOCATION}" },
     "deployState": { "value": "${DEPLOY_STATE=false}" },
+    "w365Enabled": { "value": "${W365_ENABLED=false}" },
     "resourcePrefix": { "value": "${RESOURCE_PREFIX=}" },
     "resourceGroupName": { "value": "${AZURE_RESOURCE_GROUP=}" },
     "agentPrincipalId": { "value": "${STATE_AGENT_PRINCIPAL_ID=00000000-0000-0000-0000-000000000000}" },
-    "blueprintCredentialMode": { "value": "${W365_BLUEPRINT_CREDENTIAL_MODE=client_secret}" }
+    "blueprintCredentialMode": { "value": "${W365_BLUEPRINT_CREDENTIAL_MODE=key_vault_certificate}" },
+    "certificateProvisioningActive": { "value": "${W365_CERTIFICATE_PROVISIONING_ACTIVE=false}" }
   }
 }

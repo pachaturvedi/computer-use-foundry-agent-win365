@@ -21,6 +21,8 @@ param(
     [string]$ConfigPath = (Join-Path (Split-Path $PSScriptRoot) 'config\deployment.defaults.json'),
     [string]$ProvisioningProfileScriptPath = (Join-Path $PSScriptRoot 'Resolve-AzdUpProvisioningProfile.ps1'),
     [string]$PhaseTwoPreparationScriptPath = (Join-Path $PSScriptRoot 'Initialize-AzdUpPhaseTwo.ps1'),
+    [string]$CertificateInitializationScriptPath = (Join-Path $PSScriptRoot 'Initialize-W365BlueprintCertificate.ps1'),
+    [string]$CertificateRegistrationScriptPath = (Join-Path $PSScriptRoot 'Register-W365BlueprintCertificate.ps1'),
     [string]$W365SetupScriptPath = (Join-Path $PSScriptRoot 'Invoke-W365SetupFlow.ps1'),
     [string]$ViewerBootstrapScriptPath = (Join-Path $PSScriptRoot 'Deploy-ViewerBootstrap.ps1'),
     [string]$ViewerSecretsScriptPath = (Join-Path $PSScriptRoot 'Set-ViewerSecrets.ps1'),
@@ -33,6 +35,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 . (Join-Path $PSScriptRoot 'W365Provisioning.ps1')
+. (Join-Path $PSScriptRoot 'W365CertificateProvisioning.ps1')
 Initialize-SampleScriptLogging -ScriptName $MyInvocation.MyCommand.Name -Parameters $PSBoundParameters
 
 function Test-EnabledValue {
@@ -112,7 +115,7 @@ function Confirm-ViewerLiveActivation {
 
     Write-Host ''
     Write-Host 'The viewer hook will create or update one Entra OIDC application,'
-    Write-Host 'store its OIDC secret and the existing blueprint secret in the same Key Vault,'
+    Write-Host 'store its OIDC secret and grant its managed identity the selected blueprint credential access,'
     Write-Host 'and enable the authenticated ACA live-view and take-control routes.'
     $answer = Read-Host 'Type YES to configure the live viewer'
     if ($answer -cne 'YES') {
@@ -206,34 +209,11 @@ if ($enableW365 -and !$w365AlreadyEnabled) {
 if ($enableW365 -and !$w365AlreadyEnabled) {
     Write-SampleVerbose -Component 'postup' -Message 'Preparing shared state and viewer infrastructure after phase-one identity discovery.'
     & $PhaseTwoPreparationScriptPath `
-        -Environment $environmentName `
-        -DeployViewer:$deployViewer
+        -Environment $environmentName
     if (!$?) {
         throw 'Phase-two Azure prerequisite provisioning failed.'
     }
     $currentValues = Import-AzdEnvironmentValues -Root $RepositoryRoot -EnvironmentName $environmentName
-}
-
-$credentialMode = [string]$currentValues['W365_BLUEPRINT_CREDENTIAL_MODE']
-$w365VaultName = [string]$currentValues['W365_KEY_VAULT_NAME']
-if ([string]::IsNullOrWhiteSpace($w365VaultName)) {
-    $w365VaultName = [string]$currentValues['VIEWER_KEY_VAULT_NAME']
-}
-$requiresBlueprintSecret = $credentialMode -eq 'client_secret' -and (
-    $enableW365 -or (Test-EnabledValue -Value ([string]$currentValues['W365_ENABLED'])))
-if ($requiresBlueprintSecret) {
-    if ([string]::IsNullOrWhiteSpace($w365VaultName)) {
-        throw 'State provisioning did not produce W365_KEY_VAULT_NAME before blueprint secret configuration.'
-    }
-    Write-SampleVerbose -Component 'postup' -Message 'Ensuring the blueprint client secret exists in the shared W365 Key Vault.'
-    Write-SampleDebug -Component 'postup' -Message "Credential mode=$credentialMode; vault=$w365VaultName."
-    & $ViewerSecretsScriptPath `
-        -Environment $environmentName `
-        -BlueprintOnly `
-        -BootstrapOperatorAccess
-    if (!$?) {
-        throw 'Blueprint secret storage failed.'
-    }
 }
 
 $viewerUrlBefore = [string]$currentValues['VIEWER_PUBLIC_URL']
@@ -257,6 +237,145 @@ if ($deployViewer -and $hostedAgentPossible -and
     $currentValues['W365_AGENT_REDEPLOY_BASELINE_VIEWER_LIVE_ENABLED'] =
         [string]$currentValues['VIEWER_LIVE_ENABLED']
 }
+
+$credentialMode = [string]$currentValues['W365_BLUEPRINT_CREDENTIAL_MODE']
+if ([string]::IsNullOrWhiteSpace($credentialMode)) {
+    $credentialMode = 'key_vault_certificate'
+}
+if ($credentialMode -notin @('client_secret', 'managed_identity_federation', 'key_vault_certificate')) {
+    throw "Unsupported W365_BLUEPRINT_CREDENTIAL_MODE '$credentialMode'."
+}
+$credentialAccessFinalized = $false
+$certificateOfficerLease = $null
+if ($enableW365 -and !$w365AlreadyEnabled -and $credentialMode -eq 'key_vault_certificate') {
+    $certificateTenantId = [guid]::Empty
+    $certificateBlueprintId = [guid]::Empty
+    if (![guid]::TryParse([string]$currentValues['AZURE_TENANT_ID'], [ref]$certificateTenantId) -or
+        $certificateTenantId -eq [guid]::Empty) {
+        throw "Azd environment '$environmentName' does not contain a valid AZURE_TENANT_ID for certificate registration."
+    }
+    if (![guid]::TryParse([string]$currentValues['W365_BLUEPRINT_ID'], [ref]$certificateBlueprintId) -or
+        $certificateBlueprintId -eq [guid]::Empty) {
+        throw 'Phase-two identity discovery did not persist the exact Foundry blueprint app/client ID.'
+    }
+
+    $certificateSubscriptionId = [guid]$currentValues['AZURE_SUBSCRIPTION_ID']
+    $certificateVaultName = [string]$currentValues['W365_KEY_VAULT_NAME']
+    $certificateVaultId = (& az keyvault show `
+        --subscription $certificateSubscriptionId `
+        --name $certificateVaultName `
+        --query id `
+        --output tsv | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($certificateVaultId)) {
+        throw "Unable to resolve Key Vault '$certificateVaultName' for certificate provisioning."
+    }
+    $certificateOperatorObjectId = (& az ad signed-in-user show --query id --output tsv | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($certificateOperatorObjectId)) {
+        throw 'Unable to resolve the signed-in Azure operator for certificate provisioning.'
+    }
+
+    $certificateOfficerLease = Enter-W365CertificateOfficerLease `
+        -SubscriptionId $certificateSubscriptionId `
+        -VaultName $certificateVaultName `
+        -VaultId $certificateVaultId `
+        -OperatorObjectId ([guid]$certificateOperatorObjectId) `
+        -ConfirmResourceChanges
+    if ($certificateOfficerLease.AcquisitionSkipped) {
+        throw 'Temporary Key Vault Certificates Officer access was not acquired, so certificate provisioning cannot continue.'
+    }
+    $certificatePrimaryError = $null
+    try {
+        Write-SampleVerbose -Component 'postup' -Message 'Creating or reusing the non-exportable Key Vault blueprint certificate.'
+        $certificateResults = @(& $CertificateInitializationScriptPath `
+            -Environment $environmentName `
+            -ConfirmResourceChanges `
+            -CertificateOfficerLease $certificateOfficerLease `
+            -Confirm:$false)
+        $certificate = $certificateResults | Where-Object {
+            $_ -is [psobject] -and
+            $_.PSObject.Properties.Name -contains 'PublicCertificateBase64'
+        } | Select-Object -Last 1
+        if ($null -eq $certificate -or
+            [string]::IsNullOrWhiteSpace([string]$certificate.PublicCertificateBase64)) {
+            throw 'Certificate initialization did not return public certificate bytes; blueprint registration was not attempted.'
+        }
+
+        Write-SampleVerbose -Component 'postup' -Message 'Registering only the public certificate on the exact Foundry Agent ID Blueprint.'
+        & $CertificateRegistrationScriptPath `
+            -TenantId $certificateTenantId `
+            -BlueprintId $certificateBlueprintId `
+            -PublicCertificateBase64 ([string]$certificate.PublicCertificateBase64) `
+            -ConfirmResourceChanges `
+            -UseDeviceCode `
+            -Confirm:$false
+        if (!$?) {
+            throw 'Blueprint public-certificate registration failed.'
+        }
+
+        Write-SampleVerbose -Component 'postup' -Message 'Verifying certificate readiness, applying credential-scoped RBAC, and provisioning the optional viewer.'
+        & $PhaseTwoPreparationScriptPath `
+            -Environment $environmentName `
+            -FinalizeCredentialAccess `
+            -DeployViewer:$deployViewer
+        if (!$?) {
+            throw 'Credential-access finalization or viewer provisioning failed.'
+        }
+        $credentialAccessFinalized = $true
+    }
+    catch {
+        $certificatePrimaryError = $_
+    }
+    if ($null -ne $certificatePrimaryError) {
+        # Release immediately on failure. On success the lease is deliberately retained: W365 setup
+        # readiness verification and the hosted-agent deployment preflight later in this run read the
+        # certificate through the Key Vault data plane as this same operator.
+        $failedCertificateLease = $certificateOfficerLease
+        $certificateOfficerLease = $null
+        Complete-W365CertificateOfficerLease `
+            -Lease $failedCertificateLease `
+            -PrimaryError $certificatePrimaryError
+    }
+}
+
+# The temporary Certificates Officer lease acquired above must stay valid for the certificate reads
+# performed by W365 setup readiness verification and the hosted-agent deployment preflight below.
+# It is released once, in the trailing finally, whether or not the remaining steps succeed.
+$postCertificatePrimaryError = $null
+try {
+
+if ($enableW365 -and !$w365AlreadyEnabled -and !$credentialAccessFinalized) {
+    Write-SampleVerbose -Component 'postup' -Message 'Finalizing credential-scoped RBAC before optional viewer provisioning.'
+    & $PhaseTwoPreparationScriptPath `
+        -Environment $environmentName `
+        -FinalizeCredentialAccess `
+        -DeployViewer:$deployViewer
+    if (!$?) {
+        throw 'Credential-access finalization or viewer provisioning failed.'
+    }
+    $currentValues = Import-AzdEnvironmentValues -Root $RepositoryRoot -EnvironmentName $environmentName
+}
+
+$w365VaultName = [string]$currentValues['W365_KEY_VAULT_NAME']
+if ([string]::IsNullOrWhiteSpace($w365VaultName)) {
+    $w365VaultName = [string]$currentValues['VIEWER_KEY_VAULT_NAME']
+}
+$requiresBlueprintSecret = $credentialMode -eq 'client_secret' -and (
+    $enableW365 -or (Test-EnabledValue -Value ([string]$currentValues['W365_ENABLED'])))
+if ($requiresBlueprintSecret) {
+    if ([string]::IsNullOrWhiteSpace($w365VaultName)) {
+        throw 'State provisioning did not produce W365_KEY_VAULT_NAME before blueprint secret configuration.'
+    }
+    Write-SampleVerbose -Component 'postup' -Message 'Ensuring the blueprint client secret exists in the shared W365 Key Vault.'
+    Write-SampleDebug -Component 'postup' -Message "Credential mode=$credentialMode; vault=$w365VaultName."
+    & $ViewerSecretsScriptPath `
+        -Environment $environmentName `
+        -BlueprintOnly `
+        -BootstrapOperatorAccess
+    if (!$?) {
+        throw 'Blueprint secret storage failed.'
+    }
+}
+
 Write-SampleVerbose -Component 'postup' -Message 'Running viewer bootstrap before enabled W365 deployment.'
 Write-SampleDebug -Component 'postup' -Message "Viewer URL existed before bootstrap: $(![string]::IsNullOrWhiteSpace($viewerUrlBefore))."
 & $ViewerBootstrapScriptPath
@@ -561,5 +680,22 @@ if (![string]::IsNullOrWhiteSpace($env:AZURE_ENV_NAME)) {
         Set-AzdEnvironmentFileValues -Path $environmentPath -Values @{
             W365_AZD_UP_POSTUP_RUN_ID = $env:W365_AZD_UP_RUN_ID
         }
+    }
+}
+
+}
+catch {
+    $postCertificatePrimaryError = $_
+}
+finally {
+    if ($null -ne $certificateOfficerLease) {
+        $completedCertificateLease = $certificateOfficerLease
+        $certificateOfficerLease = $null
+        Complete-W365CertificateOfficerLease `
+            -Lease $completedCertificateLease `
+            -PrimaryError $postCertificatePrimaryError
+    }
+    elseif ($null -ne $postCertificatePrimaryError) {
+        throw $postCertificatePrimaryError
     }
 }

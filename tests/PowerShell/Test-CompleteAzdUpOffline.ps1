@@ -19,6 +19,9 @@ $viewerCallsPath = Join-Path $tempRoot 'viewer-calls.json'
 $agentDeployCallsPath = Join-Path $tempRoot 'agent-deploy-calls.json'
 $viewerSecretsCallsPath = Join-Path $tempRoot 'viewer-secrets-calls.json'
 $viewerActivationCallsPath = Join-Path $tempRoot 'viewer-activation-calls.json'
+$certificateInitializationCallsPath = Join-Path $tempRoot 'certificate-initialization-calls.json'
+$certificateRegistrationCallsPath = Join-Path $tempRoot 'certificate-registration-calls.json'
+$orderPath = Join-Path $tempRoot 'order.txt'
 $mockW365Path = Join-Path $tempRoot 'Mock-W365Setup.ps1'
 $mockPhaseTwoPath = Join-Path $tempRoot 'Mock-PhaseTwo.ps1'
 $failingW365Path = Join-Path $tempRoot 'Mock-W365SetupFailure.ps1'
@@ -29,6 +32,8 @@ $failingAgentDeployPath = Join-Path $tempRoot 'Mock-AgentDeployFailure.ps1'
 $mockViewerSecretsPath = Join-Path $tempRoot 'Mock-ViewerSecrets.ps1'
 $failingViewerSecretsPath = Join-Path $tempRoot 'Mock-ViewerSecretsFailure.ps1'
 $mockViewerActivationPath = Join-Path $tempRoot 'Mock-ViewerActivation.ps1'
+$mockCertificateInitializationPath = Join-Path $tempRoot 'Mock-CertificateInitialization.ps1'
+$mockCertificateRegistrationPath = Join-Path $tempRoot 'Mock-CertificateRegistration.ps1'
 
 $trackedEnvironmentVariables = @(
     'ENABLE_W365',
@@ -68,7 +73,10 @@ $trackedEnvironmentVariables = @(
     'SCREENSHARE_FRAME_ORIGINS',
     'SCREENSHARE_APP_URL',
     'SAMPLE_LOG_LEVEL',
-    'TEST_AZ_BEHAVIOR'
+    'TEST_AZ_BEHAVIOR',
+    'TEST_CERTIFICATE_INITIALIZATION_FAILURE',
+    'TEST_CERTIFICATE_REGISTRATION_FAILURE',
+    'TEST_AZ_ROLE_DELETE_FAILURE'
 )
 $savedEnvironment = @{}
 foreach ($name in $trackedEnvironmentVariables) {
@@ -93,6 +101,27 @@ function az {
         }
         return '88888888-8888-8888-8888-888888888888'
     }
+    if ($arguments[0] -eq 'keyvault' -and $arguments[1] -eq 'show') {
+        return '/subscriptions/99999999-9999-9999-9999-999999999999/resourceGroups/sample-rg/providers/Microsoft.KeyVault/vaults/sample-w365-vault'
+    }
+    if ($arguments[0] -eq 'role' -and $arguments[1] -eq 'assignment' -and $arguments[2] -eq 'list') {
+        return ''
+    }
+    if ($arguments[0] -eq 'role' -and $arguments[1] -eq 'assignment' -and $arguments[2] -eq 'create') {
+        if ($env:TEST_ORDER_PATH) { Add-Content -LiteralPath $env:TEST_ORDER_PATH -Value 'certificate-role-acquire' }
+        return '/subscriptions/99999999-9999-9999-9999-999999999999/providers/Microsoft.Authorization/roleAssignments/temporary'
+    }
+    if ($arguments[0] -eq 'keyvault' -and $arguments[1] -eq 'certificate' -and $arguments[2] -eq 'list') {
+        return ''
+    }
+    if ($arguments[0] -eq 'role' -and $arguments[1] -eq 'assignment' -and $arguments[2] -eq 'delete') {
+        if ($env:TEST_ORDER_PATH) { Add-Content -LiteralPath $env:TEST_ORDER_PATH -Value 'certificate-role-release' }
+        if ($env:TEST_AZ_ROLE_DELETE_FAILURE -eq 'true') {
+            $global:LASTEXITCODE = 1
+            return ''
+        }
+        return
+    }
     throw "Unexpected az call: $($arguments -join ' ')"
 }
 
@@ -103,7 +132,10 @@ function Reset-Calls {
         $viewerCallsPath, `
         $agentDeployCallsPath, `
         $viewerSecretsCallsPath, `
-        $viewerActivationCallsPath `
+        $viewerActivationCallsPath, `
+        $certificateInitializationCallsPath, `
+        $certificateRegistrationCallsPath, `
+        $orderPath `
         -ErrorAction SilentlyContinue
 }
 
@@ -119,6 +151,7 @@ function Write-TestEnvironment {
     $lines = @(
         "AZURE_ENV_NAME=`"$environmentName`"",
         'AZURE_TENANT_ID="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"',
+        'AZURE_SUBSCRIPTION_ID="99999999-9999-9999-9999-999999999999"',
         'RESOURCE_PREFIX="sample-dev"',
         'FOUNDRY_PROJECT_OWNERSHIP="managed"',
         'VIEWER_LIVE_ENABLED="false"',
@@ -240,6 +273,7 @@ try {
 
     Set-Content -LiteralPath $mockViewerPath -Value @'
 param()
+if ($env:TEST_ORDER_PATH) { Add-Content -LiteralPath $env:TEST_ORDER_PATH -Value 'viewer-bootstrap' }
 Write-Host 'MOCK-VIEWER-BOOTSTRAP-RAN'
 @{
     w365Enabled = $env:W365_ENABLED
@@ -260,19 +294,72 @@ throw 'Simulated viewer secret configuration failure.'
     Set-Content -LiteralPath $mockPhaseTwoPath -Value @'
 param(
     [string]$Environment,
-    [switch]$DeployViewer
+    [switch]$DeployViewer,
+    [switch]$FinalizeCredentialAccess
 )
+if ($env:TEST_ORDER_PATH) {
+    Add-Content -LiteralPath $env:TEST_ORDER_PATH -Value $(if ($FinalizeCredentialAccess) {
+        'phase-two-finalize'
+    } else {
+        'phase-two-base'
+    })
+}
 @{
     environment = $Environment
     deployViewer = $DeployViewer.IsPresent
+    finalizeCredentialAccess = $FinalizeCredentialAccess.IsPresent
 } | ConvertTo-Json | Set-Content -LiteralPath $env:TEST_PHASE_TWO_CALLS_PATH
 $environmentPath = Join-Path $env:TEST_REPOSITORY_ROOT ".azure\$Environment\.env"
 Add-Content -LiteralPath $environmentPath -Value @(
     'ENABLE_W365="true"',
     'DEPLOY_STATE="true"',
     'STATE_AGENT_PRINCIPAL_ID="99999999-9999-9999-9999-999999999999"',
+    'W365_BLUEPRINT_ID="55555555-5555-5555-5555-555555555555"',
     "DEPLOY_VIEWER=`"$($DeployViewer.IsPresent.ToString().ToLowerInvariant())`""
 )
+'@
+    Set-Content -LiteralPath $mockCertificateInitializationPath -Value @'
+[CmdletBinding(SupportsShouldProcess)]
+param(
+    [string]$Environment,
+    [switch]$ConfirmResourceChanges,
+    [psobject]$CertificateOfficerLease
+)
+if ($env:TEST_ORDER_PATH) { Add-Content -LiteralPath $env:TEST_ORDER_PATH -Value 'certificate-initialize' }
+if ($null -eq $CertificateOfficerLease) { throw 'Certificate officer lease was not supplied.' }
+if ($env:TEST_CERTIFICATE_INITIALIZATION_FAILURE -eq 'true') {
+    throw 'Simulated certificate initialization failure.'
+}
+@{
+    environment = $Environment
+    confirmResourceChanges = $ConfirmResourceChanges.IsPresent
+} | ConvertTo-Json | Set-Content -LiteralPath $env:TEST_CERTIFICATE_INITIALIZATION_CALLS_PATH
+[pscustomobject]@{
+    CertificateName = 'w365-blueprint-certificate'
+    VaultName = 'sample-w365-vault'
+    PublicCertificateBase64 = 'cHVibGljLWNlcnRpZmljYXRl'
+}
+'@
+    Set-Content -LiteralPath $mockCertificateRegistrationPath -Value @'
+[CmdletBinding(SupportsShouldProcess)]
+param(
+    [guid]$TenantId,
+    [guid]$BlueprintId,
+    [string]$PublicCertificateBase64,
+    [switch]$ConfirmResourceChanges,
+    [switch]$UseDeviceCode
+)
+if ($env:TEST_ORDER_PATH) { Add-Content -LiteralPath $env:TEST_ORDER_PATH -Value 'certificate-register' }
+if ($env:TEST_CERTIFICATE_REGISTRATION_FAILURE -eq 'true') {
+    throw 'Simulated certificate registration failure.'
+}
+@{
+    tenantId = $TenantId.ToString()
+    blueprintId = $BlueprintId.ToString()
+    publicCertificateBase64 = $PublicCertificateBase64
+    confirmResourceChanges = $ConfirmResourceChanges.IsPresent
+    useDeviceCode = $UseDeviceCode.IsPresent
+} | ConvertTo-Json | Set-Content -LiteralPath $env:TEST_CERTIFICATE_REGISTRATION_CALLS_PATH
 '@
     Set-Content -LiteralPath $mockAgentDeployPath -Value @'
 param(
@@ -341,6 +428,7 @@ param(
     [int]$PoolMaximumCount,
     [switch]$PoolEnableSingleSignOn
 )
+if ($env:TEST_ORDER_PATH) { Add-Content -LiteralPath $env:TEST_ORDER_PATH -Value 'w365-setup' }
 @{
     environment = $Environment
     tenantId = $TenantId.ToString()
@@ -467,6 +555,9 @@ throw 'Hosted agent redeployment failed.'
     $env:TEST_AGENT_DEPLOY_CALLS_PATH = $agentDeployCallsPath
     $env:TEST_VIEWER_SECRETS_CALLS_PATH = $viewerSecretsCallsPath
     $env:TEST_VIEWER_ACTIVATION_CALLS_PATH = $viewerActivationCallsPath
+    $env:TEST_CERTIFICATE_INITIALIZATION_CALLS_PATH = $certificateInitializationCallsPath
+    $env:TEST_CERTIFICATE_REGISTRATION_CALLS_PATH = $certificateRegistrationCallsPath
+    $env:TEST_ORDER_PATH = $orderPath
     $env:TEST_VIEWER_PUBLIC_URL = ''
     $env:AZURE_ENV_NAME = $environmentName
     $env:AZURE_TENANT_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
@@ -475,6 +566,139 @@ throw 'Hosted agent redeployment failed.'
     $env:W365_RESOURCE_CHANGES_CONFIRMED = 'true'
     $env:AZD_NON_INTERACTIVE = 'true'
     $env:VIEWER_LIVE_CHANGES_CONFIRMED = 'true'
+
+    Reset-Calls
+    Write-TestEnvironment -Complete:$false -OmitDeploymentFlags
+    (Get-Content -LiteralPath $environmentPath) -replace
+        'W365_BLUEPRINT_CREDENTIAL_MODE="client_secret"',
+        'W365_BLUEPRINT_CREDENTIAL_MODE="key_vault_certificate"' |
+        Set-Content -LiteralPath $environmentPath
+    $env:ENABLE_W365 = ''
+    $env:W365_ENABLED = 'false'
+    & $scriptPath `
+        -RepositoryRoot $tempRoot `
+        -PhaseTwoPreparationScriptPath $mockPhaseTwoPath `
+        -CertificateInitializationScriptPath $mockCertificateInitializationPath `
+        -CertificateRegistrationScriptPath $mockCertificateRegistrationPath `
+        -W365SetupScriptPath $mockW365Path `
+        -ViewerBootstrapScriptPath $mockViewerPath `
+        -ViewerSecretsScriptPath $mockViewerSecretsPath
+    $certificateInitializationCall = Get-Content -LiteralPath $certificateInitializationCallsPath -Raw | ConvertFrom-Json
+    $certificateRegistrationCall = Get-Content -LiteralPath $certificateRegistrationCallsPath -Raw | ConvertFrom-Json
+    if ($certificateInitializationCall.environment -ne $environmentName -or
+        !$certificateInitializationCall.confirmResourceChanges -or
+        $certificateRegistrationCall.blueprintId -ne '55555555-5555-5555-5555-555555555555' -or
+        !$certificateRegistrationCall.confirmResourceChanges -or
+        !$certificateRegistrationCall.useDeviceCode) {
+        throw 'Fresh certificate-mode azd up did not create/reuse and register the exact blueprint certificate.'
+    }
+    if (Test-Path -LiteralPath $viewerSecretsCallsPath) {
+        throw 'Fresh certificate-mode azd up requested or stored a blueprint client secret.'
+    }
+    $order = @(Get-Content -LiteralPath $orderPath)
+    $expectedOrder = @(
+        'phase-two-base',
+        'certificate-role-acquire',
+        'certificate-initialize',
+        'certificate-register',
+        'phase-two-finalize',
+        'viewer-bootstrap',
+        'w365-setup',
+        'certificate-role-release'
+    )
+    for ($index = 0; $index -lt $expectedOrder.Count; $index++) {
+        if ($order[$index] -ne $expectedOrder[$index]) {
+            throw "Fresh certificate-mode azd up ordering was incorrect at step $index."
+        }
+    }
+    if (@($order | Where-Object { $_ -eq 'certificate-role-release' }).Count -ne 1) {
+        throw 'The temporary certificate officer lease was not released exactly once.'
+    }
+
+    foreach ($failureStage in @('initialization', 'registration')) {
+        Reset-Calls
+        Write-TestEnvironment -Complete:$false -OmitDeploymentFlags
+        (Get-Content -LiteralPath $environmentPath) -replace
+            'W365_BLUEPRINT_CREDENTIAL_MODE="client_secret"',
+            'W365_BLUEPRINT_CREDENTIAL_MODE="key_vault_certificate"' |
+            Set-Content -LiteralPath $environmentPath
+        $env:ENABLE_W365 = ''
+        $env:W365_ENABLED = 'false'
+        $env:TEST_CERTIFICATE_INITIALIZATION_FAILURE = ($failureStage -eq 'initialization').ToString().ToLowerInvariant()
+        $env:TEST_CERTIFICATE_REGISTRATION_FAILURE = ($failureStage -eq 'registration').ToString().ToLowerInvariant()
+        $certificateFailureRejected = $false
+        try {
+            & $scriptPath `
+                -RepositoryRoot $tempRoot `
+                -PhaseTwoPreparationScriptPath $mockPhaseTwoPath `
+                -CertificateInitializationScriptPath $mockCertificateInitializationPath `
+                -CertificateRegistrationScriptPath $mockCertificateRegistrationPath `
+                -W365SetupScriptPath $mockW365Path `
+                -ViewerBootstrapScriptPath $mockViewerPath `
+                -ViewerSecretsScriptPath $mockViewerSecretsPath
+        }
+        catch {
+            $certificateFailureRejected = $true
+        }
+        $failureOrder = @(Get-Content -LiteralPath $orderPath)
+        if (!$certificateFailureRejected -or
+            'phase-two-finalize' -in $failureOrder -or
+            'viewer-bootstrap' -in $failureOrder -or
+            'w365-setup' -in $failureOrder -or
+            'certificate-role-release' -notin $failureOrder) {
+            throw "Certificate $failureStage failure did not stop and clean up before final RBAC, viewer, and W365 setup."
+        }
+    }
+    $env:TEST_CERTIFICATE_INITIALIZATION_FAILURE = ''
+    $env:TEST_CERTIFICATE_REGISTRATION_FAILURE = ''
+
+    foreach ($roleDeleteFails in @($false, $true)) {
+        Reset-Calls
+        Write-TestEnvironment -Complete:$false -OmitDeploymentFlags
+        (Get-Content -LiteralPath $environmentPath) -replace
+            'W365_BLUEPRINT_CREDENTIAL_MODE="client_secret"',
+            'W365_BLUEPRINT_CREDENTIAL_MODE="key_vault_certificate"' |
+            Set-Content -LiteralPath $environmentPath
+        $env:ENABLE_W365 = ''
+        $env:W365_ENABLED = 'false'
+        $env:TEST_AZ_ROLE_DELETE_FAILURE = $roleDeleteFails.ToString().ToLowerInvariant()
+        $postCertificateError = $null
+        try {
+            & $scriptPath `
+                -RepositoryRoot $tempRoot `
+                -PhaseTwoPreparationScriptPath $mockPhaseTwoPath `
+                -CertificateInitializationScriptPath $mockCertificateInitializationPath `
+                -CertificateRegistrationScriptPath $mockCertificateRegistrationPath `
+                -W365SetupScriptPath $failingW365Path `
+                -ViewerBootstrapScriptPath $mockViewerPath `
+                -ViewerSecretsScriptPath $mockViewerSecretsPath
+        }
+        catch {
+            $postCertificateError = $_
+        }
+        $postCertificateOrder = @(Get-Content -LiteralPath $orderPath)
+        if ($null -eq $postCertificateError) {
+            throw 'Postup hid a failure that occurred after blueprint certificate provisioning.'
+        }
+        if ('certificate-role-release' -notin $postCertificateOrder) {
+            throw 'The temporary certificate officer lease was not released after a post-certificate failure.'
+        }
+        $postCertificateException = $postCertificateError.Exception
+        if ($roleDeleteFails) {
+            if ($postCertificateException -isnot [AggregateException] -or
+                @($postCertificateException.InnerExceptions |
+                    Where-Object { $_.Message -match 'Simulated W365 setup failure\.' }).Count -ne 1 -or
+                @($postCertificateException.InnerExceptions |
+                    Where-Object { $_.Message -match 'revoke the temporary Key Vault Certificates Officer' }).Count -ne 1) {
+                throw 'A post-certificate failure with a failing revocation did not retain both errors.'
+            }
+        }
+        elseif ($postCertificateException -is [AggregateException] -or
+            $postCertificateException.Message -notmatch 'Simulated W365 setup failure\.') {
+            throw 'A post-certificate failure did not surface the primary error.'
+        }
+    }
+    $env:TEST_AZ_ROLE_DELETE_FAILURE = ''
 
     Reset-Calls
     Write-TestEnvironment -Complete:$false
@@ -518,7 +742,9 @@ throw 'Hosted agent redeployment failed.'
         -ViewerBootstrapScriptPath $mockViewerPath `
         -ViewerSecretsScriptPath $mockViewerSecretsPath
     $phaseTwoCall = Get-Content -LiteralPath $phaseTwoCallsPath -Raw | ConvertFrom-Json
-    if ($phaseTwoCall.environment -ne $environmentName -or !$phaseTwoCall.deployViewer) {
+    if ($phaseTwoCall.environment -ne $environmentName -or
+        !$phaseTwoCall.deployViewer -or
+        !$phaseTwoCall.finalizeCredentialAccess) {
         throw 'Fresh managed azd up did not default to phase-two state and viewer provisioning.'
     }
     if (!(Test-Path -LiteralPath $w365CallsPath) -or !(Test-Path -LiteralPath $viewerCallsPath)) {

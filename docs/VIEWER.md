@@ -15,12 +15,14 @@ and human handoff. Set `DEPLOY_VIEWER=false` only for an intentional
 agent-only deployment.
 
 - For a direct fresh deployment, the `postup` hook creates the viewer after the
-  phase-1 agent principal and shared state are ready.
+  phase-1 agent principal, shared state, certificate registration, and
+  certificate-scoped RBAC are ready.
 - For the staged path, record the viewer bootstrap outputs from
   [deployment](DEPLOYMENT.md#optional-phase-1-viewer-bootstrap), especially
   `viewerIdentityClientId`, `viewerIdentityPrincipalId`, and `viewerHostname`.
-- A valid blueprint client secret for the default E2E path. Viewer federation
-  is required only when explicitly selecting `managed_identity_federation`.
+- The default non-exportable Key Vault blueprint certificate. A blueprint
+  client secret is required only for explicit legacy `client_secret` mode;
+  viewer federation is required only for `managed_identity_federation`.
 - Approved W365 screen-share values available from onboarding:
   `SCREENSHARE_APP_URL`, `SCREENSHARE_SDK_URL`, and
   `SCREENSHARE_FRAME_ORIGINS`. These are required only for live viewer
@@ -108,20 +110,26 @@ one place: `Key Vault Secrets User` for the viewer identity when enabled and
 
 ## Enable the hosted viewer
 
-The default E2E path sets `W365_BLUEPRINT_CREDENTIAL_MODE=client_secret` and
-stores the existing blueprint credential as `w365-blueprint-client-secret` in
-the shared W365 Key Vault. The viewer uses it only for the T1 blueprint
-exchange. Managed-identity federation is an explicit alternative and requires
-the approved viewer FIC documented in
-[W365 setup](W365-SETUP.md#optional-viewer-federation). Certificate mode is
-agent-only. There is no automatic fallback between credential modes.
+Fresh deployments default to `W365_BLUEPRINT_CREDENTIAL_MODE=key_vault_certificate`.
+The viewer UAMI receives certificate/key-scoped Key Vault read/sign roles and
+uses the same non-exportable certificate as the agent; no blueprint secret is
+injected. `client_secret` remains an explicit legacy opt-in.
+The viewer still requires its separate `w365-viewer-client-secret` for human
+OIDC sign-in. That OIDC credential is not a blueprint credential and is needed
+in every live-viewer credential mode. The same T2/user-FIC T3 exchanges and
+resource-scoped tokens remain unchanged.
+Managed-identity federation remains an explicit alternative and requires the
+approved viewer FIC documented in
+[W365 setup](W365-SETUP.md#optional-viewer-federation). There is no automatic
+fallback between credential modes.
 
 Create a **single-tenant web application** in Entra for the viewer. This is not
 the W365 agent blueprint. Set its web redirect URI to
 `https://<your-viewer-host>/signin-oidc` and record `VIEWER_CLIENT_ID`.
 Create a short-lived client credential for this web app and store it as
-`w365-viewer-client-secret`. `infra/viewer.bicep` uses Key Vault references for
-both viewer credentials, never literal secret parameters. OIDC uses code flow
+`w365-viewer-client-secret`. `infra/viewer.bicep` uses a Key Vault reference for the OIDC credential and,
+only in legacy `client_secret` mode, a separate blueprint-secret reference.
+OIDC uses code flow
 with PKCE and a secure HttpOnly cookie.
 
 Set `OPERATOR_TENANT_ID` and `OPERATOR_OBJECT_ID` to the **human operator's** Entra
@@ -171,10 +179,10 @@ the completed live-view and take-control links. An arbitrary Container App or
 the W365 static viewer URL cannot be used because it does not have the shared
 session state, operator authentication, or token endpoints.
 
-Do not replace the wrapper with a direct `azd deploy` when
-`W365_BLUEPRINT_CREDENTIAL_MODE=client_secret`: the wrapper retrieves the
-blueprint credential from Key Vault only for the deployment, then clears it
-from the azd environment.
+Do not switch credential mode to activate the viewer. Established
+`key_vault_certificate` deployments remain on certificate mode during preview,
+activation, and routine redeployment; `W365_ENABLED=true` is the fail-closed
+readiness proof used by the Bicep layer.
 
 `SCREENSHARE_APP_URL` selects the W365-hosted view-only application. Pass it
 through the azd environment or an untracked viewer deployment parameter file.

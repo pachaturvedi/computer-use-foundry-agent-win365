@@ -10,7 +10,9 @@ param tags object = {}
 param agentPrincipalId string = '00000000-0000-0000-0000-000000000000'
 // Not @allowed-restricted: this may be unset/empty in phase 1, before W365 setup selects a
 // credential mode. Only an exact 'client_secret' match enables the role assignment below.
-param blueprintCredentialMode string = 'client_secret'
+param blueprintCredentialMode string = 'key_vault_certificate'
+param certificateProvisioningActive bool = false
+param certificateRbacReady bool = false
 
 // Only client_secret mode reads the blueprint secret from this vault at agent runtime; other
 // modes must not receive standing read access to it.
@@ -18,7 +20,7 @@ var agentRoleAssignmentEnabled = agentPrincipalId != '00000000-0000-0000-0000-00
 
 // Only key_vault_certificate mode signs blueprint assertions against this vault's certificate at
 // agent runtime; other modes must not receive standing access to the certificate or its key.
-var agentCertificateRoleAssignmentEnabled = agentPrincipalId != '00000000-0000-0000-0000-000000000000' && blueprintCredentialMode == 'key_vault_certificate'
+var agentCertificateRoleAssignmentEnabled = (certificateProvisioningActive || certificateRbacReady) && agentPrincipalId != '00000000-0000-0000-0000-000000000000' && blueprintCredentialMode == 'key_vault_certificate'
 
 var resourceSuffix = take(uniqueString(subscription().id, resourceGroup().id, resourcePrefix), 6)
 var compactResourcePrefix = toLower(replace(resourcePrefix, '-', ''))

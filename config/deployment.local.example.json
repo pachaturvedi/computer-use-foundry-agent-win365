@@ -25,7 +25,7 @@
     "screenShareAppUrl": "https://w365ssviewer7f05ac.z13.web.core.windows.net"
   },
   "w365": {
-    "blueprintCredentialMode": "client_secret",
+    "blueprintCredentialMode": "key_vault_certificate",
     "poolDisplayName": "su-cua-test-clone",
     "poolDescription": "Cloned from the su-cua-test pool template.",
     "poolBillingPlanId": "YOUR-W365-BILLING-PLAN-GUID",
