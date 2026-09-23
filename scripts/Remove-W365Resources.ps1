@@ -132,6 +132,13 @@ function Test-TrueString {
 
     return @('1', 'true', 'yes', 'on') -contains ([string]$Value).Trim().ToLowerInvariant()
 }
+function Write-AzdDownRecoveryTip {
+    if (Test-TrueString -Value $env:W365_PREDOWN_ALREADY_COMPLETED) {
+        return
+    }
+
+    Write-Output "If 'azd down' now reports 'deployment not found' for a layer whose Azure resources were already removed (a known azd layered-infra limitation), rerun teardown with '.\scripts\Invoke-AzdDown.ps1 -EnvironmentName <azd-environment-name> -Purge -Force' instead, which treats an already-missing deployment as complete."
+}
 function Test-OwnershipCleanupCompleted {
     param($Manifest)
 
@@ -327,6 +334,14 @@ function Get-CurrentViewerRoleAssignmentId {
         }
         if ($resourceGroupExists -eq 'false') {
             return ''
+        }
+
+        $resourceExistsError = (& az resource show --ids $scope --output none 2>&1 | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0) {
+            if ($resourceExistsError -match '(?i)ResourceNotFound|could not be found|was not found') {
+                return ''
+            }
+            throw "Unable to inspect resource '$scope' before viewer RBAC cleanup: $resourceExistsError"
         }
     }
 
@@ -623,6 +638,7 @@ if ($null -eq $manifest) {
     }
 
     Write-Output "Pre-teardown cleanup completed for '$cleanupEnvironmentName': no configured W365 state remains. Azure resource deletion can continue."
+    Write-AzdDownRecoveryTip
     return
 }
 
@@ -652,6 +668,7 @@ if ($w365CleanupCompleted) {
     }
 
     Write-Output 'W365 ownership cleanup was already completed. Azure resource deletion can continue.'
+    Write-AzdDownRecoveryTip
     return
 }
 
@@ -903,3 +920,4 @@ $manifest['cleanup'] = [ordered]@{
 }
 Write-W365OwnershipManifest -Path $context.OwnershipManifestPath -Manifest $manifest
 Write-Output 'W365 cleanup completed. azd down can now continue with Azure resource deletion.'
+Write-AzdDownRecoveryTip

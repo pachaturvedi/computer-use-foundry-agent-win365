@@ -141,6 +141,7 @@ $global:viewerRoleAssignments = @(
 )
 $global:viewerRoleDeletes = [System.Collections.Generic.List[string]]::new()
 $global:viewerResourceGroupExists = $true
+$global:viewerScopeResourceExists = $true
 $global:viewerRoleListCalls = 0
 
 function az {
@@ -149,6 +150,16 @@ function az {
 
     if ($arguments[0] -eq 'group' -and $arguments[1] -eq 'exists') {
         return $global:viewerResourceGroupExists.ToString().ToLowerInvariant()
+    }
+
+    if ($arguments[0] -eq 'resource' -and $arguments[1] -eq 'show') {
+        $scope = $arguments[[Array]::IndexOf($arguments, '--ids') + 1]
+        if (!$global:viewerScopeResourceExists) {
+            $global:LASTEXITCODE = 3
+            return "ERROR: (ResourceNotFound) The Resource '$scope' was not found."
+        }
+
+        return ''
     }
 
     if ($arguments[0] -eq 'role' -and $arguments[1] -eq 'assignment' -and $arguments[2] -eq 'list') {
@@ -279,8 +290,8 @@ try {
         throw 'Viewer cleanup did not log Azure RBAC assignment details before deletion.'
     }
     $expectedCompletion = "Pre-teardown cleanup completed for '$envName': no configured W365 state remains. Azure resource deletion can continue."
-    if ($viewerCleanupOutput[-1] -ne $expectedCompletion) {
-        throw "Viewer-only cleanup did not defer the Azure deletion continuation message until cleanup completed. Last output: [$($viewerCleanupOutput[-1])]"
+    if ($viewerCleanupOutput -notcontains $expectedCompletion) {
+        throw "Viewer-only cleanup did not defer the Azure deletion continuation message until cleanup completed. Output: [$($viewerCleanupOutput -join ' | ')]"
     }
 
     $state = Get-MockViewerGraphState
@@ -328,6 +339,27 @@ try {
 
     & $module { Reset-MockViewerGraphState }
     $global:viewerResourceGroupExists = $true
+    $global:viewerScopeResourceExists = $false
+    $global:viewerRoleListCalls = 0
+    $global:viewerRoleDeletes.Clear()
+    Write-ViewerManifest -ApplicationDisposition 'created' -CredentialDisposition 'created' -ServicePrincipalDisposition 'created'
+    $missingVaultOutput = @(
+        & "$scriptsRoot\Remove-W365Resources.ps1" -EnvironmentName $envName -EnvironmentFilePath $envFilePath -OwnershipManifestPath (Join-Path $envDir 'w365-ownership.json') -ConfirmViewerOnlyCleanup -Confirm:$false
+    )
+    if ($global:viewerRoleListCalls -ne 0 -or $global:viewerRoleDeletes.Count -ne 0) {
+        throw 'Viewer cleanup queried or deleted RBAC after Azure confirmed the Key Vault scope was already deleted.'
+    }
+    if (@($missingVaultOutput | Where-Object { $_ -match '^Viewer role assignment .+ was already absent\.$' }).Count -ne 2) {
+        throw "Viewer cleanup did not treat role assignments under an already-deleted Key Vault as absent: $($missingVaultOutput -join ' | ')"
+    }
+    $viewerManifest = Get-Content -LiteralPath $viewerManifestPath -Raw | ConvertFrom-Json -AsHashtable
+    if ($viewerManifest.cleanup.status -ne 'completed') {
+        throw 'Viewer cleanup did not complete after the Key Vault scope was already deleted while its resource group remained.'
+    }
+
+    & $module { Reset-MockViewerGraphState }
+    $global:viewerResourceGroupExists = $true
+    $global:viewerScopeResourceExists = $true
     $global:viewerRoleAssignments = @(
         [ordered]@{
             id = '/subscriptions/sub/providers/Microsoft.Authorization/roleAssignments/operator'
@@ -355,7 +387,7 @@ try {
         throw 'Viewer cleanup should not delete a reused viewer application.'
     }
 
-    Write-Output 'Offline viewer cleanup: viewer-only teardown, created artifact deletion, and reused-app federation cleanup passed.'
+    Write-Output 'Offline viewer cleanup: viewer-only teardown, created artifact deletion, deleted-resource-group and deleted-Key-Vault-scope no-ops, and reused-app federation cleanup passed.'
 }
 finally {
     [Environment]::SetEnvironmentVariable('W365_CLEANUP_CONFIRMED', $previousCleanupApproval, 'Process')
@@ -366,6 +398,6 @@ finally {
         Remove-Item -LiteralPath $viewerManifestDirectory -Recurse -Force
     }
 
-    Remove-Variable -Name viewerRoleAssignments, viewerRoleDeletes, viewerResourceGroupExists, viewerRoleListCalls -Scope Global -ErrorAction SilentlyContinue
+    Remove-Variable -Name viewerRoleAssignments, viewerRoleDeletes, viewerResourceGroupExists, viewerScopeResourceExists, viewerRoleListCalls -Scope Global -ErrorAction SilentlyContinue
     Remove-Module Microsoft.Graph.Authentication
 }
