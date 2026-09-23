@@ -47,6 +47,11 @@ For a new pool, the flow uses checked-in region and image defaults only when
 the tenant advertises them. It derives a billing-plan GUID from an existing
 pool when possible; otherwise the operator supplies the approved GUID.
 
+> **New-pool readiness:** Setup can finish before the new Cloud PC is ready.
+> Provisioning typically takes another 10–15 minutes and can take longer.
+> In the Windows 365 portal, monitor the pool until an available Cloud PC
+> session appears before invoking the agent.
+
 For non-interactive deployment, provide an existing pool ID or billing-plan ID
 before `azd up`:
 
@@ -577,8 +582,10 @@ changes require explicit administrator review.
 
 ## Readiness and failures
 
-Pool provisioning can take 20–30 minutes. Confirm available capacity and the
-agent-user assignment before invoking a task.
+Do not treat successful pool creation as desktop readiness. New Cloud PC
+provisioning typically takes 10–15 minutes and can take longer. In the Windows
+365 portal, wait until the pool shows an available Cloud PC session, then
+confirm the agent-user assignment before invoking a task.
 
 - **401:** verify tenant, blueprint selection, ID types, selected credential,
   FIC/certificate registration, and audience.
