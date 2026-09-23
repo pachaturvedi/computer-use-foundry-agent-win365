@@ -186,6 +186,33 @@ try {
             -Domains $domains | Out-Null
     } 'W365 agent-user UPN resolution accepted an override that conflicted with the ownership manifest.'
 
+    $manifestTargetFunction = [Management.Automation.Language.Parser]::ParseFile(
+        (Join-Path $repoRoot 'scripts\Setup-W365.ps1'),
+        [ref]$null,
+        [ref]$null).Find({
+            param($ast)
+            $ast -is [Management.Automation.Language.FunctionDefinitionAst] -and
+            $ast.Name -eq 'Resolve-OwnershipManifestTarget'
+        }, $true)
+    if ($null -eq $manifestTargetFunction) {
+        throw 'Unable to locate Resolve-OwnershipManifestTarget for selected-environment regression coverage.'
+    }
+    $manifestModule = New-Module -ScriptBlock ([scriptblock]::Create(@"
+`$script:repositoryRoot = '$($repoRoot.Replace("'", "''"))'
+$($manifestTargetFunction.Extent.Text)
+Export-ModuleMember -Function Resolve-OwnershipManifestTarget
+"@))
+    $explicitManifestPath = Join-Path $repoRoot '.azure\sample-dev\w365-ownership.json'
+    $explicitManifestTarget = & $manifestModule {
+        Resolve-OwnershipManifestTarget `
+            -Azd ([pscustomobject]@{ Path = 'unused' }) `
+            -ExplicitEnvironmentName 'sample-dev'
+    }
+    if ($explicitManifestTarget.EnvironmentName -ne 'sample-dev' -or
+        $explicitManifestTarget.Path -ne $explicitManifestPath) {
+        throw 'Ownership manifest resolution discarded the explicitly selected azd environment.'
+    }
+
     $ownedPoolId = '11111111-1111-1111-1111-111111111111'
     $ownership = [ordered]@{
         w365 = [ordered]@{
