@@ -173,5 +173,53 @@ if (Test-GraphContext -Context $appOnlyContext -RequiredTenantId $tenant -Requir
     throw 'An app-only context was accepted where delegated access is required.'
 }
 
+# Connect-MgGraph emits the device-code prompt on the success stream, so piping it
+# to Out-Null silently hides the code and the operator can never sign in. Run the
+# real helper in a child process and assert the prompt still reaches stdout.
+$probeRoot = Join-Path ([System.IO.Path]::GetTempPath()) "graph-signin-probe-$([guid]::NewGuid())"
+New-Item -ItemType Directory -Path $probeRoot -Force | Out-Null
+try {
+    $probeScript = Join-Path $probeRoot 'probe.ps1'
+    $probeTemplate = @'
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+function Connect-MgGraph { Write-Output 'DEVICE-CODE-PROMPT-MARKER' }
+function Get-MgContext {
+    return [pscustomobject]@{ TenantId = 'probe-tenant'; AuthType = 'Delegated'; Scopes = @('User.Read') }
+}
+. '__MODULE__'
+$result = Connect-W365GraphContext -ConnectParameters @{ Scopes = @('User.Read') } -UseDeviceCode -DeviceCodeMaxAttempts 1
+if (@($result).Count -ne 1) { throw 'PROBE-FAILED: the sign-in prompt leaked into the returned value.' }
+if ($result.AuthType -ne 'Delegated') { throw 'PROBE-FAILED: the Graph context was not returned.' }
+'@
+    $modulePath = Join-Path $root 'scripts\GraphSignIn.ps1'
+    $probeTemplate.Replace('__MODULE__', $modulePath.Replace("'", "''")) |
+        Set-Content -Path $probeScript -Encoding utf8
+
+    $probeOut = Join-Path $probeRoot 'out.txt'
+    $probeErr = Join-Path $probeRoot 'err.txt'
+    $probe = Start-Process pwsh `
+        -ArgumentList '-NoProfile', '-NonInteractive', '-File', $probeScript `
+        -RedirectStandardOutput $probeOut `
+        -RedirectStandardError $probeErr `
+        -PassThru -WindowStyle Hidden
+    if (!$probe.WaitForExit(60000)) {
+        $probe.Kill()
+        throw 'The device-code visibility probe did not complete.'
+    }
+
+    $probeStdout = (Get-Content $probeOut -Raw -ErrorAction SilentlyContinue)
+    $probeStderr = (Get-Content $probeErr -Raw -ErrorAction SilentlyContinue)
+    if ($probe.ExitCode -ne 0) {
+        throw "The device-code visibility probe failed: $probeStderr"
+    }
+    if ([string]::IsNullOrWhiteSpace($probeStdout) -or $probeStdout -notmatch 'DEVICE-CODE-PROMPT-MARKER') {
+        throw 'The Microsoft Graph device-code prompt was suppressed instead of shown to the operator.'
+    }
+}
+finally {
+    Remove-Item $probeRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 Write-Host 'Test-GraphSignInOffline passed.'
 

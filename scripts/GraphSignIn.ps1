@@ -79,7 +79,7 @@ function Connect-W365GraphContext {
         for ($attempt = 1; $attempt -le $DeviceCodeMaxAttempts; $attempt++) {
             try {
                 Write-Host "Starting Microsoft Graph device-code sign-in attempt $attempt of $DeviceCodeMaxAttempts..."
-                Connect-MgGraph @parameters | Out-Null
+                Connect-MgGraph @parameters | Out-Host
                 return Get-MgContext
             }
             catch {
@@ -93,12 +93,12 @@ function Connect-W365GraphContext {
     }
 
     if (!$FallbackToDeviceCode) {
-        Connect-MgGraph @parameters | Out-Null
+        Connect-MgGraph @parameters | Out-Host
         return Get-MgContext
     }
 
     try {
-        Connect-MgGraph @parameters | Out-Null
+        Connect-MgGraph @parameters | Out-Host
         return Get-MgContext
     }
     catch {
@@ -109,3 +109,5 @@ function Connect-W365GraphContext {
             -DeviceCodeMaxAttempts $DeviceCodeMaxAttempts
     }
 }
+
+
