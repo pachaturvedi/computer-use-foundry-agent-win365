@@ -132,6 +132,13 @@ function Test-TrueString {
 
     return @('1', 'true', 'yes', 'on') -contains ([string]$Value).Trim().ToLowerInvariant()
 }
+function Test-OwnershipCleanupCompleted {
+    param($Manifest)
+
+    $cleanup = Get-OptionalObjectValue -Object $Manifest -Name 'cleanup'
+    return $cleanup -is [System.Collections.IDictionary] -and
+        [string](Get-OptionalObjectValue -Object $cleanup -Name 'status') -eq 'completed'
+}
 function Test-GraphResourceNotFound {
     param([Parameter(Mandatory)]$ErrorRecord)
 
@@ -588,6 +595,8 @@ $viewerManifest = if (![string]::IsNullOrWhiteSpace($viewerManifestPath)) {
 else {
     $null
 }
+$w365CleanupCompleted = Test-OwnershipCleanupCompleted -Manifest $manifest
+$viewerCleanupCompleted = Test-OwnershipCleanupCompleted -Manifest $viewerManifest
 
 if ($null -eq $manifest) {
     $hasW365State = (Test-TrueString -Value ([string]$envValues['W365_ENABLED'])) -or
@@ -600,12 +609,17 @@ if ($null -eq $manifest) {
     $cleanupEnvironmentName = $context.EnvironmentName ?? 'current azd environment'
 
     if ($viewerManifest) {
-        Write-Output "No Windows 365 ownership manifest or configured W365 state was found for '$cleanupEnvironmentName'. Evaluating viewer-owned artifacts before Azure resource deletion."
-        Assert-CleanupApproved -TargetName ($context.EnvironmentName ?? 'current azd environment') -RequireProtectedApproval
-        $viewerTenantId = [guid](Resolve-CleanupTenantId -EnvironmentValues $envValues -W365Manifest $manifest -ViewerManifest $viewerManifest)
-        Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
-        Connect-GraphForCleanup -TenantId $viewerTenantId -Scopes @('Application.ReadWrite.All')
-        Remove-ViewerArtifacts -Manifest $viewerManifest -EnvironmentValues $envValues -ManifestPath $viewerManifestPath
+        if ($viewerCleanupCompleted) {
+            Write-Output 'Viewer ownership cleanup was already completed; no Graph or Azure RBAC cleanup is required.'
+        }
+        else {
+            Write-Output "No Windows 365 ownership manifest or configured W365 state was found for '$cleanupEnvironmentName'. Evaluating viewer-owned artifacts before Azure resource deletion."
+            Assert-CleanupApproved -TargetName ($context.EnvironmentName ?? 'current azd environment') -RequireProtectedApproval
+            $viewerTenantId = [guid](Resolve-CleanupTenantId -EnvironmentValues $envValues -W365Manifest $manifest -ViewerManifest $viewerManifest)
+            Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
+            Connect-GraphForCleanup -TenantId $viewerTenantId -Scopes @('Application.ReadWrite.All')
+            Remove-ViewerArtifacts -Manifest $viewerManifest -EnvironmentValues $envValues -ManifestPath $viewerManifestPath
+        }
     }
 
     Write-Output "Pre-teardown cleanup completed for '$cleanupEnvironmentName': no configured W365 state remains. Azure resource deletion can continue."
@@ -625,6 +639,22 @@ if ($projectOwnership -eq 'existing' -and !$allowExistingProjectCleanup) {
     throw 'This environment is bound to an existing Foundry project. Set ALLOW_EXISTING_FOUNDRY_CLEANUP=true or pass -AllowExistingProjectCleanup only after confirming azd down may delete that shared project resource group.'
 }
 
+if ($w365CleanupCompleted) {
+    if ($viewerManifest -and !$viewerCleanupCompleted) {
+        Assert-CleanupApproved -TargetName ($context.EnvironmentName ?? 'current azd environment')
+        $viewerTenantId = [guid](Resolve-CleanupTenantId -EnvironmentValues $envValues -W365Manifest $manifest -ViewerManifest $viewerManifest)
+        Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
+        Connect-GraphForCleanup -TenantId $viewerTenantId -Scopes @('Application.ReadWrite.All')
+        Remove-ViewerArtifacts -Manifest $viewerManifest -EnvironmentValues $envValues -ManifestPath $viewerManifestPath
+    }
+    elseif ($viewerCleanupCompleted) {
+        Write-Output 'Viewer ownership cleanup was already completed; no Graph or Azure RBAC cleanup is required.'
+    }
+
+    Write-Output 'W365 ownership cleanup was already completed. Azure resource deletion can continue.'
+    return
+}
+
 Assert-CleanupApproved -TargetName ($context.EnvironmentName ?? 'current azd environment')
 
 $tenantIdValue = Resolve-CleanupTenantId -EnvironmentValues $envValues -W365Manifest $manifest -ViewerManifest $viewerManifest
@@ -640,7 +670,8 @@ if ((List-MapValues $manifest.graph.federatedIdentityCredentials).Count -gt 0) {
     $scopes += 'AgentIdentityBlueprint.AddRemoveCreds.All'
 }
 
-if ($viewerManifest -and ($viewerManifest.application -is [System.Collections.IDictionary])) {
+if ($viewerManifest -and !$viewerCleanupCompleted -and
+    ($viewerManifest.application -is [System.Collections.IDictionary])) {
     $scopes += 'Application.ReadWrite.All'
 }
 Connect-GraphForCleanup -TenantId $tenantId -Scopes $scopes
@@ -859,8 +890,11 @@ if ($poolManifest -and [string]$poolManifest.disposition -eq 'created') {
     }
 }
 
-if ($viewerManifest) {
+if ($viewerManifest -and !$viewerCleanupCompleted) {
     Remove-ViewerArtifacts -Manifest $viewerManifest -EnvironmentValues $envValues -ManifestPath $viewerManifestPath
+}
+elseif ($viewerCleanupCompleted) {
+    Write-Output 'Viewer ownership cleanup was already completed; no Graph or Azure RBAC cleanup is required.'
 }
 
 $manifest['cleanup'] = [ordered]@{

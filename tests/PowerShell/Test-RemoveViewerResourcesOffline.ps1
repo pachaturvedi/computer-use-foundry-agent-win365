@@ -295,6 +295,18 @@ try {
         throw 'Viewer cleanup did not mark the viewer ownership manifest complete.'
     }
 
+    $global:viewerResourceGroupExists = $false
+    $global:viewerRoleListCalls = 0
+    $global:viewerRoleDeletes.Clear()
+    $completedRerunOutput = @(
+        & "$scriptsRoot\Remove-W365Resources.ps1" -EnvironmentName $envName -EnvironmentFilePath $envFilePath -OwnershipManifestPath (Join-Path $envDir 'w365-ownership.json') -ConfirmViewerOnlyCleanup -Confirm:$false
+    )
+    if ($completedRerunOutput -notcontains 'Viewer ownership cleanup was already completed; no Graph or Azure RBAC cleanup is required.' -or
+        $global:viewerRoleListCalls -ne 0 -or
+        $global:viewerRoleDeletes.Count -ne 0) {
+        throw "Completed viewer cleanup was not treated as a no-op: $($completedRerunOutput -join ' | ')"
+    }
+
     & $module { Reset-MockViewerGraphState }
     $global:viewerResourceGroupExists = $false
     $global:viewerRoleListCalls = 0
