@@ -43,7 +43,7 @@ param(
     [switch]$AuthorizeViewerFederation,
     [switch]$BillingConfirmed,
     [switch]$UseDeviceCode,
-    [ValidateRange(1, 5)][int]$DeviceCodeMaxAttempts = 2,
+    [ValidateRange(1, 5)][int]$DeviceCodeMaxAttempts = 3,
     [ValidateRange(30, 3600)][int]$GraphClientTimeoutSeconds = 600,
     [switch]$SkipAzdEnvironmentSync,
     [string]$OwnershipManifestPath
@@ -276,7 +276,7 @@ function Test-GraphContext {
 function Test-IsDeviceCodeTimeoutError {
     param([Parameter(Mandatory)]$ErrorRecord)
 
-    return [string]$ErrorRecord.Exception.Message -match 'Authentication timed out after 120 seconds due to inactivity'
+    return [string]$ErrorRecord.Exception.Message -match 'Authentication timed out after \d+ seconds? due to inactivity'
 }
 
 $context = Get-MgContext
@@ -298,6 +298,7 @@ if (!(Test-GraphContext -Context $context -RequiredTenantId $TenantId -RequiredS
         Write-Host '  1. Open https://login.microsoft.com/device in a browser.'
         Write-Host '  2. Enter the displayed code and sign in with the authorized tenant administrator.'
         Write-Host '  3. Complete the prompt within 120 seconds; azd up waits for the result.'
+        Write-Host "     A timed-out code is reissued automatically up to $DeviceCodeMaxAttempts times."
         Write-Host ''
 
         for ($attempt = 1; $attempt -le $DeviceCodeMaxAttempts; $attempt++) {

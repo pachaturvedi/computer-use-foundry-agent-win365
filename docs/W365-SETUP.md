@@ -252,8 +252,10 @@ For repeatable creates without `-PoolId`, store reusable pool settings in the
 when the corresponding argument is omitted.
 
 Use `-UseDeviceCode` in terminals where WAM cannot obtain a parent window. The
-scripts display the Microsoft device-login URL and retry a timed-out prompt
-once by default.
+scripts display the Microsoft device-login URL. Microsoft Graph enforces its
+own device-code inactivity timeout and it cannot be extended, so a timed-out
+code is reissued automatically for up to three sign-in attempts. Use
+`-DeviceCodeMaxAttempts` to change that.
 
 ### Discover and save a pool profile
 

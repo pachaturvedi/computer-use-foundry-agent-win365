@@ -23,7 +23,7 @@ param(
     [string]$OutputPath,
     [guid]$TenantId = [guid]::Empty,
     [switch]$UseDeviceCode,
-    [ValidateRange(1, 5)][int]$DeviceCodeMaxAttempts = 2,
+    [ValidateRange(1, 5)][int]$DeviceCodeMaxAttempts = 3,
     [ValidateRange(30, 3600)][int]$GraphClientTimeoutSeconds = 600
 )
 
@@ -88,7 +88,7 @@ function Test-IsDeviceCodeTimeoutError {
     param([Parameter(Mandatory)]$ErrorRecord)
 
     $message = [string]$ErrorRecord.Exception.Message
-    return $message -match 'Authentication timed out after 120 seconds due to inactivity'
+    return $message -match 'Authentication timed out after \d+ seconds? due to inactivity'
 }
 
 function Connect-GraphWithRetries {
