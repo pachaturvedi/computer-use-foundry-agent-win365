@@ -696,6 +696,11 @@ Supported values are `summary`, `verbose`, and `debug`. PowerShell scripts also
 support `-Verbose` and `-Debug`. Secret, token, password, assertion,
 certificate, and private session values remain redacted.
 
+The default `summary` level hides successful `azd provision --preview` resource
+tables while retaining the preview step, command, and result. Set
+`SAMPLE_LOG_LEVEL` to `verbose` or `debug` to display the full Foundry, state,
+and viewer preview tables. Failed previews always print their captured output.
+
 ### Rollback
 
 Rollback means republishing a previously accepted code/configuration state as a
