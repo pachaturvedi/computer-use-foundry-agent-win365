@@ -392,10 +392,31 @@ if ($w365StillEnabled) {
             [string]$environmentValues['VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID']
         }
         if ([string]::IsNullOrWhiteSpace($resolvedResourceId)) {
-            # Reuse the managed environment already chosen for this azd environment so a
-            # repeated azd up does not re-ask. Validation below still rejects a stale ID.
-            $resolvedResourceId = [string]$environmentValues['VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID']
+            # A recorded selection can be lost if the azd environment file is regenerated.
+            # Recover it from the viewer that is already deployed so a repeated azd up does
+            # not re-ask. Validation below still rejects a stale or malformed ID.
+            $deployedPrefix = [string]$environmentValues['RESOURCE_PREFIX']
+            if ([string]::IsNullOrWhiteSpace($deployedPrefix)) {
+                $deployedPrefix = $Environment
+            }
+            $deployedGroup = [string]$environmentValues['AZURE_RESOURCE_GROUP']
+            if ([string]::IsNullOrWhiteSpace($deployedGroup)) {
+                $deployedGroup = "$deployedPrefix-rg"
+            }
+
+            $deployedEnvironmentId = (& az resource show `
+                    --resource-group $deployedGroup `
+                    --name "$deployedPrefix-viewer" `
+                    --resource-type 'Microsoft.App/containerApps' `
+                    --query 'properties.managedEnvironmentId' `
+                    --output tsv 2>$null | Out-String).Trim()
+            if ($LASTEXITCODE -eq 0 -and ![string]::IsNullOrWhiteSpace($deployedEnvironmentId)) {
+                Write-Host "Reusing the managed environment of the deployed viewer '$deployedPrefix-viewer'."
+                $resolvedResourceId = $deployedEnvironmentId
+            }
+            $global:LASTEXITCODE = 0
         }
+
         if ([string]::IsNullOrWhiteSpace($resolvedResourceId)) {
             $subscriptionId = [guid]::Empty
             if (![guid]::TryParse([string]$environmentValues['AZURE_SUBSCRIPTION_ID'], [ref]$subscriptionId) -or
