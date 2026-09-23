@@ -76,8 +76,7 @@ $trackedEnvironmentVariables = @(
     'SAMPLE_LOG_LEVEL',
     'TEST_AZ_BEHAVIOR',
     'TEST_CERTIFICATE_INITIALIZATION_FAILURE',
-    'TEST_CERTIFICATE_REGISTRATION_FAILURE',
-    'TEST_AZ_ROLE_DELETE_FAILURE'
+    'TEST_CERTIFICATE_REGISTRATION_FAILURE'
 )
 $savedEnvironment = @{}
 foreach ($name in $trackedEnvironmentVariables) {
@@ -110,17 +109,15 @@ function az {
     }
     if ($arguments[0] -eq 'role' -and $arguments[1] -eq 'assignment' -and $arguments[2] -eq 'create') {
         if ($env:TEST_ORDER_PATH) { Add-Content -LiteralPath $env:TEST_ORDER_PATH -Value 'certificate-role-acquire' }
-        return '/subscriptions/99999999-9999-9999-9999-999999999999/providers/Microsoft.Authorization/roleAssignments/temporary'
+        return '/subscriptions/99999999-9999-9999-9999-999999999999/providers/Microsoft.Authorization/roleAssignments/certificates-officer'
     }
     if ($arguments[0] -eq 'keyvault' -and $arguments[1] -eq 'certificate' -and $arguments[2] -eq 'list') {
         return ''
     }
+    # Certificates Officer access is permanent. This branch exists only so assertions can prove the
+    # orchestration never revokes it.
     if ($arguments[0] -eq 'role' -and $arguments[1] -eq 'assignment' -and $arguments[2] -eq 'delete') {
         if ($env:TEST_ORDER_PATH) { Add-Content -LiteralPath $env:TEST_ORDER_PATH -Value 'certificate-role-release' }
-        if ($env:TEST_AZ_ROLE_DELETE_FAILURE -eq 'true') {
-            $global:LASTEXITCODE = 1
-            return ''
-        }
         return
     }
     throw "Unexpected az call: $($arguments -join ' ')"
@@ -336,10 +333,10 @@ Add-Content -LiteralPath $environmentPath -Value @(
 param(
     [string]$Environment,
     [switch]$ConfirmResourceChanges,
-    [psobject]$CertificateOfficerLease
+    [psobject]$CertificateOfficerAccess
 )
 if ($env:TEST_ORDER_PATH) { Add-Content -LiteralPath $env:TEST_ORDER_PATH -Value 'certificate-initialize' }
-if ($null -eq $CertificateOfficerLease) { throw 'Certificate officer lease was not supplied.' }
+if ($null -eq $CertificateOfficerAccess) { throw 'Certificate officer access was not supplied.' }
 if ($env:TEST_CERTIFICATE_INITIALIZATION_FAILURE -eq 'true') {
     throw 'Simulated certificate initialization failure.'
 }
@@ -636,16 +633,15 @@ throw 'Hosted agent redeployment failed.'
         'certificate-register',
         'phase-two-finalize',
         'viewer-bootstrap',
-        'w365-setup',
-        'certificate-role-release'
+        'w365-setup'
     )
     for ($index = 0; $index -lt $expectedOrder.Count; $index++) {
         if ($order[$index] -ne $expectedOrder[$index]) {
             throw "Fresh certificate-mode azd up ordering was incorrect at step $index."
         }
     }
-    if (@($order | Where-Object { $_ -eq 'certificate-role-release' }).Count -ne 1) {
-        throw 'The temporary certificate officer lease was not released exactly once.'
+    if ('certificate-role-release' -in $order) {
+        throw 'Certificates Officer access was revoked; it must be permanent so later runs can read the certificate.'
     }
 
     foreach ($failureStage in @('initialization', 'registration')) {
@@ -677,61 +673,82 @@ throw 'Hosted agent redeployment failed.'
         if (!$certificateFailureRejected -or
             'phase-two-finalize' -in $failureOrder -or
             'viewer-bootstrap' -in $failureOrder -or
-            'w365-setup' -in $failureOrder -or
-            'certificate-role-release' -notin $failureOrder) {
-            throw "Certificate $failureStage failure did not stop and clean up before final RBAC, viewer, and W365 setup."
+            'w365-setup' -in $failureOrder) {
+            throw "Certificate $failureStage failure did not stop before final RBAC, viewer, and W365 setup."
+        }
+        if ('certificate-role-release' -in $failureOrder) {
+            throw "Certificate $failureStage failure revoked permanent Certificates Officer access."
         }
     }
     $env:TEST_CERTIFICATE_INITIALIZATION_FAILURE = ''
     $env:TEST_CERTIFICATE_REGISTRATION_FAILURE = ''
 
-    foreach ($roleDeleteFails in @($false, $true)) {
-        Reset-Calls
-        Write-TestEnvironment -Complete:$false -OmitDeploymentFlags
-        (Get-Content -LiteralPath $environmentPath) -replace
-            'W365_BLUEPRINT_CREDENTIAL_MODE="client_secret"',
-            'W365_BLUEPRINT_CREDENTIAL_MODE="key_vault_certificate"' |
-            Set-Content -LiteralPath $environmentPath
-        $env:ENABLE_W365 = ''
-        $env:W365_ENABLED = 'false'
-        $env:TEST_AZ_ROLE_DELETE_FAILURE = $roleDeleteFails.ToString().ToLowerInvariant()
-        $postCertificateError = $null
-        try {
-            & $scriptPath `
-                -RepositoryRoot $tempRoot `
-                -PhaseTwoPreparationScriptPath $mockPhaseTwoPath `
-                -CertificateInitializationScriptPath $mockCertificateInitializationPath `
-                -CertificateRegistrationScriptPath $mockCertificateRegistrationPath `
-                -W365SetupScriptPath $failingW365Path `
-                -ViewerBootstrapScriptPath $mockViewerPath `
-                -ViewerSecretsScriptPath $mockViewerSecretsPath
-        }
-        catch {
-            $postCertificateError = $_
-        }
-        $postCertificateOrder = @(Get-Content -LiteralPath $orderPath)
-        if ($null -eq $postCertificateError) {
-            throw 'Postup hid a failure that occurred after blueprint certificate provisioning.'
-        }
-        if ('certificate-role-release' -notin $postCertificateOrder) {
-            throw 'The temporary certificate officer lease was not released after a post-certificate failure.'
-        }
-        $postCertificateException = $postCertificateError.Exception
-        if ($roleDeleteFails) {
-            if ($postCertificateException -isnot [AggregateException] -or
-                @($postCertificateException.InnerExceptions |
-                    Where-Object { $_.Message -match 'Simulated W365 setup failure\.' }).Count -ne 1 -or
-                @($postCertificateException.InnerExceptions |
-                    Where-Object { $_.Message -match 'revoke the temporary Key Vault Certificates Officer' }).Count -ne 1) {
-                throw 'A post-certificate failure with a failing revocation did not retain both errors.'
-            }
-        }
-        elseif ($postCertificateException -is [AggregateException] -or
-            $postCertificateException.Message -notmatch 'Simulated W365 setup failure\.') {
-            throw 'A post-certificate failure did not surface the primary error.'
-        }
+    Reset-Calls
+    Write-TestEnvironment -Complete:$false -OmitDeploymentFlags
+    (Get-Content -LiteralPath $environmentPath) -replace
+        'W365_BLUEPRINT_CREDENTIAL_MODE="client_secret"',
+        'W365_BLUEPRINT_CREDENTIAL_MODE="key_vault_certificate"' |
+        Set-Content -LiteralPath $environmentPath
+    $env:ENABLE_W365 = ''
+    $env:W365_ENABLED = 'false'
+    $postCertificateError = $null
+    try {
+        & $scriptPath `
+            -RepositoryRoot $tempRoot `
+            -PhaseTwoPreparationScriptPath $mockPhaseTwoPath `
+            -CertificateInitializationScriptPath $mockCertificateInitializationPath `
+            -CertificateRegistrationScriptPath $mockCertificateRegistrationPath `
+            -W365SetupScriptPath $failingW365Path `
+            -ViewerBootstrapScriptPath $mockViewerPath `
+            -ViewerSecretsScriptPath $mockViewerSecretsPath
     }
-    $env:TEST_AZ_ROLE_DELETE_FAILURE = ''
+    catch {
+        $postCertificateError = $_
+    }
+    $postCertificateOrder = @(Get-Content -LiteralPath $orderPath)
+    if ($null -eq $postCertificateError) {
+        throw 'Postup hid a failure that occurred after blueprint certificate provisioning.'
+    }
+    if ('certificate-role-release' -in $postCertificateOrder) {
+        throw 'A post-certificate failure revoked permanent Certificates Officer access.'
+    }
+    $postCertificateException = $postCertificateError.Exception
+    if ($postCertificateException -is [AggregateException] -or
+        $postCertificateException.Message -notmatch 'Simulated W365 setup failure\.') {
+        throw 'A post-certificate failure did not surface the primary error.'
+    }
+
+    # Regression: an environment where W365 is already enabled still acquires Certificates Officer
+    # access. The certificate is read by the hosted-agent deployment preflight on every run, so
+    # gating acquisition on first-enable left repeat runs unauthorized and the resulting 403 was
+    # misreported as a missing certificate.
+    Reset-Calls
+    Write-TestEnvironment -Complete:$true
+    Write-CompleteManifest
+    (Get-Content -LiteralPath $environmentPath) -replace
+        'W365_BLUEPRINT_CREDENTIAL_MODE="client_secret"',
+        'W365_BLUEPRINT_CREDENTIAL_MODE="key_vault_certificate"' |
+        Set-Content -LiteralPath $environmentPath
+    $env:ENABLE_W365 = ''
+    $env:W365_ENABLED = 'true'
+    & $scriptPath `
+        -RepositoryRoot $tempRoot `
+        -PhaseTwoPreparationScriptPath $mockPhaseTwoPath `
+        -CertificateInitializationScriptPath $mockCertificateInitializationPath `
+        -CertificateRegistrationScriptPath $mockCertificateRegistrationPath `
+        -W365SetupScriptPath $mockW365Path `
+        -ViewerBootstrapScriptPath $mockViewerPath `
+        -ViewerSecretsScriptPath $mockViewerSecretsPath
+    $repeatOrder = @(Get-Content -LiteralPath $orderPath)
+    if ('certificate-role-acquire' -notin $repeatOrder) {
+        throw 'An already-enabled certificate-mode environment did not ensure Certificates Officer access.'
+    }
+    if ('certificate-initialize' -in $repeatOrder) {
+        throw 'An already-enabled environment re-ran certificate provisioning instead of only ensuring access.'
+    }
+    if ('certificate-role-release' -in $repeatOrder) {
+        throw 'An already-enabled environment revoked permanent Certificates Officer access.'
+    }
 
     Reset-Calls
     Write-TestEnvironment -Complete:$false

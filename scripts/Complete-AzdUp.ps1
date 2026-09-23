@@ -287,7 +287,44 @@ if ($credentialMode -notin @('client_secret', 'managed_identity_federation', 'ke
     throw "Unsupported W365_BLUEPRINT_CREDENTIAL_MODE '$credentialMode'."
 }
 $credentialAccessFinalized = $false
-$certificateOfficerLease = $null
+$certificateOfficerAccess = $null
+# Subscription Owner grants no Key Vault data-plane access on an RBAC-enabled vault, and the
+# certificate is read by W365 readiness verification and by the hosted-agent deployment preflight
+# on every run, not only on the run that first enables W365. Acquire permanent Certificates Officer
+# access here, outside the first-enable block below, so a repeated `azd up` on an already-enabled
+# environment does not reach those reads unauthorized.
+if ($credentialMode -eq 'key_vault_certificate' -and $hostedAgentPossible) {
+    $certificateVaultNameForAccess = [string]$currentValues['W365_KEY_VAULT_NAME']
+    if ([string]::IsNullOrWhiteSpace($certificateVaultNameForAccess)) {
+        $certificateVaultNameForAccess = [string]$currentValues['VIEWER_KEY_VAULT_NAME']
+    }
+    if (![string]::IsNullOrWhiteSpace($certificateVaultNameForAccess)) {
+        $certificateSubscriptionId = [guid]$currentValues['AZURE_SUBSCRIPTION_ID']
+        $certificateVaultId = (& az keyvault show `
+            --subscription $certificateSubscriptionId `
+            --name $certificateVaultNameForAccess `
+            --query id `
+            --output tsv | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($certificateVaultId)) {
+            throw "Unable to resolve Key Vault '$certificateVaultNameForAccess' for certificate access."
+        }
+        $certificateOperatorObjectId = (& az ad signed-in-user show --query id --output tsv | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($certificateOperatorObjectId)) {
+            throw 'Unable to resolve the signed-in Azure operator for certificate access.'
+        }
+
+        Write-SampleVerbose -Component 'postup' -Message 'Ensuring permanent Key Vault Certificates Officer access for certificate reads.'
+        $certificateOfficerAccess = Grant-W365CertificateOfficerAccess `
+            -SubscriptionId $certificateSubscriptionId `
+            -VaultName $certificateVaultNameForAccess `
+            -VaultId $certificateVaultId `
+            -OperatorObjectId ([guid]$certificateOperatorObjectId) `
+            -ConfirmResourceChanges
+        if ($certificateOfficerAccess.AcquisitionSkipped) {
+            throw 'Key Vault Certificates Officer access was not acquired, so certificate operations cannot continue.'
+        }
+    }
+}
 if ($enableW365 -and !$w365AlreadyEnabled -and $credentialMode -eq 'key_vault_certificate') {
     $certificateTenantId = [guid]::Empty
     $certificateBlueprintId = [guid]::Empty
@@ -302,27 +339,11 @@ if ($enableW365 -and !$w365AlreadyEnabled -and $credentialMode -eq 'key_vault_ce
 
     $certificateSubscriptionId = [guid]$currentValues['AZURE_SUBSCRIPTION_ID']
     $certificateVaultName = [string]$currentValues['W365_KEY_VAULT_NAME']
-    $certificateVaultId = (& az keyvault show `
-        --subscription $certificateSubscriptionId `
-        --name $certificateVaultName `
-        --query id `
-        --output tsv | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($certificateVaultId)) {
-        throw "Unable to resolve Key Vault '$certificateVaultName' for certificate provisioning."
+    if ([string]::IsNullOrWhiteSpace($certificateVaultName)) {
+        throw 'State provisioning did not produce W365_KEY_VAULT_NAME before certificate provisioning.'
     }
-    $certificateOperatorObjectId = (& az ad signed-in-user show --query id --output tsv | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($certificateOperatorObjectId)) {
-        throw 'Unable to resolve the signed-in Azure operator for certificate provisioning.'
-    }
-
-    $certificateOfficerLease = Enter-W365CertificateOfficerLease `
-        -SubscriptionId $certificateSubscriptionId `
-        -VaultName $certificateVaultName `
-        -VaultId $certificateVaultId `
-        -OperatorObjectId ([guid]$certificateOperatorObjectId) `
-        -ConfirmResourceChanges
-    if ($certificateOfficerLease.AcquisitionSkipped) {
-        throw 'Temporary Key Vault Certificates Officer access was not acquired, so certificate provisioning cannot continue.'
+    if ($null -eq $certificateOfficerAccess) {
+        throw 'Key Vault Certificates Officer access was not acquired, so certificate provisioning cannot continue.'
     }
     $certificatePrimaryError = $null
     try {
@@ -330,7 +351,7 @@ if ($enableW365 -and !$w365AlreadyEnabled -and $credentialMode -eq 'key_vault_ce
         $certificateResults = @(& $CertificateInitializationScriptPath `
             -Environment $environmentName `
             -ConfirmResourceChanges `
-            -CertificateOfficerLease $certificateOfficerLease `
+            -CertificateOfficerAccess $certificateOfficerAccess `
             -Confirm:$false)
         $certificate = $certificateResults | Where-Object {
             $_ -is [psobject] -and
@@ -367,20 +388,16 @@ if ($enableW365 -and !$w365AlreadyEnabled -and $credentialMode -eq 'key_vault_ce
         $certificatePrimaryError = $_
     }
     if ($null -ne $certificatePrimaryError) {
-        # Release immediately on failure. On success the lease is deliberately retained: W365 setup
-        # readiness verification and the hosted-agent deployment preflight later in this run read the
-        # certificate through the Key Vault data plane as this same operator.
-        $failedCertificateLease = $certificateOfficerLease
-        $certificateOfficerLease = $null
-        Complete-W365CertificateOfficerLease `
-            -Lease $failedCertificateLease `
-            -PrimaryError $certificatePrimaryError
+        # Certificates Officer access is permanent and intentionally retained on failure: the next
+        # run reuses it instead of re-granting, and the certificate reads performed later in this
+        # run and on every subsequent run depend on it.
+        throw $certificatePrimaryError
     }
 }
 
-# The temporary Certificates Officer lease acquired above must stay valid for the certificate reads
-# performed by W365 setup readiness verification and the hosted-agent deployment preflight below.
-# It is released once, in the trailing finally, whether or not the remaining steps succeed.
+# Permanent Certificates Officer access acquired above covers the certificate reads performed by
+# W365 setup readiness verification and the hosted-agent deployment preflight below, on this run
+# and on every later run. It is never revoked, so repeated azd up remains idempotent.
 $postCertificatePrimaryError = $null
 try {
 
@@ -740,14 +757,7 @@ catch {
     $postCertificatePrimaryError = $_
 }
 finally {
-    if ($null -ne $certificateOfficerLease) {
-        $completedCertificateLease = $certificateOfficerLease
-        $certificateOfficerLease = $null
-        Complete-W365CertificateOfficerLease `
-            -Lease $completedCertificateLease `
-            -PrimaryError $postCertificatePrimaryError
-    }
-    elseif ($null -ne $postCertificatePrimaryError) {
+    if ($null -ne $postCertificatePrimaryError) {
         throw $postCertificatePrimaryError
     }
 }

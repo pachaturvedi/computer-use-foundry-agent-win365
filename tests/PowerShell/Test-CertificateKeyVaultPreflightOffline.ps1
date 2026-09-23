@@ -101,12 +101,25 @@ $baseAzdValues = @{
 }
 
 function New-AzMock {
-    param([bool]$GrantCertificateRole, [bool]$GrantCryptoRole)
+    param(
+        [bool]$GrantCertificateRole,
+        [bool]$GrantCryptoRole,
+        [ValidateSet('none', 'forbidden', 'missing')][string]$CertificateShowFailure = 'none')
 
     return {
         $global:LASTEXITCODE = 0
         $callArguments = @($args)
         if ($callArguments[0] -eq 'keyvault' -and $callArguments[1] -eq 'certificate' -and $callArguments[2] -eq 'show') {
+            switch ($CertificateShowFailure) {
+                'forbidden' {
+                    $global:LASTEXITCODE = 1
+                    return "ERROR: (Forbidden) Caller is not authorized to perform action on resource.`nCode: Forbidden"
+                }
+                'missing' {
+                    $global:LASTEXITCODE = 1
+                    return "ERROR: (CertificateNotFound) Certificate not found: $certificateName`nCode: CertificateNotFound"
+                }
+            }
             return "$vaultId/certificates/$certificateName"
         }
         if ($callArguments[0] -eq 'keyvault' -and $callArguments[1] -eq 'show') {
@@ -170,4 +183,37 @@ Invoke-IsolatedCertificatePreflight -AzdValues $clientSecretValues -AzMock {
     throw "Test az mock: az should not be called when mode is not key_vault_certificate."
 }
 
-Write-Output 'Offline certificate Key Vault preflight: fail-closed RBAC verification, --assignee-object-id usage, and mode gating passed.'
+# Case 5: certificate read is denied -> the operator must be told about the RBAC gap, not told the
+# certificate is missing. Conflating 403 with 404 sends the operator to re-run certificate creation,
+# which cannot resolve a data-plane authorization failure.
+$threw = $false
+try {
+    Invoke-IsolatedCertificatePreflight -AzdValues $baseAzdValues -AzMock (
+        New-AzMock -GrantCertificateRole $true -GrantCryptoRole $true -CertificateShowFailure 'forbidden')
+}
+catch {
+    $threw = $true
+    if ($_.Exception.Message -notmatch 'not authorized to read certificate' -or
+        $_.Exception.Message -notmatch 'Key Vault Certificates Officer' -or
+        $_.Exception.Message -match 'must contain certificate') {
+        throw "A denied certificate read was not reported as an authorization failure: $($_.Exception.Message)"
+    }
+}
+if (!$threw) { throw 'Expected the preflight to fail closed when the certificate read is denied.' }
+
+# Case 6: certificate genuinely absent -> the operator is still directed to certificate creation.
+$threw = $false
+try {
+    Invoke-IsolatedCertificatePreflight -AzdValues $baseAzdValues -AzMock (
+        New-AzMock -GrantCertificateRole $true -GrantCryptoRole $true -CertificateShowFailure 'missing')
+}
+catch {
+    $threw = $true
+    if ($_.Exception.Message -notmatch 'must contain certificate' -or
+        $_.Exception.Message -match 'not authorized to read certificate') {
+        throw "A missing certificate was not reported as absent: $($_.Exception.Message)"
+    }
+}
+if (!$threw) { throw 'Expected the preflight to fail closed when the certificate is absent.' }
+
+Write-Output 'Offline certificate Key Vault preflight: fail-closed RBAC verification, authorization-versus-absence reporting, --assignee-object-id usage, and mode gating passed.'

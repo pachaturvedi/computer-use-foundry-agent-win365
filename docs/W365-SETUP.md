@@ -243,10 +243,10 @@ pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
 
 This mode uses a self-signed, non-exportable certificate whose private key
 never leaves Key Vault. Create the certificate, then register only its public
-bytes on the blueprint. Prefer `azd up`, which also grants and revokes the
-temporary Key Vault Certificates Officer role the operator needs across these
-steps. Running the staged sequence manually requires you to hold that role
-through the final `Invoke-W365SetupFlow.ps1` readiness check.
+bytes on the blueprint. Prefer `azd up`, which also grants the operator the
+Key Vault Certificates Officer role needed across these steps. Running the
+staged sequence manually requires you to hold that role through the final
+`Invoke-W365SetupFlow.ps1` readiness check.
 
 ```powershell
 azd env set W365_BLUEPRINT_CREDENTIAL_MODE key_vault_certificate `
@@ -294,18 +294,25 @@ acceptance.
 `poolId/<guid>`. `-BillingConfirmed` acknowledges an already approved billing
 plan; it does not activate billing.
 
-During `azd up`, a temporary Key Vault Certificates Officer role is held across
-certificate creation, Graph registration, readiness verification, and the
-agent deployment preflight, because those steps read the certificate through
-the Key Vault data plane as the same operator. RBAC-propagation failures are
-retried with bounded backoff; terminal errors stop immediately. The role is
-revoked once, whether or not the remaining steps succeed, and a failure in
-those steps stays the reported error. If revocation also fails, both errors are
-reported. A revocation-only failure marks the deployment incomplete.
+During `azd up`, the operator is granted the Key Vault Certificates Officer
+role on the blueprint vault, because certificate creation, Graph registration,
+readiness verification, and the agent deployment preflight all read the
+certificate through the Key Vault data plane as that operator. Subscription
+Owner is a control-plane role and grants no Key Vault data-plane access on an
+RBAC-enabled vault, so this assignment is required even for a subscription
+owner.
 
-Rerun `azd up` after correcting the reported cause; certificate creation and
-registration are idempotent. If the output reports residual temporary RBAC,
-remove only the reported role assignment before retrying. Do not delete the
+The grant is permanent and idempotent. Every `azd up` ensures it, including
+runs where `W365_ENABLED` is already `true`, because the deployment preflight
+reads the certificate on every run and not only on the run that creates it. A
+run that already holds the role makes no change. The role is never revoked; it
+is scoped to the vault and is removed with the vault during teardown.
+RBAC-propagation failures are retried with bounded backoff, and the assignment
+is retained if propagation does not complete in time so the next run reuses it.
+Terminal errors stop immediately.
+
+Rerun `azd up` after correcting the reported cause; certificate creation,
+registration, and the role grant are all idempotent. Do not delete the
 certificate or unrelated role assignments.
 
 If setup fails after the certificate is registered but before `W365_ENABLED`
@@ -666,14 +673,12 @@ an environment that used `key_vault_certificate` mode, an administrator with
    matching how `Register-W365BlueprintCertificate.ps1` added it). Do not
    remove `keyCredentials` belonging to any other integration, and do not
    remove an entry you cannot uniquely match to a retired certificate.
-2. Verify no temporary "Key Vault Certificates Officer" assignment remains.
-   Fresh orchestration holds its assignment through exact readiness
-   verification and revokes it in an outer `finally`; standalone initialization
-   also revokes an assignment it owns. If cleanup reported a failure or an
-   older release left one behind, remove it with `az role
-   assignment delete --assignee-object-id <operator-object-id> --role "Key
-   Vault Certificates Officer" --scope <vault-resource-id>`. Skip this step if the
-   operator already held the role before setup for another reason.
+2. The operator's "Key Vault Certificates Officer" assignment is scoped to the
+   blueprint vault, so deleting the Key Vault (via `azd down`) removes it. If
+   you keep the vault and no longer need certificate access, remove it with
+   `az role assignment delete --assignee-object-id <operator-object-id> --role
+   "Key Vault Certificates Officer" --scope <vault-resource-id>`. Skip this step
+   if the operator already held the role before setup for another reason.
 3. Deleting the Key Vault (via `azd down`) removes the certificate object and
    its backing key; no separate Key Vault cleanup is required for those.
 
