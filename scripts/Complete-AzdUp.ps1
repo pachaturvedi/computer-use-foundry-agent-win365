@@ -88,39 +88,80 @@ function Resolve-PostUpFlag {
     return $DefaultValue
 }
 
-function Confirm-W365PostUpChanges {
-    if (Test-EnabledValue -Value $env:W365_RESOURCE_CHANGES_CONFIRMED) {
+function Save-PostUpApproval {
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string]$EnvironmentName
+    )
+
+    & azd env set $Name true --environment $EnvironmentName
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to record $Name in azd environment '$EnvironmentName'."
+    }
+    [Environment]::SetEnvironmentVariable($Name, 'true', 'Process')
+    Write-Host "Recorded $Name=true for azd environment '$EnvironmentName'. Revoke it with: azd env set $Name false --environment `"$EnvironmentName`""
+}
+
+function Confirm-PostUpApproval {
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string]$EnvironmentName,
+        [Parameter(Mandatory)][string[]]$Notice,
+        [Parameter(Mandatory)][string]$Prompt,
+        [Parameter(Mandatory)][string]$NonInteractiveMessage,
+        [Parameter(Mandatory)][string]$DeclinedMessage
+    )
+
+    if (Test-EnabledValue -Value ([Environment]::GetEnvironmentVariable($Name, 'Process'))) {
         return
     }
     if (Test-EnabledValue -Value $env:AZD_NON_INTERACTIVE) {
-        throw 'W365 resource changes require interactive approval. For protected automation, set W365_RESOURCE_CHANGES_CONFIRMED=true only for this process.'
+        throw $NonInteractiveMessage
     }
 
     Write-Host ''
-    Write-Host 'Windows 365 enablement can create or update an Entra agent user,'
-    Write-Host 'a billable Cloud PC agent pool, its assignment, and Graph consent.'
-    $answer = Read-Host 'Type YES to continue'
+    foreach ($line in $Notice) {
+        Write-Host $line
+    }
+    $answer = Read-Host $Prompt
+    if ($answer -ceq 'ALWAYS') {
+        Save-PostUpApproval -Name $Name -EnvironmentName $EnvironmentName
+        return
+    }
     if ($answer -cne 'YES') {
-        throw 'Windows 365 resource changes were not approved.'
+        throw $DeclinedMessage
     }
 }
 
-function Confirm-ViewerLiveActivation {
-    if (Test-EnabledValue -Value $env:VIEWER_LIVE_CHANGES_CONFIRMED) {
-        return
-    }
-    if (Test-EnabledValue -Value $env:AZD_NON_INTERACTIVE) {
-        throw 'Live viewer activation requires interaction. For protected automation, set VIEWER_LIVE_CHANGES_CONFIRMED=true only for this process.'
-    }
+function Confirm-W365PostUpChanges {
+    param([Parameter(Mandatory)][string]$EnvironmentName)
 
-    Write-Host ''
-    Write-Host 'The viewer hook will create or update one Entra OIDC application,'
-    Write-Host 'store its OIDC secret and grant its managed identity the selected blueprint credential access,'
-    Write-Host 'and enable the authenticated ACA live-view and take-control routes.'
-    $answer = Read-Host 'Type YES to configure the live viewer'
-    if ($answer -cne 'YES') {
-        throw 'Live viewer activation was not approved.'
-    }
+    Confirm-PostUpApproval `
+        -Name 'W365_RESOURCE_CHANGES_CONFIRMED' `
+        -EnvironmentName $EnvironmentName `
+        -Notice @(
+            'Windows 365 enablement can create or update an Entra agent user,'
+            'a billable Cloud PC agent pool, its assignment, and Graph consent.'
+        ) `
+        -Prompt 'Type YES to continue, or ALWAYS to approve every run for this environment' `
+        -NonInteractiveMessage 'W365 resource changes require interactive approval. For protected automation, set W365_RESOURCE_CHANGES_CONFIRMED=true only for this process.' `
+        -DeclinedMessage 'Windows 365 resource changes were not approved.'
+}
+
+function Confirm-ViewerLiveActivation {
+    param([Parameter(Mandatory)][string]$EnvironmentName)
+
+    Confirm-PostUpApproval `
+        -Name 'VIEWER_LIVE_CHANGES_CONFIRMED' `
+        -EnvironmentName $EnvironmentName `
+        -Notice @(
+            'The viewer hook will create or update one Entra OIDC application,'
+            'store its OIDC secret and grant its managed identity the selected blueprint credential access,'
+            'and enable the authenticated ACA live-view and take-control routes.'
+        ) `
+        -Prompt 'Type YES to configure the live viewer, or ALWAYS to approve every run for this environment' `
+        -NonInteractiveMessage 'Live viewer activation requires interaction. For protected automation, set VIEWER_LIVE_CHANGES_CONFIRMED=true only for this process.' `
+        -DeclinedMessage 'Live viewer activation was not approved.'
 }
 
 function Show-PostUpPlan {
@@ -195,7 +236,7 @@ Show-PostUpPlan `
     -ViewerLiveEnabled (Test-EnabledValue -Value ([string]$currentValues['VIEWER_LIVE_ENABLED']))
 
 if ($enableW365 -and !$w365AlreadyEnabled) {
-    Confirm-W365PostUpChanges
+    Confirm-W365PostUpChanges -EnvironmentName $environmentName
     Write-SampleVerbose -Component 'postup' -Message 'Resolving Windows 365 and ACA choices after the Foundry bootstrap is available.'
     & $ProvisioningProfileScriptPath -Environment $environmentName -RepositoryRoot $RepositoryRoot
     if (!$?) {
@@ -506,7 +547,7 @@ if (![string]::IsNullOrWhiteSpace($env:AZURE_ENV_NAME)) {
         else {
             Write-SampleVerbose -Component 'postup' -Message 'All live viewer prerequisites are present; requesting activation approval.'
             Write-SampleDebug -Component 'postup' -Message "Environment=$environmentName; viewerUrl=$viewerUrlAfter."
-            Confirm-ViewerLiveActivation
+            Confirm-ViewerLiveActivation -EnvironmentName $environmentName
             & $ViewerActivationScriptPath -Environment $environmentName
             if (!$?) {
                 throw 'Live viewer activation failed.'

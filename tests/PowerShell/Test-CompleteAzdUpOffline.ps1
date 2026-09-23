@@ -30,6 +30,7 @@ $mockViewerSecretsPath = Join-Path $tempRoot 'Mock-ViewerSecrets.ps1'
 $mockViewerActivationPath = Join-Path $tempRoot 'Mock-ViewerActivation.ps1'
 $mockCertificateInitializationPath = Join-Path $tempRoot 'Mock-CertificateInitialization.ps1'
 $mockCertificateRegistrationPath = Join-Path $tempRoot 'Mock-CertificateRegistration.ps1'
+$mockProvisioningProfilePath = Join-Path $tempRoot 'Mock-ProvisioningProfile.ps1'
 
 $trackedEnvironmentVariables = @(
     'ENABLE_W365',
@@ -110,6 +111,17 @@ function az {
         return
     }
     throw "Unexpected az call: $($arguments -join ' ')"
+}
+
+$global:azdEnvSetCalls = [System.Collections.Generic.List[string]]::new()
+function azd {
+    $arguments = @($args)
+    $global:LASTEXITCODE = 0
+    if ($arguments[0] -eq 'env' -and $arguments[1] -eq 'set') {
+        $global:azdEnvSetCalls.Add("$($arguments[2])=$($arguments[3])")
+        return
+    }
+    throw "Unexpected azd call: $($arguments -join ' ')"
 }
 
 function Reset-Calls {
@@ -318,6 +330,22 @@ param([string]$Environment)
 } | ConvertTo-Json | Set-Content -LiteralPath $env:TEST_VIEWER_ACTIVATION_CALLS_PATH
 $environmentPath = Join-Path $env:TEST_REPOSITORY_ROOT ".azure\$Environment\.env"
 Add-Content -LiteralPath $environmentPath -Value 'VIEWER_LIVE_ENABLED="true"'
+'@
+    Set-Content -LiteralPath $mockProvisioningProfilePath -Value @'
+param(
+    [string]$Environment,
+    [string]$RepositoryRoot
+)
+# The approval regression exercises the interactive confirmation gate only. The real
+# resolver would prompt for W365 and ACA choices and has its own suite, so this mock
+# just persists choices that were already made.
+$environmentPath = Join-Path $env:TEST_REPOSITORY_ROOT ".azure\$Environment\.env"
+$lines = @(Get-Content -LiteralPath $environmentPath)
+foreach ($pair in @('ENABLE_W365="true"', 'VIEWER_HOSTING_MODE="new"')) {
+    $key = $pair.Split('=')[0]
+    $lines = @($lines | Where-Object { $_ -notmatch "^$key=" }) + $pair
+}
+Set-Content -LiteralPath $environmentPath -Value $lines
 '@
     Set-Content -LiteralPath $mockW365Path -Value @'
 param(
@@ -645,6 +673,50 @@ throw 'Simulated W365 setup failure.'
     if (!$approvalFailed -or (Test-Path -LiteralPath $w365CallsPath)) {
         throw 'Noninteractive W365 postup did not fail before setup when approval was absent.'
     }
+
+    foreach ($approvalAnswer in @('YES', 'ALWAYS', 'no')) {
+        Reset-Calls
+        Write-TestEnvironment -Complete:$false
+        $env:ENABLE_W365 = 'true'
+        $env:W365_ENABLED = 'false'
+        $env:W365_RESOURCE_CHANGES_CONFIRMED = ''
+        $env:AZD_NON_INTERACTIVE = ''
+        $global:azdEnvSetCalls.Clear()
+        $global:testApprovalAnswer = $approvalAnswer
+        function global:Read-Host {
+            param([Parameter(Position = 0)][string]$Prompt)
+
+            return $global:testApprovalAnswer
+        }
+        $declined = $false
+        try {
+            & $scriptPath -RepositoryRoot $tempRoot -ProvisioningProfileScriptPath $mockProvisioningProfilePath -PhaseTwoPreparationScriptPath $mockPhaseTwoPath -W365SetupScriptPath $mockW365Path -ViewerBootstrapScriptPath $mockViewerPath -ViewerSecretsScriptPath $mockViewerSecretsPath
+        }
+        catch {
+            $declined = $true
+        }
+        finally {
+            Remove-Item Function:\global:Read-Host -ErrorAction SilentlyContinue
+        }
+
+        $remembered = $global:azdEnvSetCalls -contains 'W365_RESOURCE_CHANGES_CONFIRMED=true'
+        if ($approvalAnswer -eq 'no') {
+            if (!$declined -or (Test-Path -LiteralPath $w365CallsPath) -or $remembered) {
+                throw 'A declined approval did not fail closed before W365 setup.'
+            }
+            continue
+        }
+        if ($declined -or !(Test-Path -LiteralPath $w365CallsPath)) {
+            throw "Interactive approval '$approvalAnswer' did not continue to W365 setup."
+        }
+        if ($approvalAnswer -eq 'ALWAYS' -and !$remembered) {
+            throw 'ALWAYS did not record the approval in the azd environment.'
+        }
+        if ($approvalAnswer -eq 'YES' -and $remembered) {
+            throw 'A single-run YES approval was persisted to the azd environment.'
+        }
+    }
+    $env:AZD_NON_INTERACTIVE = 'true'
 
     Reset-Calls
     $env:W365_RESOURCE_CHANGES_CONFIRMED = 'true'
