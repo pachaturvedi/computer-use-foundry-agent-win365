@@ -87,7 +87,7 @@ hooks:
   predown:
     windows:
       shell: pwsh
-      run: ./scripts/Remove-W365Resources.ps1 -UseDeviceCode
+      run: ./scripts/Remove-W365Resources.ps1 -UseDeviceCode -ConfirmViewerOnlyCleanup
       interactive: true
       continueOnError: false
   postup:

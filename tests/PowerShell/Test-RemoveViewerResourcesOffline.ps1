@@ -233,20 +233,19 @@ try {
         & "$scriptsRoot\Remove-W365Resources.ps1" -EnvironmentName $envName -EnvironmentFilePath $envFilePath -OwnershipManifestPath (Join-Path $envDir 'w365-ownership.json') -Confirm:$false | Out-Null
     }
     catch {
-        $blockedWithoutApproval = $_.Exception.Message -like '*W365_CLEANUP_CONFIRMED=true*'
+        $blockedWithoutApproval = $_.Exception.Message -like '*-ConfirmViewerOnlyCleanup or W365_CLEANUP_CONFIRMED=true*'
     }
     if (!$blockedWithoutApproval) {
-        throw 'Viewer-only cleanup should fail closed without W365_CLEANUP_CONFIRMED=true.'
+        throw 'Viewer-only cleanup should fail closed without explicit protected approval.'
     }
     $state = Get-MockViewerGraphState
     if ($state.Operations.Count -ne 0 -or $global:viewerRoleDeletes.Count -ne 0) {
         throw 'Viewer-only cleanup mutated Graph or RBAC state before protected approval.'
     }
 
-    [Environment]::SetEnvironmentVariable('W365_CLEANUP_CONFIRMED', 'true', 'Process')
     Write-ViewerManifest -ApplicationDisposition 'created' -CredentialDisposition 'created' -ServicePrincipalDisposition 'created'
     $viewerCleanupOutput = @(
-        & "$scriptsRoot\Remove-W365Resources.ps1" -EnvironmentName $envName -EnvironmentFilePath $envFilePath -OwnershipManifestPath (Join-Path $envDir 'w365-ownership.json') -Confirm:$false
+        & "$scriptsRoot\Remove-W365Resources.ps1" -EnvironmentName $envName -EnvironmentFilePath $envFilePath -OwnershipManifestPath (Join-Path $envDir 'w365-ownership.json') -ConfirmViewerOnlyCleanup -Confirm:$false
     )
     $rbacPlan = "Deleting Azure RBAC role assignment 'Key Vault Secrets User' for principal 'viewer-principal' at scope '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.KeyVault/vaults/w365-vault' (assignment '/subscriptions/sub/providers/Microsoft.Authorization/roleAssignments/viewer')."
     $rbacResult = 'Removed viewer role assignment Key Vault Secrets User.'
