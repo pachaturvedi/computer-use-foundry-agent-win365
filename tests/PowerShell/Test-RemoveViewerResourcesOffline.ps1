@@ -140,12 +140,19 @@ $global:viewerRoleAssignments = @(
     }
 )
 $global:viewerRoleDeletes = [System.Collections.Generic.List[string]]::new()
+$global:viewerResourceGroupExists = $true
+$global:viewerRoleListCalls = 0
 
 function az {
     $arguments = @($args)
     $global:LASTEXITCODE = 0
 
+    if ($arguments[0] -eq 'group' -and $arguments[1] -eq 'exists') {
+        return $global:viewerResourceGroupExists.ToString().ToLowerInvariant()
+    }
+
     if ($arguments[0] -eq 'role' -and $arguments[1] -eq 'assignment' -and $arguments[2] -eq 'list') {
+        $global:viewerRoleListCalls++
         $scope = $arguments[[Array]::IndexOf($arguments, '--scope') + 1]
         $principalId = $arguments[[Array]::IndexOf($arguments, '--assignee-object-id') + 1]
         $query = $arguments[[Array]::IndexOf($arguments, '--query') + 1]
@@ -289,6 +296,26 @@ try {
     }
 
     & $module { Reset-MockViewerGraphState }
+    $global:viewerResourceGroupExists = $false
+    $global:viewerRoleListCalls = 0
+    $global:viewerRoleDeletes.Clear()
+    Write-ViewerManifest -ApplicationDisposition 'created' -CredentialDisposition 'created' -ServicePrincipalDisposition 'created'
+    $missingGroupOutput = @(
+        & "$scriptsRoot\Remove-W365Resources.ps1" -EnvironmentName $envName -EnvironmentFilePath $envFilePath -OwnershipManifestPath (Join-Path $envDir 'w365-ownership.json') -ConfirmViewerOnlyCleanup -Confirm:$false
+    )
+    if ($global:viewerRoleListCalls -ne 0 -or $global:viewerRoleDeletes.Count -ne 0) {
+        throw 'Viewer cleanup queried or deleted child-scope RBAC after Azure confirmed the resource group was absent.'
+    }
+    if (@($missingGroupOutput | Where-Object { $_ -match '^Viewer role assignment .+ was already absent\.$' }).Count -ne 2) {
+        throw "Viewer cleanup did not treat role assignments under the deleted resource group as absent: $($missingGroupOutput -join ' | ')"
+    }
+    $viewerManifest = Get-Content -LiteralPath $viewerManifestPath -Raw | ConvertFrom-Json -AsHashtable
+    if ($viewerManifest.cleanup.status -ne 'completed') {
+        throw 'Viewer cleanup did not complete after the Azure resource group was already absent.'
+    }
+
+    & $module { Reset-MockViewerGraphState }
+    $global:viewerResourceGroupExists = $true
     $global:viewerRoleAssignments = @(
         [ordered]@{
             id = '/subscriptions/sub/providers/Microsoft.Authorization/roleAssignments/operator'
@@ -327,6 +354,6 @@ finally {
         Remove-Item -LiteralPath $viewerManifestDirectory -Recurse -Force
     }
 
-    Remove-Variable -Name viewerRoleAssignments, viewerRoleDeletes -Scope Global -ErrorAction SilentlyContinue
+    Remove-Variable -Name viewerRoleAssignments, viewerRoleDeletes, viewerResourceGroupExists, viewerRoleListCalls -Scope Global -ErrorAction SilentlyContinue
     Remove-Module Microsoft.Graph.Authentication
 }

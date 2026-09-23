@@ -303,15 +303,35 @@ function Get-CurrentViewerRoleAssignmentId {
         [Parameter(Mandatory)][string]$SubscriptionId
     )
 
+    $scope = [string]$Entry.scope
+    $scopeMatch = [regex]::Match(
+        $scope,
+        '^/subscriptions/(?<subscriptionId>[^/]+)/resourceGroups/(?<resourceGroupName>[^/]+)(?:/|$)',
+        [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    if ($scopeMatch.Success -and
+        $scopeMatch.Groups['subscriptionId'].Value -eq $SubscriptionId) {
+        $resourceGroupName = $scopeMatch.Groups['resourceGroupName'].Value
+        $resourceGroupExists = (& az group exists `
+            --subscription $SubscriptionId `
+            --name $resourceGroupName `
+            --output tsv 2>$null | Out-String).Trim().ToLowerInvariant()
+        if ($LASTEXITCODE -ne 0 -or $resourceGroupExists -notin @('true', 'false')) {
+            throw "Unable to inspect resource group '$resourceGroupName' before viewer RBAC cleanup."
+        }
+        if ($resourceGroupExists -eq 'false') {
+            return ''
+        }
+    }
+
     $query = "[?roleDefinitionId=='$([string]$Entry.roleDefinitionId)'].id | [0]"
     $assignmentId = (& az role assignment list `
         --subscription $SubscriptionId `
-        --scope ([string]$Entry.scope) `
+        --scope $scope `
         --assignee-object-id ([string]$Entry.principalId) `
         --query $query `
         --output tsv 2>$null | Out-String).Trim()
     if ($LASTEXITCODE -ne 0) {
-        throw "Unable to inspect viewer role assignment '$([string]$Entry.roleName)' on '$([string]$Entry.scope)'."
+        throw "Unable to inspect viewer role assignment '$([string]$Entry.roleName)' on '$scope'."
     }
 
     return $assignmentId
