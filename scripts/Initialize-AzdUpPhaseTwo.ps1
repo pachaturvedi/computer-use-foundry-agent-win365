@@ -181,9 +181,16 @@ try {
             DEPLOY_VIEWER = 'true'
         })
         $previousViewerProvisioningActive = $env:VIEWER_PROVISIONING_ACTIVE
+        $previousViewerIdentityLocation = $env:VIEWER_IDENTITY_LOCATION
         $env:VIEWER_PROVISIONING_ACTIVE = 'true'
         try {
             Write-W365ProvisioningStep 'Provisioning the ACA viewer bootstrap after shared state is ready.'
+            Initialize-W365ViewerRegionEnvironment `
+                -EnvironmentName $Environment `
+                -ResourcePrefix (Get-W365AzdValue -Azd $azd -Name 'RESOURCE_PREFIX' -AllowMissing) `
+                -ResourceGroupName (Get-W365AzdValue -Azd $azd -Name 'AZURE_RESOURCE_GROUP' -AllowMissing) `
+                -ManagedEnvironmentResourceId (
+                    Get-W365AzdValue -Azd $azd -Name 'VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID' -AllowMissing) | Out-Null
             try {
                 Invoke-W365Azd -Azd $azd -Arguments @(
                     'provision', 'viewer', '--environment', $Environment, '--no-prompt'
@@ -204,6 +211,12 @@ try {
                 if (!$?) {
                     throw 'Existing ACA managed-environment selection failed after the creation quota error.'
                 }
+                Initialize-W365ViewerRegionEnvironment `
+                    -EnvironmentName $Environment `
+                    -ResourcePrefix (Get-W365AzdValue -Azd $azd -Name 'RESOURCE_PREFIX' -AllowMissing) `
+                    -ResourceGroupName (Get-W365AzdValue -Azd $azd -Name 'AZURE_RESOURCE_GROUP' -AllowMissing) `
+                    -ManagedEnvironmentResourceId (
+                        Get-W365AzdValue -Azd $azd -Name 'VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID' -AllowMissing) | Out-Null
                 Invoke-W365Azd -Azd $azd -Arguments @(
                     'provision', 'viewer', '--environment', $Environment, '--no-prompt'
                 ) | Out-Null
@@ -211,6 +224,7 @@ try {
         }
         finally {
             $env:VIEWER_PROVISIONING_ACTIVE = $previousViewerProvisioningActive
+            $env:VIEWER_IDENTITY_LOCATION = $previousViewerIdentityLocation
         }
     }
 }

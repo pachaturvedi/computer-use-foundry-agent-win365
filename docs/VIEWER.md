@@ -40,15 +40,29 @@ After Foundry bootstrap, `azd up` asks how to host the viewer:
 
 The existing-environment path lists candidates in the selected Azure
 subscription and persists the chosen full resource ID only in the selected azd
-environment. It never silently selects shared infrastructure. A reused
-environment can live in a different region than the rest of the deployment; the
-viewer Container App is then created in that environment's region, while the
-viewer managed identity stays in the deployment region. If creation of a
+environment. It never silently selects shared infrastructure. If creation of a
 new managed environment fails specifically because of ACA environment quota or
 capacity, the hook offers the same existing-environment selection and retries
 only viewer provisioning. The retry changes only the ACA selection; the
 validated phase-two flow owns viewer activation. Unrelated deployment failures
 remain failures.
+
+### Viewer regions
+
+A reused managed environment can live in a different region than the rest of
+the deployment. Azure requires a Container App to match its managed
+environment's region, so the viewer Container App follows the environment while
+the viewer managed identity uses the deployment region.
+
+Regions are immutable once a resource exists, so `azd up` reconciles before
+provisioning:
+
+- An already-deployed viewer identity keeps its original region. Its principal
+  ID, federated credential, and role assignments are preserved.
+- An already-deployed viewer Container App in a region other than the selected
+  managed environment stops the run with guidance. Either select a managed
+  environment in the container app's region, or delete the container app and
+  rerun `azd up`.
 
 Viewer infrastructure is requested only after the shared storage account,
 container, and exact undecorated HTTPS Blob URI are validated. Missing or
