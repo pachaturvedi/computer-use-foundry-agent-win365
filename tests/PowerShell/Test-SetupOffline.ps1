@@ -269,7 +269,15 @@ try {
         requiredResourceAccessBefore = $manifest.graph.blueprint.requiredResourceAccessBefore
         requiredResourceAccessAdded = $manifest.graph.blueprint.requiredResourceAccessAdded
     } | ConvertTo-Json -Depth 40 -Compress
+    & $module {
+        $script:ledger.User.displayName = 'Operator-owned agent user label'
+    }
     & "$scriptsRoot\Setup-W365.ps1" @setupArgs | Out-Null
+    & $module {
+        if ($script:ledger.User.displayName -ne 'Operator-owned agent user label') {
+            throw 'Setup overwrote an existing operator-owned agent-user display name.'
+        }
+    }
     $manifestAfterRerun = Get-Content -LiteralPath $ownershipManifestPath -Raw | ConvertFrom-Json -AsHashtable
     $restoreBaselineAfterRerun = [ordered]@{
         previousScope = $manifestAfterRerun.graph.permissionGrants['90ecec28-f5a6-42b3-9bde-dae1ca98f8b5'].previousScope
