@@ -13,6 +13,7 @@ $script:groupExists = 'true'
 $script:identityLocation = ''
 $script:containerAppLocation = ''
 $script:managedEnvironmentLocation = ''
+$script:resourceShowFailuresRemaining = 0
 
 function az {
     $arguments = @($args)
@@ -29,6 +30,12 @@ function az {
         return $script:containerAppLocation
     }
     if ($arguments[0] -eq 'resource' -and $arguments[1] -eq 'show') {
+        if ($script:resourceShowFailuresRemaining -gt 0) {
+            $script:resourceShowFailuresRemaining--
+            $global:LASTEXITCODE = 1
+            Write-Error 'ERROR: (TooManyRequests) The Azure control plane temporarily throttled the read.' -ErrorAction Continue
+            return ''
+        }
         return $script:managedEnvironmentLocation
     }
 
@@ -112,6 +119,39 @@ try {
     Initialize-W365ViewerRegionEnvironment `
         -EnvironmentName 'sample-dev' `
         -ManagedEnvironmentResourceId '/subscriptions/s/resourceGroups/g/providers/Microsoft.App/managedEnvironments/e' | Out-Null
+
+    # A transient managed-environment read must be retried before blocking post-up.
+    $script:azCalls = @()
+    $script:resourceShowFailuresRemaining = 2
+    Initialize-W365ViewerRegionEnvironment `
+        -EnvironmentName 'sample-dev' `
+        -ManagedEnvironmentResourceId '/subscriptions/s/resourceGroups/g/providers/Microsoft.App/managedEnvironments/e' | Out-Null
+    if (@($script:azCalls | Where-Object { $_ -like 'resource show*' }).Count -ne 3) {
+        throw 'Managed-environment location lookup did not retry a transient Azure CLI failure.'
+    }
+    if (@($script:azCalls | Where-Object {
+        $_ -like 'resource show*--api-version 2024-03-01*'
+    }).Count -ne 3) {
+        throw 'Managed-environment location lookup did not pin the supported ARM API version.'
+    }
+
+    # A persistent failure must retain the Azure CLI diagnostic instead of hiding it.
+    $script:resourceShowFailuresRemaining = 2
+    $readFailure = $null
+    try {
+        Invoke-W365AzureCliRead `
+            -Arguments @('resource', 'show', '--ids', '/subscriptions/s/resourceGroups/g/providers/Microsoft.App/managedEnvironments/e') `
+            -MaxAttempts 2 `
+            -RetryDelaySeconds 0 | Out-Null
+    }
+    catch {
+        $readFailure = $_.Exception.Message
+    }
+    if ($null -eq $readFailure -or
+        $readFailure -notlike '*after 2 attempt(s)*' -or
+        $readFailure -notlike '*TooManyRequests*') {
+        throw "Persistent Azure CLI read failure did not preserve actionable diagnostics: $readFailure"
+    }
 
     # An absent container app must never block a first viewer deployment.
     $script:containerAppLocation = ''

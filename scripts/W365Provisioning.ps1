@@ -545,13 +545,49 @@ function Assert-W365ActivationPrerequisites {
 }
 
 function Invoke-W365AzureCliRead {
-    param([Parameter(Mandatory)][string[]]$Arguments)
+    param(
+        [Parameter(Mandatory)][string[]]$Arguments,
+        [ValidateRange(1, 10)][int]$MaxAttempts = 1,
+        [ValidateRange(0, 30)][int]$RetryDelaySeconds = 2
+    )
 
-    $output = & az @Arguments 2>$null
-    if ($LASTEXITCODE -ne 0) {
-        throw "Azure CLI read failed: az $($Arguments -join ' ')."
+    $lastError = ''
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        $stderrPath = [IO.Path]::GetTempFileName()
+        try {
+            $output = & az @Arguments 2> $stderrPath
+            $exitCode = $LASTEXITCODE
+            $lastError = if ((Get-Item -LiteralPath $stderrPath).Length -gt 0) {
+                (Get-Content -LiteralPath $stderrPath -Raw).Trim()
+            }
+            else {
+                ''
+            }
+        }
+        finally {
+            Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue
+        }
+
+        if ($exitCode -eq 0) {
+            return ($output | Out-String).Trim()
+        }
+        if ($attempt -lt $MaxAttempts) {
+            Write-Warning "Azure CLI read attempt $attempt of $MaxAttempts failed; retrying in $RetryDelaySeconds second(s)."
+            if ($RetryDelaySeconds -gt 0) {
+                Start-Sleep -Seconds $RetryDelaySeconds
+            }
+        }
     }
-    return ($output | Out-String).Trim()
+
+    $errorSummary = ($lastError -replace '\s+', ' ').Trim()
+    if ($errorSummary.Length -gt 800) {
+        $errorSummary = $errorSummary.Substring(0, 800) + '...'
+    }
+    if ([string]::IsNullOrWhiteSpace($errorSummary)) {
+        $errorSummary = 'Azure CLI returned no error details.'
+    }
+
+    throw "Azure CLI read failed after $MaxAttempts attempt(s): az $($Arguments -join ' '). Details: $errorSummary"
 }
 
 function ConvertTo-W365LocationToken {
@@ -648,9 +684,10 @@ function Assert-W365ViewerContainerAppRegion {
     $managedEnvironmentLocation = Invoke-W365AzureCliRead -Arguments @(
         'resource', 'show',
         '--ids', $ManagedEnvironmentResourceId,
+        '--api-version', '2024-03-01',
         '--query', 'location',
         '--output', 'tsv'
-    )
+    ) -MaxAttempts 3
 
     if ((ConvertTo-W365LocationToken $existingAppLocation) -ne (ConvertTo-W365LocationToken $managedEnvironmentLocation)) {
         throw @"
