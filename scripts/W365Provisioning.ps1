@@ -185,6 +185,58 @@ function Resolve-W365HostedAgentOperatorDefaults {
     return $EnvironmentValues
 }
 
+function Resolve-W365ResourcePrefix {
+    param(
+        [Parameter(Mandatory)][string]$EnvironmentFilePath,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$EnvironmentName,
+        [Parameter(Mandatory)][System.Collections.IDictionary]$EnvironmentValues
+    )
+
+    $existing = [string]$EnvironmentValues['RESOURCE_PREFIX']
+    if (![string]::IsNullOrWhiteSpace($existing)) {
+        return $EnvironmentValues
+    }
+
+    if ([string]::IsNullOrWhiteSpace($EnvironmentName)) {
+        return $EnvironmentValues
+    }
+
+    # The deployed resource group carries the prefix that infrastructure actually
+    # used, which is authoritative when the prefix differs from the environment
+    # name. Fall back to the environment name because that is the same default
+    # the Bicep templates apply when resourcePrefix is empty.
+    $resolved = ''
+    $source = 'azd environment name'
+    $groupJson = (& az group list --tag "azd-env-name=$EnvironmentName" --output json 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -eq 0 -and ![string]::IsNullOrWhiteSpace($groupJson)) {
+        try {
+            foreach ($group in @($groupJson | ConvertFrom-Json)) {
+                if ($null -eq $group.tags) { continue }
+                $tagged = [string]$group.tags.'resource-prefix'
+                if (![string]::IsNullOrWhiteSpace($tagged)) {
+                    $resolved = $tagged.Trim()
+                    $source = "resource group '$($group.name)'"
+                    break
+                }
+            }
+        }
+        catch {
+            Write-SampleVerbose -Component 'postup' -Message 'Unable to read the resource-prefix tag; falling back to the azd environment name.'
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($resolved)) {
+        $resolved = $EnvironmentName
+    }
+
+    Set-AzdEnvironmentFileValues -Path $EnvironmentFilePath -Values @{ RESOURCE_PREFIX = $resolved }
+    $EnvironmentValues['RESOURCE_PREFIX'] = $resolved
+    [Environment]::SetEnvironmentVariable('RESOURCE_PREFIX', $resolved, 'Process')
+    Write-Host "Resolved and persisted RESOURCE_PREFIX=$resolved from $source."
+
+    return $EnvironmentValues
+}
+
 function Resolve-W365TenantId {
     param(
         [Parameter(Mandatory)]$Azd,
