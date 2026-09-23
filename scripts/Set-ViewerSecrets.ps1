@@ -4,10 +4,10 @@
 Stores viewer and blueprint credentials in the shared Key Vault.
 
 .DESCRIPTION
-Resolves the environment vault, ensures required RBAC, securely prompts for missing values, and writes the blueprint client secret and/or viewer OIDC client secret without persisting them to azd.
+Resolves the environment vault, optionally bootstraps operator RBAC, securely prompts for missing values, and writes the blueprint client secret and/or viewer OIDC client secret without persisting them to azd.
 
 
-Key inputs: Environment plus optional secure strings, BlueprintOnly, OidcOnly, Overwrite, and role-setup script override.
+Key inputs: Environment plus optional secure strings, BlueprintOnly, OidcOnly, Overwrite, BootstrapOperatorAccess, and role-setup script override.
 
 .OUTPUTS
 Key Vault secret versions and redacted completion messages.
@@ -23,6 +23,7 @@ param(
     [switch]$BlueprintOnly,
     [switch]$OidcOnly,
     [switch]$Overwrite,
+    [switch]$BootstrapOperatorAccess,
     [string]$RoleSetupScriptPath = (Join-Path $PSScriptRoot 'Set-W365KeyVaultRoles.ps1')
 )
 
@@ -57,20 +58,29 @@ if ($BlueprintOnly -and $OidcOnly) {
 $setBlueprint = !$OidcOnly
 $setOidc = !$BlueprintOnly
 
-& $RoleSetupScriptPath -Environment $Environment -IncludeViewer:$setOidc
-if (!$?) {
-    throw 'Viewer Key Vault RBAC setup failed.'
+if ($BootstrapOperatorAccess) {
+    & $RoleSetupScriptPath -Environment $Environment
+    if (!$?) {
+        throw 'Key Vault operator-access bootstrap failed.'
+    }
 }
 
 function Test-KeyVaultSecret {
     param([Parameter(Mandatory)][string]$Name)
 
-    & az keyvault secret show `
+    $result = & az keyvault secret show `
         --vault-name $vaultName `
         --name $Name `
         --query id `
-        --output none 2>$null
-    return $LASTEXITCODE -eq 0
+        --output none 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        return $true
+    }
+    if (($result | Out-String) -match '(?im)^\s*(?:ERROR:\s*)?\(?SecretNotFound\)?(?:\s|:)') {
+        return $false
+    }
+
+    throw "Unable to determine whether secret '$Name' exists in Key Vault '$vaultName'. Verify Azure authentication, Key Vault access, and service availability before retrying."
 }
 
 if ($setBlueprint -and !$Overwrite -and (Test-KeyVaultSecret 'w365-blueprint-client-secret')) {
@@ -83,10 +93,16 @@ if ($setOidc -and !$Overwrite -and (Test-KeyVaultSecret 'w365-viewer-client-secr
 }
 
 if ($setBlueprint -and $null -eq $BlueprintClientSecret) {
+    if ($env:AZD_NON_INTERACTIVE -ceq 'true') {
+        throw "Blueprint client secret is missing from Key Vault '$vaultName'. Run .\scripts\Set-ViewerSecrets.ps1 -Environment '$Environment' -BlueprintOnly interactively, then rerun the attempt-scoped protected Invoke-AzdUp.ps1 block in docs\W365-SETUP.md for environment '$Environment'."
+    }
     Write-SampleVerbose -Component 'viewer-secrets' -Message 'Prompting securely for the existing blueprint client secret.'
     $BlueprintClientSecret = Read-Host 'Blueprint client secret' -AsSecureString
 }
 if ($setOidc -and $null -eq $ViewerOidcClientSecret) {
+    if ($env:AZD_NON_INTERACTIVE -ceq 'true') {
+        throw "Viewer OIDC client secret is missing from Key Vault '$vaultName'. Run .\scripts\Set-ViewerSecrets.ps1 -Environment '$Environment' -OidcOnly interactively, then rerun the attempt-scoped protected Invoke-AzdUp.ps1 block in docs\W365-SETUP.md for environment '$Environment'."
+    }
     Write-SampleVerbose -Component 'viewer-secrets' -Message 'Prompting securely for the viewer OIDC client secret.'
     $ViewerOidcClientSecret = Read-Host 'Viewer OIDC client secret' -AsSecureString
 }

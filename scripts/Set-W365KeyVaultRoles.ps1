@@ -120,9 +120,40 @@ if (!($viewerManifest.Contains('keyVaultRoleAssignments')) -or
     !($viewerManifest.keyVaultRoleAssignments -is [System.Collections.IDictionary])) {
     $viewerManifest['keyVaultRoleAssignments'] = [ordered]@{}
 }
+if (!($viewerManifest.Contains('operations')) -or
+    !($viewerManifest.operations -is [System.Collections.IDictionary])) {
+    $viewerManifest['operations'] = [ordered]@{}
+}
+
+function Save-ViewerOwnershipManifest {
+    $viewerManifest['schemaVersion'] = 1
+    $viewerManifest['environmentName'] = $environmentName
+    $viewerManifest['updatedAtUtc'] = [DateTimeOffset]::UtcNow.ToString('o')
+    Write-W365OwnershipManifest -Path $manifestPath -Manifest $viewerManifest
+}
 
 foreach ($assignment in $assignments) {
     $roleDefinitionId = "/subscriptions/$subscriptionId/providers/Microsoft.Authorization/roleDefinitions/$($assignment.RoleId)"
+    $operationKey = "keyVaultRoleAssignment.$($assignment.ManifestKey)"
+    $pendingOperation = if ($viewerManifest.operations.Contains($operationKey)) {
+        $viewerManifest.operations[$operationKey]
+    }
+    else {
+        $null
+    }
+    if ($pendingOperation) {
+        foreach ($field in @('principalId', 'principalType', 'roleDefinitionId', 'roleName', 'scope')) {
+            if ([string]$pendingOperation[$field] -ne [string]$(switch ($field) {
+                'principalId' { $assignment.PrincipalId }
+                'principalType' { $assignment.PrincipalType }
+                'roleDefinitionId' { $roleDefinitionId }
+                'roleName' { $assignment.RoleName }
+                'scope' { $vaultId }
+            })) {
+                throw "Pending Key Vault ownership operation '$operationKey' does not match the requested assignment."
+            }
+        }
+    }
     $existing = & az role assignment list `
         --subscription $subscriptionId `
         --scope $vaultId `
@@ -141,8 +172,9 @@ foreach ($assignment in $assignments) {
         else {
             $null
         }
-        $disposition = if ([string](Get-ManifestValue -Object $existingManifestEntry -Name 'assignmentId') -eq $assignmentId -and
-            [string](Get-ManifestValue -Object $existingManifestEntry -Name 'disposition') -eq 'created') {
+        $disposition = if ($pendingOperation -or
+            ([string](Get-ManifestValue -Object $existingManifestEntry -Name 'assignmentId') -eq $assignmentId -and
+            [string](Get-ManifestValue -Object $existingManifestEntry -Name 'disposition') -eq 'created')) {
             'created'
         }
         else {
@@ -157,9 +189,26 @@ foreach ($assignment in $assignments) {
             scope = $vaultId
             disposition = $disposition
         }
+        if ($pendingOperation) {
+            $viewerManifest.operations.Remove($operationKey)
+        }
+        Save-ViewerOwnershipManifest
         continue
     }
 
+    if (!$pendingOperation) {
+        $viewerManifest.operations[$operationKey] = [ordered]@{
+            status = 'pending'
+            kind = 'create'
+            principalId = $assignment.PrincipalId
+            principalType = $assignment.PrincipalType
+            roleDefinitionId = $roleDefinitionId
+            roleName = $assignment.RoleName
+            scope = $vaultId
+            startedAtUtc = [DateTimeOffset]::UtcNow.ToString('o')
+        }
+        Save-ViewerOwnershipManifest
+    }
     Write-SampleVerbose -Component 'viewer-keyvault-rbac' -Message "Assigning $($assignment.RoleName) to $($assignment.PrincipalType)."
     Write-SampleDebug -Component 'viewer-keyvault-rbac' -Message "RoleId=$($assignment.RoleId); principalId=$($assignment.PrincipalId)."
     $createdAssignmentId = (& az role assignment create `
@@ -183,12 +232,11 @@ foreach ($assignment in $assignments) {
         scope = $vaultId
         disposition = 'created'
     }
+    $viewerManifest.operations.Remove($operationKey)
+    Save-ViewerOwnershipManifest
 }
 
-$viewerManifest['schemaVersion'] = 1
-$viewerManifest['environmentName'] = $environmentName
-$viewerManifest['updatedAtUtc'] = [DateTimeOffset]::UtcNow.ToString('o')
-Write-W365OwnershipManifest -Path $manifestPath -Manifest $viewerManifest
+Save-ViewerOwnershipManifest
 
 $scopeDescription = if ($IncludeViewer) { 'the viewer identity and current operator' } else { 'the current operator' }
 Write-Host "Key Vault RBAC is configured for $scopeDescription on '$vaultName'."

@@ -59,6 +59,72 @@ azd env set W365_POOL_BILLING_PLAN_ID "<billing-plan-guid>" `
     --environment "<azd-environment-name>"
 ```
 
+If the checked-in region or image is unavailable in the tenant, select
+tenant-supported values and save them to ignored `config\deployment.local.json`
+before retrying:
+
+```powershell
+pwsh -NoProfile -File .\scripts\Get-W365DiscoveryOptions.ps1 `
+    -TenantId "<Foundry-and-W365-tenant-guid>" `
+    -UseDeviceCode `
+    -Configure
+```
+
+`-NoPrompt` disables stdin prompts from the deployment wrapper; it is not a
+fully unattended tenant workflow. W365 discovery and setup still require the
+operator to complete delegated Graph device-code authentication.
+
+Use this protected command block so post-up approvals apply to only one
+deployment attempt and are restored even when the attempt fails:
+
+```powershell
+$environment = "<azd-environment-name>"
+$previousW365Approval = $env:W365_RESOURCE_CHANGES_CONFIRMED
+$previousViewerApproval = $env:VIEWER_LIVE_CHANGES_CONFIRMED
+try {
+    $env:W365_RESOURCE_CHANGES_CONFIRMED = 'true'
+    $env:VIEWER_LIVE_CHANGES_CONFIRMED = 'true' # omit when live activation is not configured
+
+    pwsh -NoProfile -File .\scripts\Invoke-AzdUp.ps1 `
+        -Environment $environment `
+        -ConfirmResourceChanges `
+        -NoPrompt
+}
+finally {
+    [Environment]::SetEnvironmentVariable(
+        'W365_RESOURCE_CHANGES_CONFIRMED',
+        $previousW365Approval,
+        'Process')
+    [Environment]::SetEnvironmentVariable(
+        'VIEWER_LIVE_CHANGES_CONFIRMED',
+        $previousViewerApproval,
+        'Process')
+}
+```
+
+`-ConfirmResourceChanges` approves the outer deployment; it does not replace
+the attempt-scoped W365 and viewer post-up approvals. Prompt-free reuse also
+requires an explicit pool ID and, when reusing ACA, an explicit persisted
+`VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID`. Empty or ambiguous discovery fails
+closed.
+
+For the protected `-NoPrompt` workflow, the default `client_secret` credential
+mode normally requires two attempts for a fresh environment because the shared
+Key Vault does not exist before the first deployment attempt. Interactive
+execution can collect the secret during the first attempt. When a `-NoPrompt`
+attempt reports that the blueprint secret is missing, store the existing
+onboarding secret interactively:
+
+```powershell
+pwsh -NoProfile -File .\scripts\Set-ViewerSecrets.ps1 `
+    -Environment $environment `
+    -BlueprintOnly `
+    -BootstrapOperatorAccess
+```
+
+Then rerun the protected `Invoke-AzdUp.ps1` block above for the same
+environment. Do not clear ownership or redeployment markers between attempts.
+
 The interactive hook then:
 
 - obtains explicit W365/Entra resource approval;
@@ -130,7 +196,8 @@ azd env set W365_BLUEPRINT_CREDENTIAL_MODE client_secret `
 
 pwsh -NoProfile -File .\scripts\Set-ViewerSecrets.ps1 `
     -Environment $environment `
-    -BlueprintOnly
+    -BlueprintOnly `
+    -BootstrapOperatorAccess
 
 pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
     -Environment $environment `
@@ -277,9 +344,16 @@ Successful setup writes these non-secret values:
 It also writes `.azure\<environment>\w365-ownership.json`, recording created
 and reused objects plus the blueprint's prior configuration for teardown.
 
-The wrapper redeploys the same `win365-desktop-agent` name after setup. Do not
-repeat deployment unless the wrapper reports setup success followed by a final
-deployment failure.
+The post-up workflow redeploys the same `win365-desktop-agent` name after setup. If that
+deployment or later viewer reconciliation fails, preserve the ownership
+manifest and rerun the same environment:
+
+```powershell
+azd up --environment "<azd-environment-name>"
+```
+
+Do not clear redeployment markers or substitute a standalone `DeployAgent`
+command.
 
 ## Stale desktop-state recovery prerequisite
 
@@ -334,7 +408,7 @@ live compatibility.
 | Existing pool or agent user is rejected | Verify the exact blueprint, agent object ID, agent app ID, parent chain, pool ID, and selected ownership manifest. |
 | Setup reports ambiguous grants or inheritance | Review the existing shared blueprint policy. The script will not take it over. |
 | Graph propagation fails after a known mutation | Wait, then rerun with the same IDs and UPN. Do not change identities or blindly replay with new values. |
-| Final hosted-agent deployment fails | Preserve the successful ownership manifest and use the scoped `DeployAgent` command in [Deployment](DEPLOYMENT.md#phase-2-bind-and-enable). |
+| Final hosted-agent deployment fails | Preserve the ownership manifest, fix the reported prerequisite, and rerun `azd up` for the same environment. Do not clear redeployment markers or substitute standalone `DeployAgent`. |
 
 ## Optional viewer federation
 
@@ -460,7 +534,8 @@ End active sessions and review
 ```powershell
 pwsh -NoProfile -File .\scripts\Invoke-AzdDown.ps1 `
     -EnvironmentName "<azd-environment-name>" `
-    -Purge
+    -Purge `
+    -Force
 ```
 
 Cleanup removes or restores only manifest-recorded resources:
@@ -486,7 +561,8 @@ $env:ALLOW_EXISTING_FOUNDRY_CLEANUP = 'true'
 
 pwsh -NoProfile -File .\scripts\Invoke-AzdDown.ps1 `
     -EnvironmentName "<azd-environment-name>" `
-    -Purge
+    -Purge `
+    -Force
 ```
 
 Do not use this override for a shared project. Azure deletion does not remove

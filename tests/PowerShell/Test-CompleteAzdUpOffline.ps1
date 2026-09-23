@@ -7,6 +7,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $repoRoot = Split-Path (Split-Path $PSScriptRoot)
+. (Join-Path $repoRoot 'scripts\W365OwnershipManifest.ps1')
 $scriptPath = Join-Path $repoRoot 'scripts\Complete-AzdUp.ps1'
 $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("complete-azd-up-{0}" -f ([guid]::NewGuid()))
 $environmentName = 'sample-dev'
@@ -21,9 +22,12 @@ $viewerActivationCallsPath = Join-Path $tempRoot 'viewer-activation-calls.json'
 $mockW365Path = Join-Path $tempRoot 'Mock-W365Setup.ps1'
 $mockPhaseTwoPath = Join-Path $tempRoot 'Mock-PhaseTwo.ps1'
 $failingW365Path = Join-Path $tempRoot 'Mock-W365SetupFailure.ps1'
+$failingFinalDeploymentPath = Join-Path $tempRoot 'Mock-W365FinalDeploymentFailure.ps1'
 $mockViewerPath = Join-Path $tempRoot 'Mock-Viewer.ps1'
 $mockAgentDeployPath = Join-Path $tempRoot 'Mock-AgentDeploy.ps1'
+$failingAgentDeployPath = Join-Path $tempRoot 'Mock-AgentDeployFailure.ps1'
 $mockViewerSecretsPath = Join-Path $tempRoot 'Mock-ViewerSecrets.ps1'
+$failingViewerSecretsPath = Join-Path $tempRoot 'Mock-ViewerSecretsFailure.ps1'
 $mockViewerActivationPath = Join-Path $tempRoot 'Mock-ViewerActivation.ps1'
 
 $trackedEnvironmentVariables = @(
@@ -35,6 +39,13 @@ $trackedEnvironmentVariables = @(
     'W365_POSTUP_IN_PROGRESS',
     'W365_AZD_UP_WRAPPER',
     'W365_AZD_UP_RUN_ID',
+    'W365_AGENT_REDEPLOY_PENDING',
+    'W365_AGENT_REDEPLOY_CHECK_PENDING',
+    'W365_AGENT_REDEPLOY_BASELINE_VIEWER_URL',
+    'W365_AGENT_REDEPLOY_BASELINE_VIEWER_LIVE_ENABLED',
+    'OPERATOR_TENANT_ID',
+    'OPERATOR_OBJECT_ID',
+    'HOSTED_ALLOWED_USER_ID',
     'AZD_NON_INTERACTIVE',
     'AZURE_ENV_NAME',
     'AZURE_TENANT_ID',
@@ -172,6 +183,61 @@ function Write-CompleteManifest {
 
 try {
     New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+    $atomicEnvironmentPath = Join-Path $tempRoot 'atomic.env'
+    foreach ($transition in @(
+        @{
+            Name = 'initial comparison marker'
+            Initial = @('KEEP="original"', 'W365_AGENT_REDEPLOY_CHECK_PENDING="false"')
+            Values = @{
+                W365_AGENT_REDEPLOY_CHECK_PENDING = 'true'
+                W365_AGENT_REDEPLOY_BASELINE_VIEWER_URL = 'https://viewer.original.example.com'
+            }
+        },
+        @{
+            Name = 'promotion to confirmed pending'
+            Initial = @(
+                'KEEP="original"',
+                'W365_AGENT_REDEPLOY_CHECK_PENDING="true"',
+                'W365_AGENT_REDEPLOY_PENDING="false"'
+            )
+            Values = @{
+                W365_AGENT_REDEPLOY_CHECK_PENDING = 'false'
+                W365_AGENT_REDEPLOY_PENDING = 'true'
+            }
+        },
+        @{
+            Name = 'confirmed pending clearing'
+            Initial = @('KEEP="original"', 'W365_AGENT_REDEPLOY_PENDING="true"')
+            Values = @{ W365_AGENT_REDEPLOY_PENDING = 'false' }
+        }
+    )) {
+        Set-Content -LiteralPath $atomicEnvironmentPath -Value $transition.Initial
+        $before = Get-Content -LiteralPath $atomicEnvironmentPath -Raw
+        $faultInjected = $false
+        try {
+            Set-AzdEnvironmentFileValues `
+                -Path $atomicEnvironmentPath `
+                -Values $transition.Values `
+                -BeforeReplace { throw 'Simulated atomic replacement interruption.' }
+        }
+        catch {
+            $faultInjected = $_.Exception.Message -match 'Simulated atomic replacement interruption'
+        }
+        if (!$faultInjected -or
+            (Get-Content -LiteralPath $atomicEnvironmentPath -Raw) -ne $before) {
+            throw "Atomic azd environment persistence failed during $($transition.Name)."
+        }
+    }
+    Set-AzdEnvironmentFileValues `
+        -Path $atomicEnvironmentPath `
+        -Values @{ W365_AGENT_REDEPLOY_PENDING = 'false' }
+    $atomicValues = Read-AzdEnvironmentFile -Path $atomicEnvironmentPath
+    if ([string]$atomicValues['KEEP'] -ne 'original' -or
+        [string]$atomicValues['W365_AGENT_REDEPLOY_PENDING'] -ne 'false' -or
+        @(Get-ChildItem -LiteralPath $tempRoot -Filter '.atomic.env.*.tmp').Count -gt 0) {
+        throw 'Atomic azd environment persistence did not preserve unrelated values or clean temporary files.'
+    }
+
     Set-Content -LiteralPath $mockViewerPath -Value @'
 param()
 Write-Host 'MOCK-VIEWER-BOOTSTRAP-RAN'
@@ -182,6 +248,14 @@ if (![string]::IsNullOrWhiteSpace($env:TEST_VIEWER_PUBLIC_URL)) {
     $environmentPath = Join-Path $env:TEST_REPOSITORY_ROOT ".azure\$($env:AZURE_ENV_NAME)\.env"
     Add-Content -LiteralPath $environmentPath -Value "VIEWER_PUBLIC_URL=`"$($env:TEST_VIEWER_PUBLIC_URL)`""
 }
+'@
+    Set-Content -LiteralPath $failingViewerSecretsPath -Value @'
+param(
+    [string]$Environment,
+    [switch]$BlueprintOnly,
+    [switch]$BootstrapOperatorAccess
+)
+throw 'Simulated viewer secret configuration failure.'
 '@
     Set-Content -LiteralPath $mockPhaseTwoPath -Value @'
 param(
@@ -216,14 +290,25 @@ param(
     recursionGuard = $env:W365_POSTUP_IN_PROGRESS
 } | ConvertTo-Json | Set-Content -LiteralPath $env:TEST_AGENT_DEPLOY_CALLS_PATH
 '@
+    Set-Content -LiteralPath $failingAgentDeployPath -Value @'
+param(
+    [string]$Mode,
+    [string]$Environment,
+    [switch]$ConfirmResourceChanges,
+    [switch]$SmokeInvoke
+)
+throw 'Simulated hosted-agent deployment failure.'
+'@
     Set-Content -LiteralPath $mockViewerSecretsPath -Value @'
 param(
     [string]$Environment,
-    [switch]$BlueprintOnly
+    [switch]$BlueprintOnly,
+    [switch]$BootstrapOperatorAccess
 )
 @{
     environment = $Environment
     blueprintOnly = $BlueprintOnly.IsPresent
+    bootstrapOperatorAccess = $BootstrapOperatorAccess.IsPresent
 } | ConvertTo-Json | Set-Content -LiteralPath $env:TEST_VIEWER_SECRETS_CALLS_PATH
 '@
     Set-Content -LiteralPath $mockViewerActivationPath -Value @'
@@ -324,6 +409,54 @@ Write-W365OwnershipManifest -Path $manifestPath -Manifest ([ordered]@{
     graph = [ordered]@{}
 })
 throw 'Simulated W365 setup failure.'
+'@
+    Set-Content -LiteralPath $failingFinalDeploymentPath -Value @'
+param(
+    [string]$Environment,
+    [guid]$TenantId,
+    [string]$AgentUserPrincipalName,
+    [string]$AgentUserDomain,
+    [switch]$BillingConfirmed,
+    [switch]$ConfirmResourceChanges,
+    [switch]$UseDeviceCode
+)
+$environmentPath = Join-Path $env:TEST_REPOSITORY_ROOT ".azure\$Environment\.env"
+Add-Content -LiteralPath $environmentPath -Value @(
+    'W365_ENABLED="true"',
+    'W365_POOL_ID="11111111-1111-1111-1111-111111111111"',
+    'W365_AGENT_USER_ID="22222222-2222-2222-2222-222222222222"',
+    'W365_AGENT_ID="33333333-3333-3333-3333-333333333333"',
+    'W365_AGENT_OBJECT_ID="44444444-4444-4444-4444-444444444444"',
+    'W365_BLUEPRINT_ID="55555555-5555-5555-5555-555555555555"',
+    'OPERATOR_TENANT_ID="66666666-6666-6666-6666-666666666666"',
+    'OPERATOR_OBJECT_ID="77777777-7777-7777-7777-777777777777"',
+    'HOSTED_ALLOWED_USER_ID="pending"'
+)
+. (Join-Path $env:TEST_SOURCE_ROOT 'scripts\W365OwnershipManifest.ps1')
+$manifestPath = Get-W365OwnershipManifestPath -RepositoryRoot $env:TEST_REPOSITORY_ROOT -EnvironmentName $Environment
+Write-W365OwnershipManifest -Path $manifestPath -Manifest ([ordered]@{
+    schemaVersion = 1
+    environmentName = $Environment
+    w365 = [ordered]@{
+        pool = [ordered]@{ id = '11111111-1111-1111-1111-111111111111' }
+        agentUser = [ordered]@{
+            id = '22222222-2222-2222-2222-222222222222'
+            userPrincipalName = 'foundry-w365-sample-dev@customer.example'
+        }
+        assignment = [ordered]@{
+            poolId = '11111111-1111-1111-1111-111111111111'
+            userPrincipalId = '22222222-2222-2222-2222-222222222222'
+        }
+    }
+    graph = [ordered]@{
+        blueprint = [ordered]@{ appId = '55555555-5555-5555-5555-555555555555' }
+        agent = [ordered]@{
+            appId = '33333333-3333-3333-3333-333333333333'
+            objectId = '44444444-4444-4444-4444-444444444444'
+        }
+    }
+})
+throw 'Hosted agent redeployment failed.'
 '@
 
     $env:TEST_SOURCE_ROOT = $repoRoot
@@ -531,31 +664,247 @@ throw 'Simulated W365 setup failure.'
     $env:TEST_VIEWER_PUBLIC_URL = ''
 
     Reset-Calls
+    Write-TestEnvironment -Complete:$false
+    Add-Content -LiteralPath $environmentPath -Value 'DEPLOY_VIEWER="true"'
+    $env:ENABLE_W365 = 'true'
+    $env:W365_ENABLED = 'false'
+    $env:VIEWER_PUBLIC_URL = ''
+    $env:TEST_VIEWER_PUBLIC_URL = 'https://viewer.fresh.example.com'
+    & $scriptPath `
+        -RepositoryRoot $tempRoot `
+        -PhaseTwoPreparationScriptPath $mockPhaseTwoPath `
+        -W365SetupScriptPath $mockW365Path `
+        -ViewerBootstrapScriptPath $mockViewerPath `
+        -ViewerSecretsScriptPath $mockViewerSecretsPath `
+        -AgentDeploymentScriptPath $mockAgentDeployPath
+    if (!(Test-Path -LiteralPath $w365CallsPath) -or
+        (Test-Path -LiteralPath $agentDeployCallsPath)) {
+        throw 'Fresh viewer-enabled setup did not use exactly the hosted-agent deployment owned by W365 setup.'
+    }
+    $freshEnvironment = Get-Content -LiteralPath $environmentPath -Raw
+    if ($freshEnvironment -match '(?m)^W365_AGENT_REDEPLOY_(CHECK_)?PENDING="?true"?\r?$') {
+        throw 'Fresh W365 setup left a redundant hosted-agent redeployment marker.'
+    }
+    $env:TEST_VIEWER_PUBLIC_URL = ''
+
+    Reset-Calls
+    Write-TestEnvironment -Complete:$false
+    $env:ENABLE_W365 = 'true'
+    $env:W365_ENABLED = 'false'
+    & $scriptPath `
+        -RepositoryRoot $tempRoot `
+        -PhaseTwoPreparationScriptPath $mockPhaseTwoPath `
+        -W365SetupScriptPath $mockW365Path `
+        -ViewerBootstrapScriptPath $mockViewerPath `
+        -ViewerSecretsScriptPath $mockViewerSecretsPath `
+        -AgentDeploymentScriptPath $mockAgentDeployPath
+    if (!(Test-Path -LiteralPath $w365CallsPath) -or
+        (Test-Path -LiteralPath $agentDeployCallsPath)) {
+        throw 'Fresh viewer-disabled setup did not use exactly the hosted-agent deployment owned by W365 setup.'
+    }
+    $viewerDisabledSuccessEnvironment = Get-Content -LiteralPath $environmentPath -Raw
+    if ($viewerDisabledSuccessEnvironment -match '(?m)^W365_AGENT_REDEPLOY_(CHECK_)?PENDING="?true"?\r?$') {
+        throw 'Fresh viewer-disabled W365 setup left a redundant hosted-agent redeployment marker.'
+    }
+
+    Reset-Calls
+    Write-TestEnvironment -Complete:$true
+    Write-CompleteManifest
+    Add-Content -LiteralPath $environmentPath -Value @(
+        'DEPLOY_VIEWER="true"',
+        'VIEWER_PUBLIC_URL="https://viewer.same.example.com"'
+    )
+    $env:VIEWER_PUBLIC_URL = 'https://viewer.same.example.com'
+    $env:TEST_VIEWER_PUBLIC_URL = 'https://viewer.same.example.com'
+    & $scriptPath `
+        -RepositoryRoot $tempRoot `
+        -PhaseTwoPreparationScriptPath $mockPhaseTwoPath `
+        -W365SetupScriptPath $mockW365Path `
+        -ViewerBootstrapScriptPath $mockViewerPath `
+        -ViewerSecretsScriptPath $mockViewerSecretsPath `
+        -AgentDeploymentScriptPath $mockAgentDeployPath
+    if (Test-Path -LiteralPath $agentDeployCallsPath) {
+        throw 'Postup redeployed the hosted agent even though viewer configuration did not change.'
+    }
+    $noChangeEnvironment = Get-Content -LiteralPath $environmentPath -Raw
+    if ($noChangeEnvironment -notmatch '(?m)^W365_AGENT_REDEPLOY_CHECK_PENDING="?false"?\r?$' -or
+        $noChangeEnvironment -match '(?m)^W365_AGENT_REDEPLOY_PENDING="?true"?\r?$') {
+        throw 'No-change reconciliation did not clear only the comparison state.'
+    }
+    $env:TEST_VIEWER_PUBLIC_URL = ''
+
+    Reset-Calls
+    Write-TestEnvironment -Complete:$false
+    Add-Content -LiteralPath $environmentPath -Value @(
+        'DEPLOY_VIEWER="true"',
+        'VIEWER_PUBLIC_URL="https://viewer.original.example.com"'
+    )
+    $env:VIEWER_PUBLIC_URL = 'https://viewer.original.example.com'
+    $env:TEST_VIEWER_PUBLIC_URL = 'https://viewer.interrupted.example.com'
+    $env:W365_AZD_UP_WRAPPER = 'true'
+    $env:W365_AZD_UP_RUN_ID = 'interrupted-viewer-run'
+    $viewerInterruptionFailed = $false
+    try {
+        & $scriptPath `
+            -RepositoryRoot $tempRoot `
+            -PhaseTwoPreparationScriptPath $mockPhaseTwoPath `
+            -W365SetupScriptPath $failingW365Path `
+            -ViewerBootstrapScriptPath $mockViewerPath `
+            -ViewerSecretsScriptPath $mockViewerSecretsPath `
+            -AgentDeploymentScriptPath $mockAgentDeployPath
+    }
+    catch {
+        $viewerInterruptionFailed = $_.Exception.Message -match 'Simulated W365 setup failure'
+    }
+    if (!$viewerInterruptionFailed) {
+        throw 'Postup did not propagate the simulated failure after viewer mutation.'
+    }
+    $interruptedEnvironment = Get-Content -LiteralPath $environmentPath -Raw
+    if ($interruptedEnvironment -notmatch '(?m)^VIEWER_PUBLIC_URL="https://viewer\.interrupted\.example\.com"\r?$' -or
+        $interruptedEnvironment -notmatch '(?m)^W365_AGENT_REDEPLOY_CHECK_PENDING="?true"?\r?$' -or
+        $interruptedEnvironment -notmatch '(?m)^W365_AGENT_REDEPLOY_BASELINE_VIEWER_URL="https://viewer\.original\.example\.com"\r?$' -or
+        $interruptedEnvironment -match '(?m)^W365_AZD_UP_POSTUP_RUN_ID=') {
+        throw 'Postup did not retain the viewer comparison state across an intermediate viewer failure.'
+    }
+    $env:TEST_VIEWER_PUBLIC_URL = ''
+    $env:W365_AZD_UP_RUN_ID = 'recovered-viewer-run'
+    & $scriptPath `
+        -RepositoryRoot $tempRoot `
+        -PhaseTwoPreparationScriptPath $mockPhaseTwoPath `
+        -W365SetupScriptPath $mockW365Path `
+        -ViewerBootstrapScriptPath $mockViewerPath `
+        -ViewerSecretsScriptPath $mockViewerSecretsPath `
+        -AgentDeploymentScriptPath $mockAgentDeployPath
+    if (!(Test-Path -LiteralPath $w365CallsPath)) {
+        throw 'Postup did not complete W365 setup and its hosted-agent deployment after recovering from an intermediate viewer failure.'
+    }
+    $recoveredViewerEnvironment = Get-Content -LiteralPath $environmentPath -Raw
+    if ($recoveredViewerEnvironment -notmatch '(?m)^W365_AGENT_REDEPLOY_PENDING="?false"?\r?$' -or
+        $recoveredViewerEnvironment -notmatch '(?m)^W365_AGENT_REDEPLOY_CHECK_PENDING="?false"?\r?$' -or
+        $recoveredViewerEnvironment -notmatch '(?m)^W365_AZD_UP_POSTUP_RUN_ID="?recovered-viewer-run"?\r?$') {
+        throw 'Postup completed before resolving the viewer-triggered redeployment obligation.'
+    }
+    $env:W365_AZD_UP_WRAPPER = ''
+    $env:W365_AZD_UP_RUN_ID = ''
+
+    Reset-Calls
+    Write-TestEnvironment -Complete:$true
+    Write-CompleteManifest
+    Add-Content -LiteralPath $environmentPath -Value @(
+        'DEPLOY_VIEWER="true"',
+        'VIEWER_PUBLIC_URL="https://viewer.before-failure.example.com"'
+    )
+    $env:VIEWER_PUBLIC_URL = 'https://viewer.before-failure.example.com'
+    $env:TEST_VIEWER_PUBLIC_URL = 'https://viewer.after-failure.example.com'
+    $env:W365_AZD_UP_WRAPPER = 'true'
+    $env:W365_AZD_UP_RUN_ID = 'failed-agent-deploy-run'
+    $agentDeploymentFailed = $false
+    try {
+        & $scriptPath `
+            -RepositoryRoot $tempRoot `
+            -PhaseTwoPreparationScriptPath $mockPhaseTwoPath `
+            -W365SetupScriptPath $mockW365Path `
+            -ViewerBootstrapScriptPath $mockViewerPath `
+            -ViewerSecretsScriptPath $mockViewerSecretsPath `
+            -AgentDeploymentScriptPath $failingAgentDeployPath
+    }
+    catch {
+        $agentDeploymentFailed = $_.Exception.Message -match 'Simulated hosted-agent deployment failure'
+    }
+    if (!$agentDeploymentFailed) {
+        throw 'Postup did not propagate the hosted-agent deployment failure.'
+    }
+    $failedDeploymentEnvironment = Get-Content -LiteralPath $environmentPath -Raw
+    if ($failedDeploymentEnvironment -notmatch '(?m)^W365_AGENT_REDEPLOY_PENDING="?true"?\r?$' -or
+        $failedDeploymentEnvironment -match '(?m)^W365_AZD_UP_POSTUP_RUN_ID=') {
+        throw 'Hosted-agent deployment failure did not preserve confirmed pending state and block completion.'
+    }
+    $env:TEST_VIEWER_PUBLIC_URL = ''
+    $env:W365_AZD_UP_RUN_ID = 'recovered-agent-deploy-run'
+    & $scriptPath `
+        -RepositoryRoot $tempRoot `
+        -PhaseTwoPreparationScriptPath $mockPhaseTwoPath `
+        -W365SetupScriptPath $mockW365Path `
+        -ViewerBootstrapScriptPath $mockViewerPath `
+        -ViewerSecretsScriptPath $mockViewerSecretsPath `
+        -AgentDeploymentScriptPath $mockAgentDeployPath
+    $recoveredDeploymentEnvironment = Get-Content -LiteralPath $environmentPath -Raw
+    if ($recoveredDeploymentEnvironment -notmatch '(?m)^W365_AGENT_REDEPLOY_PENDING="?false"?\r?$' -or
+        $recoveredDeploymentEnvironment -notmatch '(?m)^W365_AZD_UP_POSTUP_RUN_ID="?recovered-agent-deploy-run"?\r?$') {
+        throw 'Same-environment recovery did not complete the retained hosted-agent redeployment.'
+    }
+    $env:W365_AZD_UP_WRAPPER = ''
+    $env:W365_AZD_UP_RUN_ID = ''
+
+    Reset-Calls
     Write-TestEnvironment -Complete:$true
     Write-CompleteManifest
     $envLines = Get-Content -LiteralPath $environmentPath | Where-Object {
         $_ -notmatch '^(OPERATOR_TENANT_ID|OPERATOR_OBJECT_ID|HOSTED_ALLOWED_USER_ID)='
     }
     Set-Content -LiteralPath $environmentPath -Value $envLines
+    $env:OPERATOR_TENANT_ID = ''
+    $env:OPERATOR_OBJECT_ID = ''
+    $env:HOSTED_ALLOWED_USER_ID = ''
     $env:VIEWER_PUBLIC_URL = ''
     $env:TEST_VIEWER_PUBLIC_URL = 'https://viewer.example.com'
     $env:TEST_AZ_BEHAVIOR = 'fail'
-    $missingOperatorOutput = & $scriptPath `
+    $env:W365_AZD_UP_WRAPPER = 'true'
+    $env:W365_AZD_UP_RUN_ID = 'incomplete-redeploy-run'
+    $missingOperatorOutput = try {
+        & $scriptPath `
+            -RepositoryRoot $tempRoot `
+            -PhaseTwoPreparationScriptPath $mockPhaseTwoPath `
+            -W365SetupScriptPath $mockW365Path `
+            -ViewerBootstrapScriptPath $mockViewerPath `
+            -ViewerSecretsScriptPath $mockViewerSecretsPath `
+            -AgentDeploymentScriptPath $mockAgentDeployPath *>&1 | Out-String
+    }
+    catch {
+        $_ | Out-String
+    }
+    if (Test-Path -LiteralPath $agentDeployCallsPath) {
+        throw 'Postup redeployed the hosted agent even though required operator identity values were missing.'
+    }
+    if ($missingOperatorOutput -notmatch 'Hosted-agent redeployment is required' -or
+        $missingOperatorOutput -notmatch 'OPERATOR_TENANT_ID' -or
+        $missingOperatorOutput -notmatch 'OPERATOR_OBJECT_ID') {
+        throw 'Postup did not fail with the missing hosted-agent operator prerequisites.'
+    }
+    $incompleteEnvironment = Get-Content -LiteralPath $environmentPath -Raw
+    if ($incompleteEnvironment -match '(?m)^W365_AZD_UP_POSTUP_RUN_ID=') {
+        throw 'Postup persisted a completion marker after skipping required hosted-agent redeployment.'
+    }
+    if ($incompleteEnvironment -notmatch '(?m)^W365_AGENT_REDEPLOY_PENDING="?true"?\r?$') {
+        throw 'Postup did not persist the pending hosted-agent redeployment obligation.'
+    }
+
+    Add-Content -LiteralPath $environmentPath -Value @(
+        'OPERATOR_TENANT_ID="66666666-6666-6666-6666-666666666666"',
+        'OPERATOR_OBJECT_ID="77777777-7777-7777-7777-777777777777"'
+    )
+    $env:OPERATOR_TENANT_ID = '66666666-6666-6666-6666-666666666666'
+    $env:OPERATOR_OBJECT_ID = '77777777-7777-7777-7777-777777777777'
+    $env:W365_AZD_UP_RUN_ID = 'recovered-redeploy-run'
+    $env:TEST_AZ_BEHAVIOR = 'success'
+    $env:TEST_VIEWER_PUBLIC_URL = ''
+    & $scriptPath `
         -RepositoryRoot $tempRoot `
         -PhaseTwoPreparationScriptPath $mockPhaseTwoPath `
         -W365SetupScriptPath $mockW365Path `
         -ViewerBootstrapScriptPath $mockViewerPath `
         -ViewerSecretsScriptPath $mockViewerSecretsPath `
-        -AgentDeploymentScriptPath $mockAgentDeployPath *>&1 | Out-String
-    if (Test-Path -LiteralPath $agentDeployCallsPath) {
-        throw 'Postup redeployed the hosted agent even though OPERATOR_TENANT_ID/OPERATOR_OBJECT_ID/HOSTED_ALLOWED_USER_ID were missing.'
+        -AgentDeploymentScriptPath $mockAgentDeployPath
+    if (!(Test-Path -LiteralPath $agentDeployCallsPath)) {
+        throw 'Postup did not retry the pending hosted-agent redeployment after operator values were supplied.'
     }
-    if ($missingOperatorOutput -notmatch 'Skipping hosted-agent redeploy' -or
-        $missingOperatorOutput -notmatch 'OPERATOR_TENANT_ID' -or
-        $missingOperatorOutput -notmatch 'OPERATOR_OBJECT_ID' -or
-        $missingOperatorOutput -notmatch 'HOSTED_ALLOWED_USER_ID') {
-        throw 'Postup did not warn about missing hosted-agent operator prerequisites.'
+    $recoveredEnvironment = Get-Content -LiteralPath $environmentPath -Raw
+    if ($recoveredEnvironment -notmatch '(?m)^W365_AGENT_REDEPLOY_PENDING="?false"?\r?$' -or
+        $recoveredEnvironment -notmatch '(?m)^W365_AZD_UP_POSTUP_RUN_ID="?recovered-redeploy-run"?\r?$') {
+        throw 'Postup did not clear the redeployment obligation and persist completion after recovery.'
     }
+    $env:W365_AZD_UP_WRAPPER = ''
+    $env:W365_AZD_UP_RUN_ID = ''
     $env:TEST_AZ_BEHAVIOR = 'success'
     $env:TEST_VIEWER_PUBLIC_URL = ''
     $env:TEST_AZ_BEHAVIOR = 'success'
@@ -583,8 +932,10 @@ throw 'Simulated W365 setup failure.'
         -ViewerActivationScriptPath $mockViewerActivationPath `
         -AgentDeploymentScriptPath $mockAgentDeployPath
     $secretCall = Get-Content -LiteralPath $viewerSecretsCallsPath -Raw | ConvertFrom-Json
-    if ($secretCall.environment -ne $environmentName -or !$secretCall.blueprintOnly) {
-        throw 'Postup did not configure the blueprint secret after viewer bootstrap.'
+    if ($secretCall.environment -ne $environmentName -or
+        !$secretCall.blueprintOnly -or
+        !$secretCall.bootstrapOperatorAccess) {
+        throw 'Postup did not bootstrap Key Vault access and configure the blueprint secret after viewer bootstrap.'
     }
     $activationCall = Get-Content -LiteralPath $viewerActivationCallsPath -Raw | ConvertFrom-Json
     if ($activationCall.environment -ne $environmentName) {
@@ -619,6 +970,49 @@ throw 'Simulated W365 setup failure.'
     if ($failureManifest.w365.pool.disposition -ne 'created') {
         throw 'Postup did not preserve partial ownership evidence after failure.'
     }
+
+    Reset-Calls
+    Write-TestEnvironment -Complete:$false
+    $env:ENABLE_W365 = 'true'
+    $env:W365_ENABLED = 'false'
+    $env:W365_AZD_UP_WRAPPER = 'true'
+    $env:W365_AZD_UP_RUN_ID = 'viewer-disabled-failure'
+    $finalDeploymentFailed = $false
+    try {
+        & $scriptPath `
+            -RepositoryRoot $tempRoot `
+            -PhaseTwoPreparationScriptPath $mockPhaseTwoPath `
+            -W365SetupScriptPath $failingFinalDeploymentPath `
+            -ViewerBootstrapScriptPath $mockViewerPath `
+            -ViewerSecretsScriptPath $mockViewerSecretsPath `
+            -AgentDeploymentScriptPath $mockAgentDeployPath
+    }
+    catch {
+        $finalDeploymentFailed = $_.Exception.Message -match 'Hosted agent redeployment failed'
+    }
+    $failedFinalEnvironment = Get-Content -LiteralPath $environmentPath -Raw
+    if (!$finalDeploymentFailed -or
+        $failedFinalEnvironment -notmatch '(?m)^W365_ENABLED="true"\r?$' -or
+        $failedFinalEnvironment -notmatch '(?m)^W365_AGENT_REDEPLOY_PENDING="?true"?\r?$' -or
+        $failedFinalEnvironment -match '(?m)^W365_AZD_UP_POSTUP_RUN_ID=') {
+        throw 'Viewer-disabled final hosted-agent deployment failure did not retain a recovery obligation.'
+    }
+    $env:W365_AZD_UP_RUN_ID = 'viewer-disabled-recovery'
+    & $scriptPath `
+        -RepositoryRoot $tempRoot `
+        -PhaseTwoPreparationScriptPath $mockPhaseTwoPath `
+        -W365SetupScriptPath $mockW365Path `
+        -ViewerBootstrapScriptPath $mockViewerPath `
+        -ViewerSecretsScriptPath $mockViewerSecretsPath `
+        -AgentDeploymentScriptPath $mockAgentDeployPath
+    $viewerDisabledRecovery = Get-Content -LiteralPath $environmentPath -Raw
+    if (!(Test-Path -LiteralPath $agentDeployCallsPath) -or
+        $viewerDisabledRecovery -notmatch '(?m)^W365_AGENT_REDEPLOY_PENDING="?false"?\r?$' -or
+        $viewerDisabledRecovery -notmatch '(?m)^W365_AZD_UP_POSTUP_RUN_ID="?viewer-disabled-recovery"?\r?$') {
+        throw 'Viewer-disabled W365 setup did not recover the retained hosted-agent deployment obligation.'
+    }
+    $env:W365_AZD_UP_WRAPPER = ''
+    $env:W365_AZD_UP_RUN_ID = ''
 
     Reset-Calls
     $env:W365_POSTUP_IN_PROGRESS = 'true'

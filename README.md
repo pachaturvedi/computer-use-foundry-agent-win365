@@ -116,23 +116,13 @@ Create the environment and deploy:
 azd env new "<resource-prefix>-dev" `
     --subscription "<subscription-id>" `
     --location eastus
-pwsh -NoProfile -File .\scripts\Invoke-AzdUp.ps1 `
-    -Environment "<resource-prefix>-dev" `
-    -ConfirmResourceChanges
+azd up --environment "<resource-prefix>-dev"
 ```
 
-The wrapper runs `azd up`, forwards line-delimited progress and recognized
-interactive prompts, and preserves errors. It
-suppresses the Foundry extension's generic service-level next steps because
-they are emitted after the bootstrap agent deploys, before Windows 365 and the
-optional viewer finish. One scenario-specific `Next` section is printed only
-after the full workflow completes. It also replaces azd's core-only elapsed
-time with an end-to-end installation time and verifies the persisted final
-state, so canceling an interactive setup step cannot be reported as a
-successful complete installation. The final deployment table and next commands
-are the last output from a successful wrapper run. Foundry-only runs print
-bootstrap verification and the explicit command for enabling phase two instead
-of the invoice scenario.
+The checked-in azd hooks perform both deployment phases. Wait for the final
+sample deployment table and scenario-specific `Next` section; Foundry may print
+generic service-level guidance after the bootstrap agent deploys, before W365
+and the optional viewer finish.
 
 The command deploys the Foundry bootstrap first. It then asks whether to reuse
 an existing W365 agent pool, create a new pool, or keep a Foundry-only
@@ -167,17 +157,13 @@ For a Foundry-only bootstrap:
 
 ```powershell
 azd env set ENABLE_W365 false --environment "<resource-prefix>-dev"
-pwsh -NoProfile -File .\scripts\Invoke-AzdUp.ps1 `
-    -Environment "<resource-prefix>-dev" `
-    -ConfirmResourceChanges
+azd up --environment "<resource-prefix>-dev"
 ```
 
-Do not run `azd init` or `azd ai agent init` inside this clone. Direct `azd up`
-remains supported, but the Foundry extension prints its generic next steps
-before this sample's `postup` installation finishes. Use the wrapper above for
-the customer-facing one-command experience. Use the [deployment
-guide](docs/DEPLOYMENT.md) when reusing a shared Foundry project or when
-separate previews and approvals are required.
+Do not run `azd init` or `azd ai agent init` inside this clone. Use the
+[deployment guide](docs/DEPLOYMENT.md) when reusing a shared Foundry project,
+requiring separate previews and approvals, or using the optional guarded
+PowerShell wrapper for unattended execution and stricter cancellation handling.
 
 ## Verify live behavior
 

@@ -14,7 +14,7 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
     $script:agentClientId = '33333333-3333-3333-3333-333333333333'
     $script:viewerObjectId = '44444444-4444-4444-4444-444444444444'
     $script:billingPlanId = '66666666-6666-6666-6666-666666666666'
-    $script:nextGrantIndex = 0
+    $script:nextGrantIndex = 1
     $script:nextInheritanceIndex = 0
     $script:nextFicIndex = 0
     $script:nextAssignmentIndex = 0
@@ -39,16 +39,27 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
             Viewer = @{ id = $script:viewerObjectId; servicePrincipalType = 'ManagedIdentity' }
             Pool = $null
             User = $null
-            Grants = @()
+            Grants = @(@{
+                id = 'existing-grant'
+                clientId = 'blueprint-sp'
+                resourceId = 'sp-da81128c-e5b5-4f9e-8d89-50d906f107c5'
+                consentType = 'AllPrincipals'
+                scope = 'Existing.Read'
+            })
             Inheritance = @()
             Fics = @()
             Assignments = @()
             Operations = @()
+            FailAfterGrantPatchCommit = $false
         }
     }
 
     function Get-MockGraphState {
         return ($script:state | ConvertTo-Json -Depth 80 | ConvertFrom-Json -AsHashtable)
+    }
+
+    function Set-GrantPatchCommitInterruption {
+        $script:state.FailAfterGrantPatchCommit = $true
     }
 
     function Connect-MgGraph {
@@ -110,6 +121,9 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
             if ($path -like 'v1.0/oauth2PermissionGrants?*') { return @{ value = @($script:state.Grants) } }
             if ($path -like 'beta/users/microsoft.graph.agentUser?*') { return @{ value = @($script:state.User | Where-Object { $_ }) } }
             if ($path -like 'beta/deviceManagement/virtualEndpoint/cloudPcPools/*/assignments') { return @{ value = @($script:state.Assignments) } }
+            if ($path -eq 'beta/deviceManagement/virtualEndpoint/cloudPcPools') {
+                return @{ value = @($script:state.Pool | Where-Object { $_ }) }
+            }
             if ($path -like 'beta/deviceManagement/virtualEndpoint/cloudPcPools/*') {
                 if ($null -eq $script:state.Pool) {
                     throw 'Pool not found'
@@ -188,6 +202,10 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
                 $grantId = $path.Split('/')[-1]
                 $grant = @($script:state.Grants | Where-Object { $_.id -eq $grantId })[0]
                 $grant.scope = $bodyObject.scope
+                if ($script:state.FailAfterGrantPatchCommit) {
+                    $script:state.FailAfterGrantPatchCommit = $false
+                    throw 'Simulated interruption after remote permission-grant commit.'
+                }
                 return
             }
 
@@ -233,7 +251,7 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
     }
 
     Reset-MockGraphState
-    Export-ModuleMember -Function Connect-MgGraph, Get-MgContext, Invoke-MgGraphRequest, Reset-MockGraphState, Get-MockGraphState
+    Export-ModuleMember -Function Connect-MgGraph, Get-MgContext, Invoke-MgGraphRequest, Reset-MockGraphState, Get-MockGraphState, Set-GrantPatchCommitInterruption
 }
 
 $module | Import-Module -Global
@@ -311,6 +329,23 @@ try {
         OwnershipManifestPath = $ownershipManifestPath
     }
 
+    Set-GrantPatchCommitInterruption
+    $interrupted = $false
+    try {
+        & "$scriptsRoot\Setup-W365.ps1" @setupArgs | Out-Null
+    }
+    catch {
+        $interrupted = $_.Exception.Message -match 'Simulated interruption after remote permission-grant commit'
+    }
+    if (!$interrupted) {
+        throw 'Setup did not surface the simulated post-commit interruption.'
+    }
+    $interruptedManifest = Get-Content -LiteralPath $ownershipManifestPath -Raw | ConvertFrom-Json -AsHashtable
+    if (!$interruptedManifest.operations.Contains('graph.permissionGrant.da81128c-e5b5-4f9e-8d89-50d906f107c5') -or
+        [string](Get-MockGraphState).Grants[0].scope -eq 'Existing.Read') {
+        throw 'Setup did not preserve the prior grant scope across the ambiguous remote outcome.'
+    }
+
     $setupOutput = & "$scriptsRoot\Setup-W365.ps1" @setupArgs
     $poolId = Get-OutputValue -Lines $setupOutput -Name 'W365_POOL_ID'
     $agentUserId = Get-OutputValue -Lines $setupOutput -Name 'W365_AGENT_USER_ID'
@@ -327,6 +362,9 @@ try {
         $manifest.w365.agentUser.disposition -ne 'created' -or
         $manifest.w365.assignment.disposition -ne 'created') {
         throw 'Setup did not record created W365 ownership correctly.'
+    }
+    if ($manifest.operations.Count -ne 0) {
+        throw 'Setup retry did not reconcile all pending ownership operations.'
     }
     $permissionGrantKeys = @($manifest.graph.permissionGrants.Keys)
     $inheritanceKeys = @($manifest.graph.inheritablePermissions.Keys)
@@ -351,7 +389,8 @@ try {
     if ($null -ne $state.Pool -or $null -ne $state.User) {
         throw 'Composed teardown did not delete the setup-created pool or agent user.'
     }
-    if ($state.Assignments.Count -ne 0 -or $state.Fics.Count -ne 0 -or $state.Grants.Count -ne 0 -or $state.Inheritance.Count -ne 0) {
+    if ($state.Assignments.Count -ne 0 -or $state.Fics.Count -ne 0 -or $state.Grants.Count -ne 1 -or
+        [string]$state.Grants[0].scope -ne 'Existing.Read' -or $state.Inheritance.Count -ne 0) {
         throw 'Composed teardown did not delete the setup-created W365/Graph artifacts.'
     }
 
@@ -384,7 +423,7 @@ try {
         throw 'Cleanup did not mark the ownership manifest complete.'
     }
 
-    Write-Output 'Offline setup-to-cleanup flow: setup manifest contract, reverse-order teardown, and blueprint restoration passed.'
+    Write-Output 'Offline setup-to-cleanup flow: post-commit retry ownership, reverse-order teardown, and blueprint restoration passed.'
 }
 finally {
     if ($null -ne $savedLocalConfig) {

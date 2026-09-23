@@ -74,7 +74,7 @@ else {
     Write-Host "     azd ai agent show $agentName --environment $Environment"
     Write-Host '  2. When tenant onboarding is ready, enable phase two:'
     Write-Host "     azd env set ENABLE_W365 true --environment $Environment"
-    Write-Host "     pwsh -NoProfile -File .\scripts\Invoke-AzdUp.ps1 -Environment $Environment -ConfirmResourceChanges"
+    Write-Host "     azd up --environment $Environment"
 }
 Write-SampleVerbose -Component 'deployment-summary' -Message 'Final values were loaded from the selected azd environment.'
 Write-SampleDebug -Component 'deployment-summary' -Message "Environment file contains $($values.Count) non-secret entries."

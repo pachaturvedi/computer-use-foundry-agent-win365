@@ -69,9 +69,7 @@ Create an isolated environment and run the complete deployment:
 azd env new "<resource-prefix>-dev" `
     --subscription "<subscription-id>" `
     --location eastus
-pwsh -NoProfile -File .\scripts\Invoke-AzdUp.ps1 `
-    -Environment "<resource-prefix>-dev" `
-    -ConfirmResourceChanges
+azd up --environment "<resource-prefix>-dev"
 ```
 
 Before provisioning, the `preup` hook prints the generated resource names,
@@ -92,17 +90,29 @@ The interactive flow then:
 7. deploys the same agent name with W365 enabled; and
 8. activates the viewer when all tenant-specific inputs are available.
 
-The wrapper forwards line- or carriage-return-delimited `azd up` output and
-recognized interactive prompts without changing deployment behavior. It
-suppresses generic Foundry next steps that otherwise appear while
-`postup` is still configuring W365 and the viewer. After all phases succeed,
-it verifies the persisted agent, state, viewer, and W365 completion flags,
-replaces the core-only elapsed time with the end-to-end duration, and prints
-the final deployment table and mode-specific next commands last. W365-enabled
-runs print the invoice smoke test; Foundry-only runs print bootstrap
-verification and the command that explicitly enables phase two. If an
-interactive prompt is canceled, the wrapper reports an incomplete installation
-and preserves the environment for a safe retry.
+The checked-in azd hooks complete W365 and viewer setup after the Foundry
+bootstrap. Wait for the final sample deployment table and mode-specific next
+commands; generic Foundry guidance can appear before `postup` finishes.
+
+For unattended execution or stricter Windows process-tree cancellation,
+same-environment locking, and final-state verification, use the optional
+wrapper:
+
+```powershell
+pwsh -NoProfile -File .\scripts\Invoke-AzdUp.ps1 `
+    -Environment "<resource-prefix>-dev" `
+    -ConfirmResourceChanges `
+    -NoPrompt
+```
+
+Before viewer bootstrap or activation can change runtime configuration, post-up
+persists `W365_AGENT_REDEPLOY_CHECK_PENDING=true` with the previous viewer URL
+and live state. Reconciliation clears that comparison marker when nothing
+changed or promotes it to `W365_AGENT_REDEPLOY_PENDING=true` when hosted-agent
+redeployment is required. The confirmed marker is cleared only after the
+hosted agent is redeployed successfully. A failed or canceled run cannot report
+completion while either marker remains. Correct the reported prerequisite and
+rerun `azd up --environment "<resource-prefix>-dev"` for the same environment.
 
 Expected result:
 
@@ -126,9 +136,7 @@ To deploy only the Foundry bootstrap:
 
 ```powershell
 azd env set ENABLE_W365 false --environment "<resource-prefix>-dev"
-pwsh -NoProfile -File .\scripts\Invoke-AzdUp.ps1 `
-    -Environment "<resource-prefix>-dev" `
-    -ConfirmResourceChanges
+azd up --environment "<resource-prefix>-dev"
 ```
 
 Bootstrap is intentionally W365-disabled. `/health` is healthy, while Responses
@@ -355,7 +363,8 @@ azd env set W365_BLUEPRINT_CREDENTIAL_MODE client_secret `
 
 pwsh -NoProfile -File .\scripts\Set-ViewerSecrets.ps1 `
     -Environment $environment `
-    -BlueprintOnly
+    -BlueprintOnly `
+    -BootstrapOperatorAccess
 ```
 
 `HOSTED_ALLOWED_USER_ID=pending` denies W365 access until the intended Foundry
@@ -396,13 +405,22 @@ Expected result:
 - an enabled immutable agent version is active.
 
 If W365 setup succeeds but final agent deployment fails, fix the reported
-deployment prerequisite and rerun only:
+deployment prerequisite, then rerun the complete workflow for the same
+environment:
 
 ```powershell
-pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
-    -Environment $environment `
-    -Mode DeployAgent `
-    -ConfirmResourceChanges
+azd up --environment $environment
+```
+
+The retained ownership and redeployment markers make this retry idempotent. Do
+not clear them manually or invoke the agent deployment stage directly. If
+recovery cannot complete, use the ownership-aware teardown:
+
+```powershell
+pwsh -NoProfile -File .\scripts\Invoke-AzdDown.ps1 `
+    -EnvironmentName $environment `
+    -Purge `
+    -Force
 ```
 
 ## Bind the hosted operator
@@ -481,10 +499,23 @@ For a complete dedicated-environment update, rerun:
 ```powershell
 $environment = "<azd-environment-name>"
 
-pwsh -NoProfile -File .\scripts\Invoke-AzdUp.ps1 `
-    -Environment $environment `
-    -ConfirmResourceChanges
+azd up --environment $environment
 ```
+
+If deployment fails or is canceled, treat the deployment as partial. Inspect
+the reported stage and retained ownership evidence before retrying the same
+environment. If the environment will be abandoned, remove it through the
+ownership-aware teardown:
+
+```powershell
+pwsh -NoProfile -File .\scripts\Invoke-AzdDown.ps1 `
+    -EnvironmentName $environment `
+    -Purge `
+    -Force
+```
+
+Do not replace this command with raw resource-group deletion; the wrapper
+cleans tenant-owned W365 and Entra resources before Azure infrastructure.
 
 Stop or drain active tasks before deployment or identity changes. Preserve the
 same Foundry agent name and reject unexpected blueprint or agent identity
@@ -499,9 +530,7 @@ $environment = "<azd-environment-name>"
 
 azd env set SAMPLE_LOG_LEVEL verbose --environment $environment
 
-pwsh -NoProfile -File .\scripts\Invoke-AzdUp.ps1 `
-    -Environment $environment `
-    -ConfirmResourceChanges
+azd up --environment $environment
 ```
 
 Supported values are `summary`, `verbose`, and `debug`. PowerShell scripts also
@@ -554,7 +583,8 @@ End known active sessions, review the ownership manifests, then run:
 ```powershell
 pwsh -NoProfile -File .\scripts\Invoke-AzdDown.ps1 `
     -EnvironmentName "<azd-environment-name>" `
-    -Purge
+    -Purge `
+    -Force
 ```
 
 The wrapper:
@@ -630,9 +660,10 @@ retained failed environment.
 | Foundry returns 403 | Verify project-scoped Foundry data-plane roles and wait for RBAC propagation; do not grant broad roles blindly. |
 | Model validation or deployment fails | Confirm the exact deployment name, supported capabilities, SKU, quota, version, and region. No agent version is published until validation succeeds. |
 | Viewer managed-environment quota is exhausted | Explicitly select an approved existing ACA environment or request quota. The deployment never selects one automatically. |
-| Viewer remains in bootstrap mode | Obtain the approved screen-share values, complete OIDC/Key Vault setup in [Viewer](VIEWER.md), and rerun `pwsh -NoProfile -File .\scripts\Invoke-AzdUp.ps1 -Environment "<azd-environment-name>" -ConfirmResourceChanges`. |
+| Viewer remains in bootstrap mode | Obtain the approved screen-share values, complete OIDC/Key Vault setup in [Viewer](VIEWER.md), and rerun `azd up --environment "<azd-environment-name>"`. |
+| Hosted-agent redeployment remains pending | Configure the operator values in [Configure the operator and default credential mode](#configure-the-operator-and-default-credential-mode) and [Bind the hosted operator](#bind-the-hosted-operator), then rerun `azd up` for the same environment. Do not clear `W365_AGENT_REDEPLOY_PENDING` manually. |
 | W365 setup is blocked | Follow the exact prerequisite or ownership error in [Windows 365 setup](W365-SETUP.md); do not bypass parent, consent, billing, or manifest checks. |
-| Agent deployment fails after W365 setup | Rerun only the guarded `DeployAgent` command after fixing the reported deployment prerequisite. |
+| Agent deployment fails after W365 setup or viewer configuration changes | Fix the reported prerequisite, then rerun `azd up` for the same environment so the durable redeployment marker is reconciled. |
 | Invocation is disconnected or ambiguous | Do not replay. Inspect sanitized logs and follow [fail-closed recovery](ARCHITECTURE.md#fail-closed-recovery). |
 | Teardown reports a missing layer deployment | Use `Invoke-AzdDown.ps1`; it continues to remaining layers and verifies residual resource groups. |
 | Teardown reports any other error | Stop and resolve the exact authentication, authorization, ownership, provider, or residual-resource failure. |

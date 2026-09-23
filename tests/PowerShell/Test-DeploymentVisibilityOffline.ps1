@@ -126,7 +126,7 @@ try {
     if ($bootstrapSummary -notmatch 'Verify the W365-disabled bootstrap agent' -or
         $bootstrapSummary -notmatch 'azd ai agent show win365-desktop-agent --environment sample-dev' -or
         $bootstrapSummary -notmatch 'azd env set ENABLE_W365 true --environment sample-dev' -or
-        $bootstrapSummary -notmatch [regex]::Escape('pwsh -NoProfile -File .\scripts\Invoke-AzdUp.ps1 -Environment sample-dev -ConfirmResourceChanges') -or
+        $bootstrapSummary -notmatch [regex]::Escape('azd up --environment sample-dev') -or
         $bootstrapSummary -match 'Run the repository invoice scenario') {
         throw "Foundry-only deployment summary was incomplete or misleading: $bootstrapSummary"
     }
@@ -150,6 +150,17 @@ try {
     $foundryParameters = Get-Content -LiteralPath (Join-Path $root 'infra\foundry\main.parameters.json') -Raw
     $stateParameters = Get-Content -LiteralPath (Join-Path $root 'infra\state\main.parameters.json') -Raw
     $viewerParameters = Get-Content -LiteralPath (Join-Path $root 'infra\viewer\main.parameters.json') -Raw
+    $deploymentGuide = Get-Content -LiteralPath (Join-Path $root 'docs\DEPLOYMENT.md') -Raw
+    $azdDownCommand = Get-Command (Join-Path $root 'scripts\Invoke-AzdDown.ps1')
+    if ($azdDownCommand.Parameters.Keys -notcontains 'EnvironmentName' -or
+        $azdDownCommand.Parameters.Keys -notcontains 'Purge' -or
+        $azdDownCommand.Parameters.Keys -notcontains 'Force' -or
+        $azdDownCommand.Parameters.Keys -contains 'ConfirmResourceChanges' -or
+        $deploymentGuide -match 'Invoke-AzdDown\.ps1\s+`\r?\n\s+-Environment\s' -or
+        $deploymentGuide -notmatch 'Invoke-AzdDown\.ps1\s+`\r?\n\s+-EnvironmentName\s' -or
+        $deploymentGuide -notmatch '(?ms)Invoke-AzdDown\.ps1\s+`.*?-Purge\s+`.*?-Force') {
+        throw 'Deployment teardown guidance does not use the exact EnvironmentName, Purge, and Force parameters.'
+    }
     if ($foundryBicep -notmatch "resource environmentResourceGroup 'Microsoft.Resources/resourceGroups@" -or
         $stateBicep -notmatch "resource environmentResourceGroup 'Microsoft.Resources/resourceGroups@[^']+' existing" -or
         $viewerBicep -notmatch "resource environmentResourceGroup 'Microsoft.Resources/resourceGroups@[^']+' existing" -or

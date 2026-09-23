@@ -8,6 +8,8 @@ Set-StrictMode -Version Latest
 
 $root = Split-Path (Split-Path $PSScriptRoot)
 $global:viewerRoleCreates = [System.Collections.Generic.List[object]]::new()
+$global:viewerRoleAssignments = [ordered]@{}
+$global:interruptRoleCreate = $true
 
 function azd {
     $arguments = @($args)
@@ -34,23 +36,48 @@ function az {
         return '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/sample-rg/providers/Microsoft.KeyVault/vaults/single-w365-vault'
     }
     if ($arguments[0] -eq 'role' -and $arguments[1] -eq 'assignment' -and $arguments[2] -eq 'list') {
+        $principalIndex = [Array]::IndexOf($arguments, '--assignee-object-id')
+        $principalId = $arguments[$principalIndex + 1]
+        if ($global:viewerRoleAssignments.Contains($principalId)) {
+            return $global:viewerRoleAssignments[$principalId]
+        }
         return ''
     }
     if ($arguments[0] -eq 'role' -and $arguments[1] -eq 'assignment' -and $arguments[2] -eq 'create') {
         $roleIndex = [Array]::IndexOf($arguments, '--role')
         $principalIndex = [Array]::IndexOf($arguments, '--assignee-object-id')
         $typeIndex = [Array]::IndexOf($arguments, '--assignee-principal-type')
+        $createdAssignmentId = "/subscriptions/11111111-1111-1111-1111-111111111111/providers/Microsoft.Authorization/roleAssignments/$($global:viewerRoleCreates.Count + 1)"
         $global:viewerRoleCreates.Add([pscustomobject]@{
             Role = $arguments[$roleIndex + 1]
             PrincipalId = $arguments[$principalIndex + 1]
             PrincipalType = $arguments[$typeIndex + 1]
         })
-        return "/subscriptions/11111111-1111-1111-1111-111111111111/providers/Microsoft.Authorization/roleAssignments/$($global:viewerRoleCreates.Count)"
+        $global:viewerRoleAssignments[$arguments[$principalIndex + 1]] = $createdAssignmentId
+        if ($global:interruptRoleCreate) {
+            $global:interruptRoleCreate = $false
+            throw 'Simulated interruption after remote role-assignment commit.'
+        }
+        return $createdAssignmentId
     }
     throw "Unexpected az call: $($arguments -join ' ')"
 }
 
 try {
+    $interrupted = $false
+    try {
+        & (Join-Path $root 'scripts\Set-W365KeyVaultRoles.ps1') -IncludeViewer
+    }
+    catch {
+        $interrupted = $_.Exception.Message -match 'Simulated interruption after remote role-assignment commit'
+    }
+    $manifestPath = Join-Path $root '.azure\viewer-rbac-test\viewer-ownership.json'
+    $pendingManifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json -AsHashtable
+    if (!$interrupted -or
+        !$pendingManifest.operations.Contains('keyVaultRoleAssignment.operatorSecretsOfficer')) {
+        throw 'The Key Vault role flow did not preserve intent after the simulated ambiguous outcome.'
+    }
+
     & (Join-Path $root 'scripts\Set-W365KeyVaultRoles.ps1') -IncludeViewer
 
     if ($global:viewerRoleCreates.Count -ne 2) {
@@ -73,7 +100,6 @@ try {
         throw 'The viewer Key Vault flow assigned an overprivileged role.'
     }
 
-    $manifestPath = Join-Path $root '.azure\viewer-rbac-test\viewer-ownership.json'
     if (!(Test-Path -LiteralPath $manifestPath)) {
         throw 'The viewer Key Vault flow did not record role ownership.'
     }
@@ -82,10 +108,15 @@ try {
         $manifest.keyVaultRoleAssignments.viewerSecretsUser.disposition -ne 'created') {
         throw 'The viewer Key Vault flow did not mark created RBAC assignments as owned.'
     }
+    if (@($manifest.operations.PSObject.Properties).Count -ne 0) {
+        throw 'The viewer Key Vault flow did not clear reconciled in-flight operations.'
+    }
 }
 finally {
     Remove-Item -LiteralPath (Join-Path $root '.azure\viewer-rbac-test') -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Variable -Name viewerRoleCreates -Scope Global -ErrorAction SilentlyContinue
+    Remove-Variable -Name viewerRoleAssignments -Scope Global -ErrorAction SilentlyContinue
+    Remove-Variable -Name interruptRoleCreate -Scope Global -ErrorAction SilentlyContinue
 }
 
 Write-Host 'W365 Key Vault RBAC offline tests passed.'
