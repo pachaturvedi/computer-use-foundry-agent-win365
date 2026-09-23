@@ -367,34 +367,103 @@ function Assert-W365AgentCertificateKeyVaultAccessConfigured {
     Write-DeploymentEvent DECISION "Confirmed certificate '$certificateName' exists in '$vaultName' and agent principal '$agentPrincipalId' has Key Vault Certificate User and Key Vault Crypto User on it."
 }
 
+function Get-HostedOperatorBindingFingerprint {
+    param([Parameter(Mandatory)][string]$InvocationOutput)
+
+    $bindingResponses = @(
+        foreach ($line in @($InvocationOutput -split '\r?\n')) {
+            $candidate = $line.Trim()
+            if (!$candidate.StartsWith('{') -or !$candidate.EndsWith('}')) {
+                continue
+            }
+
+            try {
+                $response = $candidate | ConvertFrom-Json -Depth 10
+            }
+            catch {
+                continue
+            }
+            $errorProperty = $response.PSObject.Properties['error']
+            if ($null -eq $errorProperty) {
+                continue
+            }
+            $codeProperty = $errorProperty.Value.PSObject.Properties['code']
+            if ($null -ne $codeProperty -and $codeProperty.Value -eq 'operator_binding_required') {
+                $response
+            }
+        }
+    )
+    if ($bindingResponses.Count -eq 0) {
+        return ''
+    }
+    if ($bindingResponses.Count -ne 1) {
+        throw 'Hosted-agent operator binding response was ambiguous. The binding was not changed.'
+    }
+
+    $fingerprintProperty = $bindingResponses[0].error.PSObject.Properties['fingerprint']
+    $fingerprint = if ($null -eq $fingerprintProperty) { '' } else { [string]$fingerprintProperty.Value }
+    if ($fingerprint -cnotmatch '^sha256:[0-9a-f]{64}$') {
+        throw 'Hosted-agent operator binding response was missing a single valid sha256 fingerprint. The binding was not changed.'
+    }
+
+    return $fingerprint
+}
+
 function Invoke-HostedAgentSmokeTest {
     if (!$SmokeInvoke) {
         return
     }
 
-    $agentVersion = Get-AzdOptionalValue 'AGENT_WIN365_DESKTOP_AGENT_VERSION'
-    if ([string]::IsNullOrWhiteSpace($agentVersion)) {
-        throw 'Hosted-agent smoke invoke requires AGENT_WIN365_DESKTOP_AGENT_VERSION after deployment.'
-    }
+    for ($attempt = 1; $attempt -le 2; $attempt++) {
+        $agentVersion = Get-AzdOptionalValue 'AGENT_WIN365_DESKTOP_AGENT_VERSION'
+        if ([string]::IsNullOrWhiteSpace($agentVersion)) {
+            throw 'Hosted-agent smoke invoke requires AGENT_WIN365_DESKTOP_AGENT_VERSION after deployment.'
+        }
 
-    Write-DeploymentEvent STEP 'Smoke-testing the hosted agent with a minimal invocation to confirm the deployed container passes readiness.'
-    $smokeArguments = @(
-        'ai', 'agent', 'invoke', 'win365-desktop-agent',
-        '--version', $agentVersion,
-        '--new-session', $SmokeInvokePrompt
-    )
-    Write-DeploymentEvent COMMAND "azd $($smokeArguments -join ' ')"
-    $smokeOutput = (& $azd.Path @smokeArguments 2>&1 | Out-String)
-    $smokeOutput | Write-Host
-    if ($LASTEXITCODE -eq 0) {
-        return
-    }
+        Write-DeploymentEvent STEP 'Smoke-testing the hosted agent with a minimal invocation to confirm the deployed container passes readiness.'
+        $smokeArguments = @(
+            'ai', 'agent', 'invoke', 'win365-desktop-agent',
+            '--version', $agentVersion,
+            '--new-session', $SmokeInvokePrompt
+        )
+        Write-DeploymentEvent COMMAND "azd $($smokeArguments -join ' ')"
+        $smokeOutput = (& $azd.Path @smokeArguments 2>&1 | Out-String)
+        $smokeOutput | Write-Host
+        if ($LASTEXITCODE -eq 0) {
+            return
+        }
 
-    if ($smokeOutput -match 'session_not_ready' -or $smokeOutput -match 'HTTP 424') {
-        throw "Hosted-agent smoke invoke failed after deploy: the deployed container did not become ready. Check 'azd ai agent monitor win365-desktop-agent --tail 150' for the container's startup logs (a common cause is a missing required environment variable such as OPERATOR_TENANT_ID, OPERATOR_OBJECT_ID, or HOSTED_ALLOWED_USER_ID)."
-    }
+        if ($smokeOutput -match 'session_not_ready' -or $smokeOutput -match 'HTTP 424') {
+            throw "Hosted-agent smoke invoke failed after deploy: the deployed container did not become ready. Check 'azd ai agent monitor win365-desktop-agent --tail 150' for the container's startup logs (a common cause is a missing required environment variable such as OPERATOR_TENANT_ID, OPERATOR_OBJECT_ID, or HOSTED_ALLOWED_USER_ID)."
+        }
 
-    Write-DeploymentEvent DECISION 'Smoke invoke reached the agent but was rejected for an application-level reason (not a readiness failure); the deployed container is healthy.'
+        $bindingFingerprint = Get-HostedOperatorBindingFingerprint -InvocationOutput $smokeOutput
+        if ([string]::IsNullOrWhiteSpace($bindingFingerprint)) {
+            Write-DeploymentEvent DECISION 'Smoke invoke reached the agent but was rejected for an application-level reason (not a readiness failure); the deployed container is healthy.'
+            return
+        }
+
+        if ($attempt -ne 1) {
+            throw 'Hosted-agent operator binding was still required after the one permitted binding redeployment. The workflow stopped without another mutation.'
+        }
+        $configuredBinding = Get-AzdOptionalValue 'HOSTED_ALLOWED_USER_ID'
+        if ($configuredBinding -ne 'pending') {
+            throw "Hosted-agent smoke invoke requested operator binding, but HOSTED_ALLOWED_USER_ID is already configured. The existing binding was preserved; verify that the intended Foundry caller is invoking this environment."
+        }
+
+        Write-DeploymentEvent DECISION 'Binding the Foundry caller from the guarded deployment smoke invoke; an existing concrete binding is never replaced automatically.'
+        Invoke-Azd @(
+            'env', 'set', 'HOSTED_ALLOWED_USER_ID', $bindingFingerprint,
+            '--environment', $environmentName
+        )
+        [Environment]::SetEnvironmentVariable(
+            'HOSTED_ALLOWED_USER_ID',
+            $bindingFingerprint,
+            'Process')
+        Write-DeploymentEvent STEP 'Redeploying the same hosted-agent name once so the operator binding reaches a new immutable version.'
+        Invoke-Azd @('deploy', 'win365-desktop-agent', '--no-prompt')
+        Invoke-Azd @('ai', 'agent', 'doctor')
+    }
 }
 
 function Assert-ResourceConfirmation {

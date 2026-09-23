@@ -587,21 +587,33 @@ pwsh -NoProfile -File .\scripts\Invoke-AzdDown.ps1 `
 `x-agent-user-id` is a Foundry-injected opaque caller partition. It is not the
 human operator's Entra object ID and not the W365 agent-user ID.
 
-When the partition is unknown:
+During the guarded `azd up` workflow, operator binding is automatic when
+`HOSTED_ALLOWED_USER_ID` is exactly `pending`:
 
-1. deploy with `HOSTED_ALLOWED_USER_ID=pending`;
-2. have only the intended operator issue one identifiable invocation;
-3. correlate the denied request's `sha256:` fingerprint;
-4. bind that fingerprint and redeploy.
+1. the first immutable version is deployed fail-closed with
+   `HOSTED_ALLOWED_USER_ID=pending`;
+2. the repository-owned post-deploy smoke invocation receives the structured
+   `operator_binding_required` response;
+3. the workflow accepts exactly one valid `sha256:` fingerprint, persists it
+   to the selected azd environment, and redeploys the same agent name once;
+4. the smoke invocation is retried against the new immutable version.
+
+The workflow never accepts a caller-supplied fingerprint, never records the raw
+platform header, and never replaces an existing concrete binding. Missing,
+malformed, ambiguous, or repeated binding responses fail closed.
+
+For recovery after a deployment that did not use the guarded smoke workflow,
+correlate one denied invocation from the intended operator, then bind its safe
+fingerprint explicitly and redeploy:
 
 ```powershell
-azd env set HOSTED_ALLOWED_USER_ID "sha256:<fingerprint>" `
+azd env set HOSTED_ALLOWED_USER_ID "sha256:<correlated-fingerprint>" `
     --environment $environment
-
 pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
     -Environment $environment `
     -Mode DeployAgent `
-    -ConfirmResourceChanges
+    -ConfirmResourceChanges `
+    -SmokeInvoke
 ```
 
 Never enroll an uncorrelated caller. If the platform header is missing, stop
