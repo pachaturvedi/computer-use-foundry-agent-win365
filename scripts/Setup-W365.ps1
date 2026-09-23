@@ -1030,6 +1030,9 @@ $AgentUserPrincipalName = Resolve-W365OwnedAgentUserPrincipalName `
     -Domains $domains `
     -ResourcePrefix ([string]$environmentValues['RESOURCE_PREFIX']) `
     -EnvironmentName $(if ($manifestTarget) { $manifestTarget.EnvironmentName } else { '' })
+$agentUserDisplayName = Get-W365AgentUserDisplayName `
+    -EnvironmentName $(if ($manifestTarget) { $manifestTarget.EnvironmentName } else { '' }) `
+    -PrincipalName $AgentUserPrincipalName
 $agentUser = SingleOrNone (List "beta/users/microsoft.graph.agentUser?`$filter=userPrincipalName eq '$AgentUserPrincipalName'") 'agent user'
 if ($agentUser -and $agentUser.identityParentId -ne $agent.id) { throw 'Existing agent user belongs to a different agent identity. Use a new UPN; never reparent implicitly.' }
 # A new pool is created only when no pool is resolvable from any source. $existingManifest is
@@ -1296,7 +1299,7 @@ if (!$agentUser) {
         parentAgentObjectId = [string]$agent.id
     }) | Out-Null
     $agentUser = Graph POST 'beta/users/microsoft.graph.agentUser' @{
-        displayName = "$($agent.displayName) user"; userPrincipalName = $AgentUserPrincipalName
+        displayName = $agentUserDisplayName; userPrincipalName = $AgentUserPrincipalName
         mailNickname = $AgentUserPrincipalName.Split('@')[0]; accountEnabled = $true; identityParentId = $agent.id
     }
     $createdAgentUser = $true

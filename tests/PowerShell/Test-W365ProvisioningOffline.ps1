@@ -160,6 +160,19 @@ try {
     if ($longLocalPart.Length -gt 64 -or $longLocalPart -notmatch '-[0-9a-f]{8}$') {
         throw "Long W365 agent-user UPN was not bounded deterministically: '$longAgentUserPrincipalName'."
     }
+    $agentUserDisplayName = Get-W365AgentUserDisplayName `
+        -EnvironmentName 'Demo 23 Final' `
+        -PrincipalName $agentUserPrincipalName
+    if ($agentUserDisplayName -ne 'W365 agent user - demo-23-final') {
+        throw "Unexpected W365 agent-user display name '$agentUserDisplayName'."
+    }
+    $longAgentUserDisplayName = Get-W365AgentUserDisplayName `
+        -EnvironmentName ('environment-' + ('b' * 80)) `
+        -PrincipalName $longAgentUserPrincipalName
+    if ($longAgentUserDisplayName.Length -gt 64 -or
+        $longAgentUserDisplayName -notmatch '-[0-9a-f]{8}$') {
+        throw "Long W365 agent-user display name was not bounded deterministically: '$longAgentUserDisplayName'."
+    }
     $resolvedAgentUserPrincipalName = Resolve-W365OwnedAgentUserPrincipalName `
         -Domains $domains `
         -ResourcePrefix 'contoso' `

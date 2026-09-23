@@ -372,6 +372,13 @@ The helpers are read-only against Graph/W365 and write only non-secret local
 configuration. Review `config\deployment.local.example.json` for the supported
 shape. Display names are operator notes; IDs are authoritative.
 
+Only newly created agent users receive the readable display name
+`W365 agent user - <azd-environment-name>`. Outside a selected azd environment,
+setup uses the normalized UPN local part instead. Names longer than 64
+characters are shortened with a lowercase, eight-character SHA-256-derived
+suffix. Existing agent-user display names, including older Foundry-derived
+names and operator-customized names, are preserved on rerun.
+
 ### Pool naming when setup creates a pool
 
 A pool display name is required only when setup creates a new pool. Supply it

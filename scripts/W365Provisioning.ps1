@@ -369,6 +369,32 @@ function Get-W365AgentUserPrincipalName {
     return "$localPart@$(ConvertTo-W365DomainName -Value $Domain)"
 }
 
+function Get-W365AgentUserDisplayName {
+    param(
+        [string]$EnvironmentName,
+        [Parameter(Mandatory)][string]$PrincipalName,
+        [ValidateRange(32, 128)][int]$MaximumLength = 64
+    )
+
+    $labelSource = if (![string]::IsNullOrWhiteSpace($EnvironmentName)) {
+        $EnvironmentName
+    }
+    else {
+        $PrincipalName.Split('@')[0]
+    }
+    $label = ConvertTo-W365NameToken -Value $labelSource
+    $displayName = "W365 agent user - $label"
+    if ($displayName.Length -le $MaximumLength) {
+        return $displayName
+    }
+
+    $hashBytes = [Security.Cryptography.SHA256]::HashData(
+        [Text.Encoding]::UTF8.GetBytes($displayName))
+    $suffix = ([Convert]::ToHexString($hashBytes)).Substring(0, 8).ToLowerInvariant()
+    $baseLength = $MaximumLength - $suffix.Length - 1
+    return "$($displayName.Substring(0, $baseLength).TrimEnd('-'))-$suffix"
+}
+
 function Resolve-W365OwnedAgentUserPrincipalName {
     param(
         [string]$ExplicitPrincipalName,

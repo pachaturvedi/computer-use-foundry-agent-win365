@@ -259,12 +259,25 @@ try {
         $manifest.graph.blueprint.appId -ne '11111111-1111-1111-1111-111111111111') {
         throw 'Ownership manifest contents were incomplete.'
     }
+    & $module {
+        if ($script:ledger.User.displayName -ne 'W365 agent user - agent') {
+            throw 'New agent-user creation did not use the readable UPN-based fallback display name.'
+        }
+    }
     $restoreBaselineBeforeRerun = [ordered]@{
         previousScope = $manifest.graph.permissionGrants['90ecec28-f5a6-42b3-9bde-dae1ca98f8b5'].previousScope
         requiredResourceAccessBefore = $manifest.graph.blueprint.requiredResourceAccessBefore
         requiredResourceAccessAdded = $manifest.graph.blueprint.requiredResourceAccessAdded
     } | ConvertTo-Json -Depth 40 -Compress
+    & $module {
+        $script:ledger.User.displayName = 'Operator-owned agent user label'
+    }
     & "$scriptsRoot\Setup-W365.ps1" @setupArgs | Out-Null
+    & $module {
+        if ($script:ledger.User.displayName -ne 'Operator-owned agent user label') {
+            throw 'Setup overwrote an existing operator-owned agent-user display name.'
+        }
+    }
     $manifestAfterRerun = Get-Content -LiteralPath $ownershipManifestPath -Raw | ConvertFrom-Json -AsHashtable
     $restoreBaselineAfterRerun = [ordered]@{
         previousScope = $manifestAfterRerun.graph.permissionGrants['90ecec28-f5a6-42b3-9bde-dae1ca98f8b5'].previousScope
@@ -509,6 +522,9 @@ RESOURCE_PREFIX="offlinepool"
             param($ExpectedName)
             if ($script:ledger.Pool.displayName -ne $ExpectedName) {
                 throw 'The derived pool display name did not reach the pool-create request.'
+            }
+            if ($script:ledger.User.displayName -ne 'W365 agent user - offline-pool-derive') {
+                throw 'New agent-user creation did not use the readable environment-based display name.'
             }
         } $expectedPoolName
         $derivedManifest = Get-Content -LiteralPath $ownershipManifestPath -Raw | ConvertFrom-Json -AsHashtable
