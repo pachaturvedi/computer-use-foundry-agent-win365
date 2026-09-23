@@ -11,12 +11,11 @@ $global:viewerOidcEnvValues = @{
     AZURE_ENV_NAME = $environmentName
     AZURE_TENANT_ID = '11111111-1111-1111-1111-111111111111'
     VIEWER_PUBLIC_URL = 'https://viewer.example.com'
-    W365_KEY_VAULT_NAME = 'w365-vault'
     RESOURCE_PREFIX = 'sample-dev'
     VIEWER_CLIENT_ID = ''
+    VIEWER_IDENTITY_PRINCIPAL_ID = '66666666-6666-6666-6666-666666666666'
 }
 $global:viewerOidcAzdSets = @{}
-$global:viewerOidcKeyVaultWrite = $null
 
 function azd {
     $arguments = @($args)
@@ -31,120 +30,60 @@ function azd {
     throw "Unexpected azd call: $($arguments -join ' ')"
 }
 
-function az {
-    $arguments = @($args)
-    if ($arguments[0] -eq 'keyvault' -and $arguments[1] -eq 'secret') {
-        $global:LASTEXITCODE = 1
-        return ''
-    }
-    $global:LASTEXITCODE = 0
-    if ($arguments[0] -eq 'keyvault' -and $arguments[1] -eq 'show') {
-        return 'https://viewer-vault.vault.azure.net/'
-    }
-    if ($arguments[0] -eq 'account' -and $arguments[1] -eq 'get-access-token') {
-        return 'vault-token'
-    }
-    throw "Unexpected az call: $($arguments -join ' ')"
-}
-
-function Connect-MgGraph {
-    param($TenantId, $Scopes, $ContextScope, [switch]$NoWelcome, [switch]$UseDeviceCode, $InformationAction)
-}
-
+function Connect-MgGraph { param($TenantId, $Scopes, $ContextScope, [switch]$NoWelcome, [switch]$UseDeviceCode, $InformationAction) }
 function Get-MgContext {
-    return [pscustomobject]@{
+    [pscustomobject]@{
         TenantId = '11111111-1111-1111-1111-111111111111'
         AuthType = 'Delegated'
         Scopes = @('Application.ReadWrite.All', 'User.Read')
     }
 }
-
 function Invoke-MgGraphRequest {
     param($Method, $Uri, $Body)
-
     $global:viewerOidcGraphCalls.Add([pscustomobject]@{
-        Method = [string]$Method
-        Uri = [string]$Uri
-        Body = [string]$Body
+        Method = [string]$Method; Uri = [string]$Uri; Body = [string]$Body
     })
     $uriText = [string]$Uri
-    if ($Method -eq 'GET' -and $uriText -match '/applications\?') {
-        return @{ value = @() }
-    }
+    if ($Method -eq 'GET' -and $uriText -match '/applications\?') { return @{ value = @() } }
     if ($Method -eq 'POST' -and $uriText.EndsWith('/applications')) {
-        return @{
-            id = '22222222-2222-2222-2222-222222222222'
-            appId = '33333333-3333-3333-3333-333333333333'
-            displayName = 'sample-dev-viewer'
-            passwordCredentials = @()
-        }
+        return @{ id = '22222222-2222-2222-2222-222222222222'; appId = '33333333-3333-3333-3333-333333333333'; displayName = 'sample-dev-viewer' }
     }
-    if ($Method -eq 'GET' -and $uriText -match '/servicePrincipals\?') {
-        return @{ value = @() }
-    }
-    if ($Method -eq 'POST' -and $uriText.EndsWith('/servicePrincipals')) {
-        return @{ id = '44444444-4444-4444-4444-444444444444' }
-    }
-    if ($Method -eq 'GET' -and $uriText -match '/me\?') {
-        return @{ id = '55555555-5555-5555-5555-555555555555' }
-    }
-    if ($Method -eq 'POST' -and $uriText.EndsWith('/addPassword')) {
-        return @{
-            secretText = 'generated-secret'
-            keyId = '66666666-6666-6666-6666-666666666666'
-            endDateTime = [DateTimeOffset]::UtcNow.AddDays(90).ToString('o')
-        }
+    if ($Method -eq 'GET' -and $uriText -match '/servicePrincipals\?') { return @{ value = @() } }
+    if ($Method -eq 'POST' -and $uriText.EndsWith('/servicePrincipals')) { return @{ id = '44444444-4444-4444-4444-444444444444' } }
+    if ($Method -eq 'GET' -and $uriText -match '/me\?') { return @{ id = '55555555-5555-5555-5555-555555555555' } }
+    if ($Method -eq 'GET' -and $uriText -match '/federatedIdentityCredentials') { return @{ value = @() } }
+    if ($Method -eq 'POST' -and $uriText -match '/federatedIdentityCredentials$') {
+        return @{ id = '77777777-7777-7777-7777-777777777777'; name = 'w365-viewer-66666666-6666-6666-6666-666666666666' }
     }
     throw "Unexpected Graph call: $Method $uriText"
 }
 
-function Invoke-RestMethod {
-    param($Method, $Uri, $Headers, $ContentType, $Body)
-
-    $global:viewerOidcKeyVaultWrite = [pscustomobject]@{
-        Method = [string]$Method
-        Uri = [string]$Uri
-        Body = [string]$Body
-    }
-    return @{}
-}
-
 try {
     & (Join-Path $root 'scripts\Configure-ViewerOidc.ps1')
-
     if ($global:viewerOidcAzdSets.VIEWER_CLIENT_ID -ne '33333333-3333-3333-3333-333333333333' -or
         $global:viewerOidcAzdSets.OPERATOR_OBJECT_ID -ne '55555555-5555-5555-5555-555555555555') {
         throw 'OIDC configuration did not persist the expected non-secret IDs.'
     }
-    if ($null -eq $global:viewerOidcKeyVaultWrite -or
-        $global:viewerOidcKeyVaultWrite.Uri -notmatch '/secrets/w365-viewer-client-secret') {
-        throw 'OIDC configuration did not write the generated credential to Key Vault.'
+    if ($global:viewerOidcGraphCalls.Body -match 'secretText|passwordCredential') {
+        throw 'OIDC configuration attempted to create or store a client secret.'
     }
-    $manifestPath = Join-Path $manifestDirectory 'viewer-ownership.json'
-    if (!(Test-Path -LiteralPath $manifestPath)) {
-        throw 'OIDC configuration did not record its ownership manifest.'
-    }
-    $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-    if ($manifest.application.redirectUri -ne 'https://viewer.example.com/signin-oidc') {
-        throw 'OIDC configuration recorded the wrong redirect URI.'
-    }
-    if ($manifest.application.disposition -ne 'created' -or
-        $manifest.application.credential.disposition -ne 'created' -or
-        $manifest.application.servicePrincipal.disposition -ne 'created') {
-        throw 'OIDC configuration did not record created ownership for the viewer application artifacts.'
-    }
-    $applicationCreate = $global:viewerOidcGraphCalls |
-        Where-Object { $_.Method -eq 'POST' -and $_.Uri.EndsWith('/applications') } |
+    $ficCreate = $global:viewerOidcGraphCalls |
+        Where-Object { $_.Method -eq 'POST' -and $_.Uri -match '/federatedIdentityCredentials$' } |
         Select-Object -First 1
-    if ($null -eq $applicationCreate -or
-        $applicationCreate.Body -notmatch 'https://viewer.example.com/signin-oidc') {
-        throw 'OIDC application creation did not enforce the exact viewer callback.'
+    if ($null -eq $ficCreate -or $ficCreate.Body -notmatch
+        'https://login.microsoftonline.com/11111111-1111-1111-1111-111111111111/v2.0' -or
+        $ficCreate.Body -notmatch '66666666-6666-6666-6666-666666666666' -or
+        $ficCreate.Body -notmatch 'api://AzureADTokenExchange') {
+        throw 'OIDC configuration did not create the exact viewer UAMI federation.'
+    }
+    $manifest = Get-Content (Join-Path $manifestDirectory 'viewer-ownership.json') -Raw | ConvertFrom-Json
+    if ($manifest.graph.federatedIdentityCredentials.'w365-viewer-66666666-6666-6666-6666-666666666666'.disposition -ne 'created') {
+        throw 'OIDC configuration did not record FIC ownership.'
     }
 }
 finally {
     Remove-Item -LiteralPath $manifestDirectory -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Variable -Name viewerOidcGraphCalls, viewerOidcEnvValues, viewerOidcAzdSets, viewerOidcKeyVaultWrite `
-        -Scope Global -ErrorAction SilentlyContinue
+    Remove-Variable -Name viewerOidcGraphCalls, viewerOidcEnvValues, viewerOidcAzdSets -Scope Global -ErrorAction SilentlyContinue
 }
 
 Write-Host 'Configure-ViewerOidc offline tests passed.'

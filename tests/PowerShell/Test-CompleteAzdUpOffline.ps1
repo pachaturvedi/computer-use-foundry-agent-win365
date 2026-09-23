@@ -66,6 +66,7 @@ $trackedEnvironmentVariables = @(
     'VIEWER_PUBLIC_URL',
     'DEPLOY_VIEWER',
     'VIEWER_LIVE_ENABLED',
+    'VIEWER_BOOTSTRAP_ONLY',
     'VIEWER_LIVE_CHANGES_CONFIRMED',
     'W365_KEY_VAULT_NAME',
     'VIEWER_KEY_VAULT_NAME',
@@ -164,6 +165,7 @@ function Write-TestEnvironment {
         'RESOURCE_PREFIX="sample-dev"',
         'FOUNDRY_PROJECT_OWNERSHIP="managed"',
         'VIEWER_LIVE_ENABLED="false"',
+        'VIEWER_BOOTSTRAP_ONLY="true"',
         'W365_BLUEPRINT_CREDENTIAL_MODE="client_secret"',
         'W365_KEY_VAULT_NAME="sample-w365-vault"',
         'W365_POOL_BILLING_PLAN_ID="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"',
@@ -415,6 +417,7 @@ param([string]$Environment)
 } | ConvertTo-Json | Set-Content -LiteralPath $env:TEST_VIEWER_ACTIVATION_CALLS_PATH
 $environmentPath = Join-Path $env:TEST_REPOSITORY_ROOT ".azure\$Environment\.env"
 Add-Content -LiteralPath $environmentPath -Value 'VIEWER_LIVE_ENABLED="true"'
+Add-Content -LiteralPath $environmentPath -Value 'VIEWER_BOOTSTRAP_ONLY="false"'
 '@
     Set-Content -LiteralPath $mockProvisioningProfilePath -Value @'
 param(
@@ -1234,6 +1237,7 @@ throw 'Hosted agent redeployment failed.'
     Write-CompleteManifest
     Add-Content -LiteralPath $environmentPath -Value @(
         'DEPLOY_VIEWER="true"',
+        'VIEWER_BOOTSTRAP_ONLY="false"',
         'W365_KEY_VAULT_NAME="sample-w365-vault"',
         'SCREENSHARE_SDK_URL="https://screenshare.example.com/sdk.js"',
         'SCREENSHARE_FRAME_ORIGINS="https://screenshare.example.com"',

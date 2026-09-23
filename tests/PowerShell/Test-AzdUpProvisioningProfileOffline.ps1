@@ -34,7 +34,8 @@ function Write-EnvironmentFile {
         'AZURE_SUBSCRIPTION_ID="11111111-1111-1111-1111-111111111111"',
         'FOUNDRY_PROJECT_OWNERSHIP="managed"',
         'ENABLE_W365="true"',
-        'W365_ENABLED="false"'
+        'W365_ENABLED="false"',
+        'VIEWER_BOOTSTRAP_ONLY="true"'
     ) + $AdditionalValues
     Set-Content -LiteralPath $environmentPath -Value $values
 }
@@ -259,6 +260,29 @@ throw 'ACA managed-environment discovery ran even though a selection was already
         $skipValues['W365_ONBOARDING_MODE'] -ne 'skip' -or
         $skipValues['VIEWER_HOSTING_MODE'] -ne 'skip') {
         throw 'The explicit Foundry-only choice did not disable W365 and the viewer.'
+    }
+
+    Write-EnvironmentFile -AdditionalValues @(
+        'W365_POOL_ID="22222222-2222-2222-2222-222222222222"',
+        'VIEWER_BOOTSTRAP_ONLY="false"'
+    )
+    $missingInputMessage = ''
+    try {
+        & $scriptPath `
+            -Environment $environmentName `
+            -RepositoryRoot $tempRoot `
+            -ConfigPath $configPath `
+            -ViewerMode new `
+            -W365DiscoveryScriptPath $w365DiscoveryPath `
+            -ViewerDiscoveryScriptPath $viewerDiscoveryPath
+    }
+    catch {
+        $missingInputMessage = $_.Exception.Message
+    }
+    if ($missingInputMessage -notmatch 'SCREENSHARE_SDK_URL' -or
+        $missingInputMessage -notmatch 'SCREENSHARE_FRAME_ORIGINS' -or
+        $missingInputMessage -notmatch 'SCREENSHARE_APP_URL') {
+        throw "Non-interactive missing screen-share inputs were not rejected exactly: $missingInputMessage"
     }
 
     Write-EnvironmentFile

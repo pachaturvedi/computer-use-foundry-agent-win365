@@ -55,7 +55,7 @@ Write-SampleVerbose -Component 'viewer-activation' -Message 'Enabling live viewe
 Invoke-W365Azd -Azd $azd -Arguments @(
     'env', 'set', 'VIEWER_LIVE_ENABLED', 'true'
 ) | Out-Null
-Write-SampleVerbose -Component 'viewer-activation' -Message 'Reprovisioning the existing viewer with Key Vault secret references.'
+Write-SampleVerbose -Component 'viewer-activation' -Message 'Reprovisioning the existing viewer with secretless OIDC configuration.'
 Initialize-W365ViewerRegionEnvironment `
     -EnvironmentName $environmentName `
     -ResourcePrefix (Get-W365AzdValue -Azd $azd -Name 'RESOURCE_PREFIX' -AllowMissing) `

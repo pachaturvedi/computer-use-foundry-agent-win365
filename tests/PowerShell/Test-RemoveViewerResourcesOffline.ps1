@@ -23,6 +23,9 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
             ServicePrincipals = @(
                 @{ id = 'viewer-sp-object'; appId = 'viewer-app-id' }
             )
+            FederatedIdentityCredentials = @(
+                @{ id = 'viewer-fic'; name = 'w365-viewer-viewer-principal' }
+            )
             Operations = @()
         }
     }
@@ -49,6 +52,9 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
 
         if ($Method -eq 'GET') {
             switch -Wildcard ($path) {
+                'v1.0/applications/viewer-app-object/federatedIdentityCredentials' {
+                    return @{ value = @($script:state.FederatedIdentityCredentials) }
+                }
                 'v1.0/applications/viewer-app-object?*' {
                     if ($null -eq $script:state.Application) {
                         $ex = [System.Exception]::new('Application not found')
@@ -81,6 +87,13 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
         if ($Method -eq 'DELETE') {
             $script:state.Operations += "DELETE $path"
             switch -Wildcard ($path) {
+                'v1.0/applications/viewer-app-object/federatedIdentityCredentials/*' {
+                    $ficId = $path.Split('/')[-1]
+                    $script:state.FederatedIdentityCredentials = @(
+                        $script:state.FederatedIdentityCredentials | Where-Object { $_.id -ne $ficId }
+                    )
+                    return
+                }
                 'v1.0/servicePrincipals/*' {
                     $servicePrincipalId = $path.Split('/')[-1]
                     $script:state.ServicePrincipals = @($script:state.ServicePrincipals | Where-Object { $_.id -ne $servicePrincipalId })
@@ -185,11 +198,6 @@ function Write-ViewerManifest {
             displayName = 'viewer-app'
             disposition = $ApplicationDisposition
             redirectUri = 'https://viewer.example.com/signin-oidc'
-            credentialKeyId = 'viewer-key'
-            credential = [ordered]@{
-                keyId = 'viewer-key'
-                disposition = $CredentialDisposition
-            }
             servicePrincipal = [ordered]@{
                 objectId = 'viewer-sp-object'
                 disposition = $ServicePrincipalDisposition
@@ -198,6 +206,15 @@ function Write-ViewerManifest {
         operator = [ordered]@{
             tenantId = '01eed126-9f96-4d2d-a127-dc2e786a898b'
             objectId = 'operator-object'
+        }
+        graph = [ordered]@{
+            federatedIdentityCredentials = [ordered]@{
+                viewerFederation = [ordered]@{
+                    id = 'viewer-fic'
+                    name = 'w365-viewer-viewer-principal'
+                    disposition = $CredentialDisposition
+                }
+            }
         }
         keyVaultRoleAssignments = [ordered]@{
             operatorSecretsOfficer = [ordered]@{
@@ -289,17 +306,17 @@ try {
     if ($null -eq $state.Application) {
         throw 'Viewer cleanup should preserve a reused viewer application.'
     }
-    if ($state.Application.passwordCredentials.Count -ne 0) {
-        throw 'Viewer cleanup did not remove the created credential from the reused viewer application.'
+    if ($state.FederatedIdentityCredentials.Count -ne 0) {
+        throw 'Viewer cleanup did not remove the created federation from the reused viewer application.'
     }
-    if ($state.Operations -notcontains 'POST v1.0/applications/viewer-app-object/removePassword') {
-        throw 'Viewer cleanup did not call removePassword for the reused viewer application.'
+    if ($state.Operations -notcontains 'DELETE v1.0/applications/viewer-app-object/federatedIdentityCredentials/viewer-fic') {
+        throw 'Viewer cleanup did not remove the owned federation from the reused viewer application.'
     }
     if ($state.Operations -contains 'DELETE v1.0/applications/viewer-app-object') {
         throw 'Viewer cleanup should not delete a reused viewer application.'
     }
 
-    Write-Output 'Offline viewer cleanup: viewer-only teardown, created artifact deletion, and reused-app credential cleanup passed.'
+    Write-Output 'Offline viewer cleanup: viewer-only teardown, created artifact deletion, and reused-app federation cleanup passed.'
 }
 finally {
     [Environment]::SetEnvironmentVariable('W365_CLEANUP_CONFIRMED', $previousCleanupApproval, 'Process')

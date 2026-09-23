@@ -1,27 +1,25 @@
 #Requires -Version 7.4
 <#
 .SYNOPSIS
-Creates or reconciles the viewer OIDC application.
+Creates or reconciles the viewer OIDC application and its managed-identity federation.
 
 .DESCRIPTION
-Configures the single-tenant Entra web application, service principal, exact viewer callback URI, operator binding, and short-lived client credential used by the companion viewer.
-
-
-Key inputs: Environment is required. ApplicationName, OperatorObjectId, credential lifetime, rotation threshold, and UseDeviceCode customize reconciliation.
+Configures the single-tenant web application and exact callback URI. The default
+managed_identity mode reconciles a federated identity credential for the deployed
+viewer UAMI. The explicit client_secret mode leaves federation untouched and
+expects Set-ViewerSecrets.ps1 -OidcOnly to provision the legacy credential.
 
 .OUTPUTS
-Persists non-secret viewer identifiers to the azd environment and stores the generated OIDC secret through the approved Key Vault path.
+Persists only non-secret viewer and operator identifiers plus ownership metadata.
 
 .NOTES
-Mutates Entra and Key Vault configuration. Existing unrelated application configuration is preserved.
+Mutating Graph workflow. Existing unrelated application settings and credentials are preserved.
 #>
 [CmdletBinding()]
 param(
     [string]$Environment,
     [string]$ApplicationName,
     [guid]$OperatorObjectId = [guid]::Empty,
-    [ValidateRange(1, 365)][int]$CredentialLifetimeDays = 90,
-    [ValidateRange(1, 90)][int]$RotateBeforeDays = 14,
     [switch]$UseDeviceCode,
     [ValidateRange(1, 5)][int]$DeviceCodeMaxAttempts = 3
 )
@@ -43,75 +41,18 @@ if (!(Get-Command Connect-MgGraph -ErrorAction SilentlyContinue) -or
     !(Get-Command Invoke-MgGraphRequest -ErrorAction SilentlyContinue)) {
     Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
 }
-
 if (![string]::IsNullOrWhiteSpace($Environment)) {
     & azd env select $Environment | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw "Unable to select azd environment '$Environment'."
-    }
+    if ($LASTEXITCODE -ne 0) { throw "Unable to select azd environment '$Environment'." }
 }
 
 function Get-AzdValue {
     param([Parameter(Mandatory)][string]$Name, [switch]$AllowMissing)
-
     $value = (& azd env get-value $Name 2>$null | Out-String).Trim().Trim('"')
     if (!$AllowMissing -and [string]::IsNullOrWhiteSpace($value)) {
         throw "The selected azd environment does not contain $Name."
     }
     return $value
-}
-
-function Get-ManifestValue {
-    param(
-        $Object,
-        [Parameter(Mandatory)][string]$Name
-    )
-
-    if ($null -eq $Object -or !($Object -is [System.Collections.IDictionary]) -or !$Object.Contains($Name)) {
-        return $null
-    }
-
-    return $Object[$Name]
-}
-
-$environmentName = Get-AzdValue 'AZURE_ENV_NAME'
-$repositoryRoot = Split-Path $PSScriptRoot
-$manifestPath = Get-ViewerOwnershipManifestPath -RepositoryRoot $repositoryRoot -EnvironmentName $environmentName
-$viewerManifest = Read-W365OwnershipManifest -Path $manifestPath -AllowMissing
-$tenantId = [guid](Get-AzdValue 'AZURE_TENANT_ID')
-$viewerPublicUrl = Get-AzdValue 'VIEWER_PUBLIC_URL'
-$vaultName = Get-AzdValue 'W365_KEY_VAULT_NAME' -AllowMissing
-if ([string]::IsNullOrWhiteSpace($vaultName)) {
-    $vaultName = Get-AzdValue 'VIEWER_KEY_VAULT_NAME'
-}
-$resourcePrefix = Get-AzdValue 'RESOURCE_PREFIX'
-$redirectUri = Get-ViewerOidcRedirectUri -ViewerPublicUrl $viewerPublicUrl
-if ([string]::IsNullOrWhiteSpace($ApplicationName)) {
-    $ApplicationName = "$resourcePrefix-viewer"
-}
-
-$connectArguments = @{
-    TenantId = $tenantId
-    Scopes = @('Application.ReadWrite.All', 'User.Read')
-    ContextScope = 'Process'
-    NoWelcome = $true
-}
-if ($UseDeviceCode) {
-    Write-W365DeviceCodeGuidance `
-        -Purpose 'to configure viewer sign-in' `
-        -RequiredAccess 'Application Administrator or Cloud Application Administrator, to create the viewer app registration' `
-        -DeviceCodeMaxAttempts $DeviceCodeMaxAttempts
-}
-
-$context = Connect-W365GraphContext `
-    -ConnectParameters $connectArguments `
-    -UseDeviceCode:$UseDeviceCode `
-    -DeviceCodeMaxAttempts $DeviceCodeMaxAttempts
-if ($null -eq $context -or
-    $context.TenantId -ne $tenantId.ToString() -or
-    $context.AuthType -ne 'Delegated' -or
-    'Application.ReadWrite.All' -notin @($context.Scopes)) {
-    throw 'A delegated Application.ReadWrite.All Microsoft Graph context in the selected tenant is required.'
 }
 
 function Invoke-ViewerGraph {
@@ -120,17 +61,12 @@ function Invoke-ViewerGraph {
         [Parameter(Mandatory)][string]$Path,
         [object]$Body
     )
-
     $uri = if ($Path.StartsWith('https://', [StringComparison]::OrdinalIgnoreCase)) {
         [uri]$Path
-    }
-    else {
-        [uri]"https://graph.microsoft.com/$Path"
-    }
+    } else { [uri]"https://graph.microsoft.com/$Path" }
     if ($uri.Scheme -ne 'https' -or $uri.Host -ne 'graph.microsoft.com') {
         throw 'Viewer OIDC Graph request resolved outside graph.microsoft.com.'
     }
-
     $request = @{
         Method = $Method
         Uri = $uri
@@ -144,268 +80,180 @@ function Invoke-ViewerGraph {
     return Invoke-MgGraphRequest @request
 }
 
+$environmentName = Get-AzdValue 'AZURE_ENV_NAME'
+$repositoryRoot = Split-Path $PSScriptRoot
+$manifestPath = Get-ViewerOwnershipManifestPath -RepositoryRoot $repositoryRoot -EnvironmentName $environmentName
+$tenantId = [guid](Get-AzdValue 'AZURE_TENANT_ID')
+$viewerPublicUrl = Get-AzdValue 'VIEWER_PUBLIC_URL'
+$oidcMode = (Get-AzdValue 'VIEWER_OIDC_CREDENTIAL_MODE' -AllowMissing)
+if ([string]::IsNullOrWhiteSpace($oidcMode)) { $oidcMode = 'managed_identity' }
+$oidcMode = $oidcMode.Trim().ToLowerInvariant()
+if ($oidcMode -notin @('managed_identity', 'client_secret')) {
+    throw 'VIEWER_OIDC_CREDENTIAL_MODE must be managed_identity or client_secret.'
+}
+$viewerPrincipalId = [guid]::Empty
+if ($oidcMode -eq 'managed_identity' -and
+    (![guid]::TryParse((Get-AzdValue 'VIEWER_IDENTITY_PRINCIPAL_ID'), [ref]$viewerPrincipalId) -or
+    $viewerPrincipalId -eq [guid]::Empty)) {
+    throw 'Viewer OIDC federation requires the deployed VIEWER_IDENTITY_PRINCIPAL_ID.'
+}
+$resourcePrefix = Get-AzdValue 'RESOURCE_PREFIX'
+$redirectUri = Get-ViewerOidcRedirectUri -ViewerPublicUrl $viewerPublicUrl
+if ([string]::IsNullOrWhiteSpace($ApplicationName)) { $ApplicationName = "$resourcePrefix-viewer" }
+
+$connectArguments = @{
+    TenantId = $tenantId
+    Scopes = @('Application.ReadWrite.All', 'User.Read')
+    ContextScope = 'Process'
+    NoWelcome = $true
+}
+if ($UseDeviceCode) {
+    Write-W365DeviceCodeGuidance -Purpose 'to configure viewer sign-in' `
+        -RequiredAccess 'Application Administrator or Cloud Application Administrator, to create the viewer app registration' `
+        -DeviceCodeMaxAttempts $DeviceCodeMaxAttempts
+}
+$context = Connect-W365GraphContext -ConnectParameters $connectArguments `
+    -UseDeviceCode:$UseDeviceCode -DeviceCodeMaxAttempts $DeviceCodeMaxAttempts
+if ($null -eq $context -or $context.TenantId -ne $tenantId.ToString() -or
+    $context.AuthType -ne 'Delegated' -or 'Application.ReadWrite.All' -notin @($context.Scopes)) {
+    throw 'A delegated Application.ReadWrite.All Microsoft Graph context in the selected tenant is required.'
+}
+
 $configuredClientId = Get-AzdValue 'VIEWER_CLIENT_ID' -AllowMissing
 $application = $null
 $applicationCreated = $false
-Write-SampleVerbose -Component 'viewer-oidc' -Message 'Resolving the viewer OIDC application.'
-Write-SampleDebug -Component 'viewer-oidc' -Message "Configured client ID exists: $(![string]::IsNullOrWhiteSpace($configuredClientId))."
 if (![string]::IsNullOrWhiteSpace($configuredClientId)) {
     $filter = [uri]::EscapeDataString("appId eq '$configuredClientId'")
-    $result = Invoke-ViewerGraph GET "v1.0/applications?`$filter=$filter&`$select=id,appId,displayName,passwordCredentials"
-    $matches = @($result.value)
-    if ($matches.Count -ne 1) {
-        throw "VIEWER_CLIENT_ID '$configuredClientId' did not resolve to exactly one application."
-    }
+    $matches = @((Invoke-ViewerGraph GET "v1.0/applications?`$filter=$filter&`$select=id,appId,displayName,web,federatedIdentityCredentials").value)
+    if ($matches.Count -ne 1) { throw "VIEWER_CLIENT_ID '$configuredClientId' did not resolve to exactly one application." }
     $application = $matches[0]
 }
 else {
     $escapedName = $ApplicationName.Replace("'", "''")
     $filter = [uri]::EscapeDataString("displayName eq '$escapedName'")
-    $result = Invoke-ViewerGraph GET "v1.0/applications?`$filter=$filter&`$select=id,appId,displayName,passwordCredentials"
-    $matches = @($result.value)
-    if ($matches.Count -gt 1) {
-        throw "Multiple applications named '$ApplicationName' exist. Set VIEWER_CLIENT_ID explicitly."
-    }
-    if ($matches.Count -eq 1) {
-        $application = $matches[0]
-    }
+    $matches = @((Invoke-ViewerGraph GET "v1.0/applications?`$filter=$filter&`$select=id,appId,displayName,web,federatedIdentityCredentials").value)
+    if ($matches.Count -gt 1) { throw "Multiple applications named '$ApplicationName' exist. Set VIEWER_CLIENT_ID explicitly." }
+    if ($matches.Count -eq 1) { $application = $matches[0] }
 }
 
 if ($null -eq $application) {
-    Write-SampleVerbose -Component 'viewer-oidc' -Message "Creating single-tenant application '$ApplicationName'."
     $application = Invoke-ViewerGraph POST 'v1.0/applications' @{
         displayName = $ApplicationName
         signInAudience = 'AzureADMyOrg'
         isFallbackPublicClient = $false
         web = @{
             redirectUris = @($redirectUri)
-            implicitGrantSettings = @{
-                enableAccessTokenIssuance = $false
-                enableIdTokenIssuance = $false
-            }
+            implicitGrantSettings = @{ enableAccessTokenIssuance = $false; enableIdTokenIssuance = $false }
         }
     }
     $applicationCreated = $true
 }
 else {
-    Write-SampleVerbose -Component 'viewer-oidc' -Message "Reconciling application '$($application.appId)' and its exact redirect URI."
     Invoke-ViewerGraph PATCH "v1.0/applications/$($application.id)" @{
         signInAudience = 'AzureADMyOrg'
         isFallbackPublicClient = $false
         web = @{
             redirectUris = @($redirectUri)
-            implicitGrantSettings = @{
-                enableAccessTokenIssuance = $false
-                enableIdTokenIssuance = $false
-            }
+            implicitGrantSettings = @{ enableAccessTokenIssuance = $false; enableIdTokenIssuance = $false }
         }
     } | Out-Null
 }
 
 $spFilter = [uri]::EscapeDataString("appId eq '$($application.appId)'")
 $servicePrincipals = @((Invoke-ViewerGraph GET "v1.0/servicePrincipals?`$filter=$spFilter&`$select=id,appId").value)
-$servicePrincipalCreated = $false
-$servicePrincipalId = ''
-if ($servicePrincipals.Count -gt 1) {
-    throw "Multiple service principals exist for viewer app '$($application.appId)'."
-}
-if ($servicePrincipals.Count -eq 0) {
-    Write-SampleVerbose -Component 'viewer-oidc' -Message 'Creating the application service principal.'
-    $servicePrincipal = Invoke-ViewerGraph POST 'v1.0/servicePrincipals' @{ appId = $application.appId }
-    $servicePrincipalId = [string]$servicePrincipal.id
-    $servicePrincipalCreated = $true
-}
-else {
-    $servicePrincipalId = [string]$servicePrincipals[0].id
-}
+if ($servicePrincipals.Count -gt 1) { throw "Multiple service principals exist for viewer app '$($application.appId)'." }
+$servicePrincipalCreated = $servicePrincipals.Count -eq 0
+$servicePrincipalId = if ($servicePrincipalCreated) {
+    [string](Invoke-ViewerGraph POST 'v1.0/servicePrincipals' @{ appId = $application.appId }).id
+} else { [string]$servicePrincipals[0].id }
 
 if ($OperatorObjectId -eq [guid]::Empty) {
-    $me = Invoke-ViewerGraph GET 'v1.0/me?$select=id'
-    $OperatorObjectId = [guid]$me.id
+    $OperatorObjectId = [guid](Invoke-ViewerGraph GET 'v1.0/me?$select=id').id
 }
 
-$secretName = 'w365-viewer-client-secret'
-$storedKeyId = (& az keyvault secret show `
-    --name $secretName `
-    --vault-name $vaultName `
-    --query tags.entraCredentialKeyId `
-    --output tsv 2>$null | Out-String).Trim()
-$passwordCredentials = if ($application -is [System.Collections.IDictionary] -and
-    $application.Contains('passwordCredentials')) {
-    @($application.passwordCredentials)
-}
-else {
-    @()
-}
-$credential = @($passwordCredentials | Where-Object {
-    [string]$_.keyId -eq $storedKeyId
-}) | Select-Object -First 1
-$rotationRequired = $null -eq $credential -or
-    [DateTimeOffset]$credential.endDateTime -le [DateTimeOffset]::UtcNow.AddDays($RotateBeforeDays)
-
-$credentialKeyId = $storedKeyId
-$credentialCreated = $false
-if ($rotationRequired) {
-    Write-SampleVerbose -Component 'viewer-oidc' -Message 'Creating a short-lived OIDC credential and storing it directly in Key Vault.'
-    Write-SampleDebug -Component 'viewer-oidc' -Message "CredentialLifetimeDays=$CredentialLifetimeDays; RotateBeforeDays=$RotateBeforeDays."
-    $start = [DateTimeOffset]::UtcNow
-    $end = $start.AddDays($CredentialLifetimeDays)
-    $newCredential = $null
-    try {
-        $newCredential = Invoke-ViewerGraph POST "v1.0/applications/$($application.id)/addPassword" @{
-            passwordCredential = @{
-                displayName = 'win365-viewer-oidc'
-                startDateTime = $start.ToString('o')
-                endDateTime = $end.ToString('o')
-            }
+$ficCreated = $false
+if ($oidcMode -eq 'managed_identity') {
+    $ficName = "w365-viewer-$viewerPrincipalId"
+    $issuer = "https://login.microsoftonline.com/$tenantId/v2.0"
+    $audience = 'api://AzureADTokenExchange'
+    $ficResult = Invoke-ViewerGraph GET "v1.0/applications/$($application.id)/federatedIdentityCredentials"
+    $fics = @($ficResult.value)
+    $exact = @($fics | Where-Object {
+        [string]$_.issuer -eq $issuer -and [string]$_.subject -eq $viewerPrincipalId.ToString() -and
+        @($_.audiences) -contains $audience
+    })
+    $named = @($fics | Where-Object { [string]$_.name -eq $ficName })
+    if ($named.Count -gt 1 -or $exact.Count -gt 1) { throw 'Viewer federation is ambiguous; refusing to modify credentials.' }
+    if ($named.Count -eq 1) {
+        if ($exact.Count -ne 1 -or [string]$named[0].id -ne [string]$exact[0].id) {
+            throw "Viewer federation '$ficName' conflicts with the deployed viewer identity."
         }
-        if ([string]::IsNullOrWhiteSpace([string]$newCredential.secretText) -or
-            [string]::IsNullOrWhiteSpace([string]$newCredential.keyId)) {
-            throw 'Microsoft Graph did not return the new viewer credential.'
-        }
-
-        $vaultUri = (& az keyvault show --name $vaultName --query properties.vaultUri --output tsv | Out-String).Trim()
-        $vaultToken = (& az account get-access-token `
-            --tenant $tenantId `
-            --resource https://vault.azure.net `
-            --query accessToken `
-            --output tsv | Out-String).Trim()
-        if ([string]::IsNullOrWhiteSpace($vaultUri) -or [string]::IsNullOrWhiteSpace($vaultToken)) {
-            throw 'Unable to resolve Key Vault or acquire its data-plane token.'
-        }
-
-        $secretBody = @{
-            value = [string]$newCredential.secretText
-            contentType = 'application/x-entra-client-secret'
-            attributes = @{
-                enabled = $true
-                exp = $end.ToUnixTimeSeconds()
-            }
-            tags = @{
-                managedBy = 'computer-use-foundry-agent-win365'
-                entraApplicationObjectId = [string]$application.id
-                entraApplicationClientId = [string]$application.appId
-                entraCredentialKeyId = [string]$newCredential.keyId
-                entraCredentialExpiresUtc = $end.ToString('o')
-            }
-        } | ConvertTo-Json -Depth 10 -Compress
-        for ($attempt = 1; $attempt -le 6; $attempt++) {
-            try {
-                Invoke-RestMethod `
-                    -Method Put `
-                    -Uri "$($vaultUri.TrimEnd('/'))/secrets/$secretName`?api-version=7.4" `
-                    -Headers @{ Authorization = "Bearer $vaultToken" } `
-                    -ContentType 'application/json' `
-                    -Body $secretBody | Out-Null
-                break
-            }
-            catch {
-                if ($attempt -eq 6) {
-                    throw
-                }
-                Write-SampleVerbose -Component 'viewer-oidc' -Message "Waiting for Key Vault RBAC propagation ($attempt/6)."
-                Write-SampleDebug -Component 'viewer-oidc' -Message $_.Exception.Message
-                Start-Sleep -Seconds 10
-            }
-        }
-        $credentialKeyId = [string]$newCredential.keyId
-        $credentialCreated = $true
+        $fic = $exact[0]
     }
-    catch {
-        if ($null -ne $newCredential -and
-            ![string]::IsNullOrWhiteSpace([string]$newCredential.keyId)) {
-            try {
-                Invoke-ViewerGraph POST "v1.0/applications/$($application.id)/removePassword" @{
-                    keyId = [string]$newCredential.keyId
-                } | Out-Null
-            }
-            catch {
-                Write-Warning "Unable to remove unstored viewer credential key '$($newCredential.keyId)'."
-            }
-        }
-        throw
+    elseif ($exact.Count -eq 1) {
+        $fic = $exact[0]
     }
-    finally {
-        if ($null -ne $newCredential) {
-            $newCredential.secretText = $null
+    else {
+        $fic = Invoke-ViewerGraph POST "v1.0/applications/$($application.id)/federatedIdentityCredentials" @{
+            name = $ficName
+            issuer = $issuer
+            subject = $viewerPrincipalId.ToString()
+            audiences = @($audience)
+            description = 'Viewer UAMI secretless OIDC client assertion'
         }
-        $secretBody = $null
-        $vaultToken = $null
+        $ficCreated = $true
     }
-}
-else {
-    Write-SampleVerbose -Component 'viewer-oidc' -Message 'Existing Key Vault-bound OIDC credential remains healthy; rotation skipped.'
 }
 
 $environmentValues = [ordered]@{
     VIEWER_CLIENT_ID = [string]$application.appId
+    VIEWER_OIDC_CREDENTIAL_MODE = $oidcMode
     OPERATOR_TENANT_ID = $tenantId.ToString()
     OPERATOR_OBJECT_ID = $OperatorObjectId.ToString()
 }
+if ($oidcMode -eq 'managed_identity') {
+    $environmentValues['VIEWER_FEDERATION_NAME'] = $ficName
+    $environmentValues['VIEWER_FEDERATION_ISSUER'] = $issuer
+    $environmentValues['VIEWER_FEDERATION_SUBJECT'] = $viewerPrincipalId.ToString()
+}
 foreach ($entry in $environmentValues.GetEnumerator()) {
     & azd env set $entry.Key $entry.Value
-    if ($LASTEXITCODE -ne 0) {
-        throw "Unable to persist $($entry.Key)."
-    }
+    if ($LASTEXITCODE -ne 0) { throw "Unable to persist $($entry.Key)." }
 }
 
-New-Item -ItemType Directory -Path (Split-Path $manifestPath) -Force | Out-Null
-if ($null -eq $viewerManifest) {
-    $viewerManifest = [ordered]@{}
-}
-$previousApplication = Get-ManifestValue -Object $viewerManifest -Name 'application'
-$previousCredential = Get-ManifestValue -Object $previousApplication -Name 'credential'
-$previousServicePrincipal = Get-ManifestValue -Object $previousApplication -Name 'servicePrincipal'
-
-$applicationDisposition = if ($applicationCreated -or
-    ([string](Get-ManifestValue -Object $previousApplication -Name 'objectId') -eq [string]$application.id -and
-        [string](Get-ManifestValue -Object $previousApplication -Name 'disposition') -eq 'created')) {
-    'created'
-}
-else {
-    'reused'
-}
-$servicePrincipalDisposition = if ($servicePrincipalCreated -or
-    ([string](Get-ManifestValue -Object $previousServicePrincipal -Name 'objectId') -eq $servicePrincipalId -and
-        [string](Get-ManifestValue -Object $previousServicePrincipal -Name 'disposition') -eq 'created')) {
-    'created'
-}
-else {
-    'reused'
-}
-$credentialDisposition = if ($credentialCreated -or
-    ([string](Get-ManifestValue -Object $previousCredential -Name 'keyId') -eq $credentialKeyId -and
-        [string](Get-ManifestValue -Object $previousCredential -Name 'disposition') -eq 'created')) {
-    'created'
-}
-else {
-    'reused'
-}
-
-$viewerManifest['schemaVersion'] = 1
-$viewerManifest['environmentName'] = $environmentName
-$viewerManifest['application'] = [ordered]@{
+$manifest = Read-W365OwnershipManifest -Path $manifestPath -AllowMissing
+if ($null -eq $manifest) { $manifest = [ordered]@{} }
+$manifest['schemaVersion'] = 2
+$manifest['environmentName'] = $environmentName
+$manifest['application'] = [ordered]@{
     objectId = [string]$application.id
     appId = [string]$application.appId
     displayName = [string]$application.displayName
-    disposition = $applicationDisposition
+    disposition = if ($applicationCreated) { 'created' } else { 'reused' }
     redirectUri = $redirectUri
-    credentialKeyId = $credentialKeyId
-    credential = [ordered]@{
-        keyId = $credentialKeyId
-        disposition = $credentialDisposition
-    }
     servicePrincipal = [ordered]@{
         objectId = $servicePrincipalId
-        disposition = $servicePrincipalDisposition
+        disposition = if ($servicePrincipalCreated) { 'created' } else { 'reused' }
     }
 }
-$viewerManifest['operator'] = [ordered]@{
-    tenantId = $tenantId.ToString()
-    objectId = $OperatorObjectId.ToString()
+$manifest['operator'] = [ordered]@{ tenantId = $tenantId.ToString(); objectId = $OperatorObjectId.ToString() }
+$manifest['oidcCredentialMode'] = $oidcMode
+if ($oidcMode -eq 'managed_identity') {
+    $manifest['graph'] = [ordered]@{
+        federatedIdentityCredentials = [ordered]@{
+            $ficName = [ordered]@{
+                id = [string]$fic.id
+                name = $ficName
+                issuer = $issuer
+                subject = $viewerPrincipalId.ToString()
+                audience = $audience
+                disposition = if ($ficCreated) { 'created' } else { 'reused' }
+            }
+        }
+    }
 }
-$viewerManifest['updatedAtUtc'] = [DateTimeOffset]::UtcNow.ToString('o')
-Write-W365OwnershipManifest -Path $manifestPath -Manifest $viewerManifest
+$manifest['updatedAtUtc'] = [DateTimeOffset]::UtcNow.ToString('o')
+New-Item -ItemType Directory -Path (Split-Path $manifestPath) -Force | Out-Null
+Write-W365OwnershipManifest -Path $manifestPath -Manifest $manifest
 
-Write-Host "Viewer OIDC application '$($application.appId)' is configured for $redirectUri."
-Write-Host "The OIDC credential is stored as '$secretName' in Key Vault '$vaultName'."
+Write-Host "Viewer OIDC application '$($application.appId)' is configured for $redirectUri using '$oidcMode' mode."

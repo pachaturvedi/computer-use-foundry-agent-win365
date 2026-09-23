@@ -131,23 +131,32 @@ Fresh deployments default to `W365_BLUEPRINT_CREDENTIAL_MODE=key_vault_certifica
 The viewer UAMI receives certificate/key-scoped Key Vault read/sign roles and
 uses the same non-exportable certificate as the agent; no blueprint secret is
 injected. `client_secret` remains an explicit legacy opt-in.
-The viewer still requires its separate `w365-viewer-client-secret` for human
-OIDC sign-in. That OIDC credential is not a blueprint credential and is needed
-in every live-viewer credential mode. The same T2/user-FIC T3 exchanges and
+The viewer is secretless: its deployed UAMI is federated with the OIDC web app
+and obtains a client assertion for `api://AzureADTokenExchange/.default` at
+code redemption. The exact UAMI client ID is bound through `AZURE_CLIENT_ID`;
+the runtime uses `ManagedIdentityCredential`, never developer credentials or
+`DefaultAzureCredential`. The same T2/user-FIC T3 exchanges and
 resource-scoped tokens remain unchanged.
-Managed-identity federation remains an explicit alternative and requires the
-approved viewer FIC documented in
-[W365 setup](W365-SETUP.md#optional-viewer-federation). There is no automatic
-fallback between credential modes.
+
+`VIEWER_OIDC_CREDENTIAL_MODE=managed_identity` is the default and is validated
+offline by the viewer assertion tests. If a tenant or platform cannot reliably
+redeem the UAMI assertion, an operator may explicitly select
+`VIEWER_OIDC_CREDENTIAL_MODE=client_secret`. That mode is automated by `azd up`,
+stores only the OIDC secret in Key Vault, and uses the normal confidential-client
+secret redemption path. It is not an automatic fallback: switching modes is an
+operator decision and has the additional secret storage, rotation, and
+exfiltration risk of client credentials.
 
 Create a **single-tenant web application** in Entra for the viewer. This is not
 the W365 agent blueprint. Set its web redirect URI to
 `https://<your-viewer-host>/signin-oidc` and record `VIEWER_CLIENT_ID`.
-Create a short-lived client credential for this web app and store it as
-`w365-viewer-client-secret`. `infra/viewer.bicep` uses a Key Vault reference for the OIDC credential and,
-only in legacy `client_secret` mode, a separate blueprint-secret reference.
-OIDC uses code flow
-with PKCE and a secure HttpOnly cookie.
+Do not create an OIDC client credential. `Configure-ViewerOidc.ps1` creates or
+reconciles a federated identity credential that trusts the exact viewer UAMI
+object ID, tenant v2.0 issuer, and `api://AzureADTokenExchange` audience.
+OIDC uses code flow with PKCE and a secure HttpOnly cookie.
+For the explicit `client_secret` mode, run the same activation flow after
+selecting the mode; `azd up` provisions `w365-viewer-client-secret` through
+Key Vault and does not create the viewer UAMI federation.
 
 Set `OPERATOR_TENANT_ID` and `OPERATOR_OBJECT_ID` to the **human operator's** Entra
 tenant and object ID. Both claims must match before any protected viewer page or
@@ -201,8 +210,13 @@ Do not switch credential mode to activate the viewer. Established
 activation, and routine redeployment; `W365_ENABLED=true` is the fail-closed
 readiness proof used by the Bicep layer.
 
-`SCREENSHARE_APP_URL` selects the W365-hosted view-only application. Pass it
-through the azd environment or an untracked viewer deployment parameter file.
+`SCREENSHARE_APP_URL` selects the W365-hosted view-only application. These three
+approved W365 values are tenant onboarding inputs, not secrets and are not
+derivable by this repository. Interactive `azd up` collects missing values and
+persists them in the selected azd environment; non-interactive runs fail with
+the exact missing names unless the operator explicitly selects
+`VIEWER_BOOTSTRAP_ONLY=true`. Pass the values through the azd environment or
+an untracked viewer deployment parameter file.
 Use only the approved endpoint supplied by W365 onboarding; the repository does
 not contain a concrete live-screen hostname.
 

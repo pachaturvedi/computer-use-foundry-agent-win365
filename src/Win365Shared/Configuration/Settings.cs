@@ -53,6 +53,10 @@ public sealed class Settings(IConfiguration config)
         _ => throw new InvalidOperationException("VIEWER_LIVE_ENABLED must be true or false.")
     };
 
+    /// <summary>Gets the explicitly selected viewer OIDC credential mode.</summary>
+    public string ViewerOidcCredentialMode =>
+        Optional("VIEWER_OIDC_CREDENTIAL_MODE")?.Trim().ToLowerInvariant() ?? "managed_identity";
+
     /// <summary>Gets the explicitly selected blueprint authentication mode.</summary>
     public string BlueprintCredentialMode =>
         Optional("W365_BLUEPRINT_CREDENTIAL_MODE") ?? "key_vault_certificate";
@@ -204,6 +208,15 @@ public sealed class Settings(IConfiguration config)
         }
         if (viewerMode)
         {
+            if (ViewerOidcCredentialMode is not ("managed_identity" or "client_secret"))
+            {
+                throw new InvalidOperationException(
+                    "VIEWER_OIDC_CREDENTIAL_MODE must be managed_identity or client_secret.");
+            }
+            if (ViewerOidcCredentialMode == "client_secret")
+            {
+                _ = Required("VIEWER_CLIENT_SECRET");
+            }
             _ = ViewerUrl;
             _ = ScreenShareAppUrl;
             _ = Guid.Parse(Required("AZURE_CLIENT_ID"));

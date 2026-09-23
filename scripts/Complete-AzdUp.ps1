@@ -433,6 +433,11 @@ if ($requiresBlueprintSecret) {
         throw 'Blueprint secret storage failed.'
     }
 }
+if ([string]$currentValues['VIEWER_OIDC_CREDENTIAL_MODE'] -eq 'client_secret' -and
+    (Test-EnabledValue -Value ([string]$currentValues['DEPLOY_VIEWER']))) {
+    & $ViewerSecretsScriptPath -Environment $environmentName -OidcOnly
+    if (!$?) { throw 'Viewer OIDC fallback secret storage failed.' }
+}
 
 Write-SampleVerbose -Component 'postup' -Message 'Running viewer bootstrap before enabled W365 deployment.'
 Write-SampleDebug -Component 'postup' -Message "Viewer URL existed before bootstrap: $(![string]::IsNullOrWhiteSpace($viewerUrlBefore))."
@@ -590,13 +595,26 @@ if ($w365SetupRan) {
 if (![string]::IsNullOrWhiteSpace($env:AZURE_ENV_NAME)) {
     $environmentName = $env:AZURE_ENV_NAME
     $updatedValues = Import-AzdEnvironmentValues -Root $RepositoryRoot -EnvironmentName $environmentName
+    $agentName = [string]$updatedValues['FOUNDRY_AGENT_NAME']
+    if ([string]::IsNullOrWhiteSpace($agentName)) {
+        $agentName = 'win365-desktop-agent'
+        & azd env set FOUNDRY_AGENT_NAME $agentName --environment $environmentName
+        if ($LASTEXITCODE -ne 0) {
+            throw "Unable to persist FOUNDRY_AGENT_NAME '$agentName'."
+        }
+        Set-AzdEnvironmentFileValues `
+            -Path (Join-Path $RepositoryRoot ".azure\$environmentName\.env") `
+            -Values @{ FOUNDRY_AGENT_NAME = $agentName }
+        $updatedValues['FOUNDRY_AGENT_NAME'] = $agentName
+    }
     $viewerUrlAfter = [string]$updatedValues['VIEWER_PUBLIC_URL']
     $w365EnabledAfter = Test-EnabledValue -Value ([string]$updatedValues['W365_ENABLED'])
     $viewerLiveEnabled = Test-EnabledValue -Value ([string]$updatedValues['VIEWER_LIVE_ENABLED'])
     $deployViewer = Test-EnabledValue -Value ([string]$updatedValues['DEPLOY_VIEWER'])
     $viewerLiveActivated = $false
 
-    if ($deployViewer -and $w365EnabledAfter -and !$viewerLiveEnabled) {
+    if ($deployViewer -and $w365EnabledAfter -and !$viewerLiveEnabled -and
+        [string]$updatedValues['VIEWER_BOOTSTRAP_ONLY'] -ne 'true') {
         $liveRequired = @(
             'VIEWER_PUBLIC_URL',
             'W365_KEY_VAULT_NAME',

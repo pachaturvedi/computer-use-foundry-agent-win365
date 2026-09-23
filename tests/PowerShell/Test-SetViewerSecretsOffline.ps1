@@ -79,18 +79,16 @@ if ($env:TEST_VIEWER_ROLE_GRANTS_ACCESS -eq 'true') {
 '@
     $env:TEST_VIEWER_ROLE_CALL_PATH = $roleCallPath
     $blueprintSecret = ConvertTo-SecureString 'blueprint-value' -AsPlainText -Force
-    $oidcSecret = ConvertTo-SecureString 'oidc-value' -AsPlainText -Force
     & (Join-Path $root 'scripts\Set-ViewerSecrets.ps1') `
         -BlueprintClientSecret $blueprintSecret `
-        -ViewerOidcClientSecret $oidcSecret `
         -BootstrapOperatorAccess `
         -RoleSetupScriptPath $roleSetupPath
 
     if (!(Test-Path -LiteralPath $roleCallPath)) {
         throw 'The secret hook did not invoke centralized Key Vault RBAC setup.'
     }
-    if ($global:viewerSecretWrites.Count -ne 2) {
-        throw "Expected two writes to one Key Vault, received $($global:viewerSecretWrites.Count)."
+    if ($global:viewerSecretWrites.Count -ne 1) {
+        throw "Expected one blueprint write to one Key Vault, received $($global:viewerSecretWrites.Count)."
     }
     foreach ($uri in $global:viewerSecretWrites) {
         if ($uri -notmatch '^https://single-w365-vault\.vault\.azure\.net/secrets/') {
@@ -99,8 +97,17 @@ if ($env:TEST_VIEWER_ROLE_GRANTS_ACCESS -eq 'true') {
     }
     $writtenUris = $global:viewerSecretWrites -join "`n"
     if ($writtenUris -notmatch '/w365-blueprint-client-secret\?' -or
-        $writtenUris -notmatch '/w365-viewer-client-secret\?') {
-        throw 'The single Key Vault did not receive both required secret names.'
+        $writtenUris -match 'viewer-client-secret') {
+        throw 'The Key Vault write set was not blueprint-only.'
+    }
+
+    $oidcSecret = ConvertTo-SecureString 'oidc-value' -AsPlainText -Force
+    & (Join-Path $root 'scripts\Set-ViewerSecrets.ps1') `
+        -OidcOnly `
+        -ViewerOidcClientSecret $oidcSecret
+    if ($global:viewerSecretWrites.Count -ne 2 -or
+        ($global:viewerSecretWrites -join "`n") -notmatch '/w365-viewer-client-secret\?') {
+        throw 'Explicit OIDC fallback mode did not write only the viewer fallback secret.'
     }
 
     $env:AZD_NON_INTERACTIVE = 'true'
@@ -111,7 +118,6 @@ if ($env:TEST_VIEWER_ROLE_GRANTS_ACCESS -eq 'true') {
     try {
         & (Join-Path $root 'scripts\Set-ViewerSecrets.ps1') `
             -Environment 'sample-dev' `
-            -BlueprintOnly `
             -BootstrapOperatorAccess `
             -RoleSetupScriptPath $roleSetupPath
     }
@@ -131,7 +137,6 @@ if ($env:TEST_VIEWER_ROLE_GRANTS_ACCESS -eq 'true') {
     try {
         & (Join-Path $root 'scripts\Set-ViewerSecrets.ps1') `
             -Environment 'sample-dev' `
-            -BlueprintOnly `
             -RoleSetupScriptPath $roleSetupPath
     }
     catch {
@@ -153,7 +158,6 @@ if ($env:TEST_VIEWER_ROLE_GRANTS_ACCESS -eq 'true') {
     try {
         & (Join-Path $root 'scripts\Set-ViewerSecrets.ps1') `
             -Environment 'sample-dev' `
-            -BlueprintOnly `
             -RoleSetupScriptPath $roleSetupPath
     }
     catch {
@@ -171,7 +175,6 @@ if ($env:TEST_VIEWER_ROLE_GRANTS_ACCESS -eq 'true') {
     try {
         & (Join-Path $root 'scripts\Set-ViewerSecrets.ps1') `
             -Environment 'sample-dev' `
-            -BlueprintOnly `
             -RoleSetupScriptPath $roleSetupPath
     }
     catch {

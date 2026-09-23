@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using Azure.Core;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
@@ -44,7 +45,6 @@ public static class ViewerEndpoints
                 {
                     o.Authority = $"https://login.microsoftonline.com/{Guid.Parse(settings.Required("OPERATOR_TENANT_ID"))}/v2.0";
                     o.ClientId = settings.Required("VIEWER_CLIENT_ID");
-                    o.ClientSecret = settings.Required("VIEWER_CLIENT_SECRET");
                     o.ResponseType = "code";
                     o.UsePkce = true;
                     o.SaveTokens = false;
@@ -55,11 +55,24 @@ public static class ViewerEndpoints
                         ctx.ProtocolMessage.RedirectUri = new Uri(settings.ViewerUrl, "signin-oidc").ToString();
                         return Task.CompletedTask;
                     };
-                    o.Events.OnAuthorizationCodeReceived = ctx =>
+                    o.Events.OnAuthorizationCodeReceived = async ctx =>
                     {
                         ctx.TokenEndpointRequest!.RedirectUri = new Uri(settings.ViewerUrl, "signin-oidc").ToString();
-                        return Task.CompletedTask;
+                        if (settings.ViewerOidcCredentialMode == "managed_identity")
+                        {
+                            var credential = ctx.HttpContext.RequestServices.GetRequiredService<TokenCredential>();
+                            var assertion = await ViewerOidcClientAssertion
+                                .GetAsync(credential, ctx.HttpContext.RequestAborted)
+                                .ConfigureAwait(false);
+                            ctx.TokenEndpointRequest.ClientAssertionType =
+                                "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
+                            ctx.TokenEndpointRequest.ClientAssertion = assertion;
+                        }
                     };
+                    if (settings.ViewerOidcCredentialMode == "client_secret")
+                    {
+                        o.ClientSecret = settings.Required("VIEWER_CLIENT_SECRET");
+                    }
                 });
         }
         builder.Services.AddAuthorization(o => o.AddPolicy("operator", policy =>

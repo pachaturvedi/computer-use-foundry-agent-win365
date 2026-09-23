@@ -134,6 +134,50 @@ function Get-DiscoveryResult {
     return ($json | Out-String | ConvertFrom-Json -Depth 20)
 }
 
+function Resolve-ViewerLiveInputs {
+    param(
+        [Parameter(Mandatory)][System.Collections.IDictionary]$EnvironmentValues,
+        [Parameter(Mandatory)][System.Collections.IDictionary]$Updates,
+        [Parameter(Mandatory)][bool]$NonInteractive
+    )
+
+    $required = @('SCREENSHARE_SDK_URL', 'SCREENSHARE_FRAME_ORIGINS', 'SCREENSHARE_APP_URL')
+    $missing = @($required | Where-Object {
+        [string]::IsNullOrWhiteSpace([string]$EnvironmentValues[$_])
+    })
+    if ($missing.Count -eq 0) {
+        $Updates['VIEWER_BOOTSTRAP_ONLY'] = 'false'
+        return
+    }
+
+    $bootstrapOnly = Test-StrictBoolean -Value ([string]$EnvironmentValues['VIEWER_BOOTSTRAP_ONLY'])
+    if ($bootstrapOnly) {
+        return
+    }
+    if ($NonInteractive) {
+        throw "Live viewer activation requires $($missing -join ', '). Set those exact environment values or explicitly set VIEWER_BOOTSTRAP_ONLY=true."
+    }
+
+    $choice = Read-Host "Approved screen-share values are missing ($($missing -join ', ')). Enter 'live' to provide them now, or 'bootstrap' to deploy bootstrap-only viewer"
+    if ($choice -ieq 'bootstrap') {
+        $Updates['VIEWER_BOOTSTRAP_ONLY'] = 'true'
+        return
+    }
+    if ($choice -ine 'live') {
+        throw "Choose 'live' or 'bootstrap'. Missing values: $($missing -join ', ')."
+    }
+
+    foreach ($name in $missing) {
+        $value = Read-Host "Enter approved $name"
+        if ([string]::IsNullOrWhiteSpace($value)) {
+            throw "$name is required for live viewer activation."
+        }
+        $Updates[$name] = $value.Trim()
+        $EnvironmentValues[$name] = $Updates[$name]
+    }
+    $Updates['VIEWER_BOOTSTRAP_ONLY'] = 'false'
+}
+
 $environmentPath = Join-Path $RepositoryRoot ".azure\$Environment\.env"
 $environmentValues = Read-AzdEnvironmentFile -Path $environmentPath
 $config = (Get-DeploymentConfig -RepositoryRoot $RepositoryRoot -ConfigPath $ConfigPath).Values
@@ -476,6 +520,10 @@ if ($w365StillEnabled) {
         }
         $updates['VIEWER_HOSTING_MODE'] = 'new'
         $updates['VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID'] = ''
+    }
+
+    if ($ViewerMode -ne 'skip') {
+        Resolve-ViewerLiveInputs -EnvironmentValues $environmentValues -Updates $updates -NonInteractive $nonInteractive
     }
 }
 
