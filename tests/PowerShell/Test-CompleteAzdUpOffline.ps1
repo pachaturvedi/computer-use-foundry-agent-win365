@@ -289,6 +289,7 @@ if ($env:TEST_ORDER_PATH) { Add-Content -LiteralPath $env:TEST_ORDER_PATH -Value
 Write-Host 'MOCK-VIEWER-BOOTSTRAP-RAN'
 @{
     w365Enabled = $env:W365_ENABLED
+    deployViewer = $env:DEPLOY_VIEWER
 } | ConvertTo-Json | Set-Content -LiteralPath $env:TEST_VIEWER_CALLS_PATH
 if (![string]::IsNullOrWhiteSpace($env:TEST_VIEWER_PUBLIC_URL)) {
     $environmentPath = Join-Path $env:TEST_REPOSITORY_ROOT ".azure\$($env:AZURE_ENV_NAME)\.env"
@@ -622,6 +623,10 @@ throw 'Hosted agent redeployment failed.'
     }
     if (Test-Path -LiteralPath $viewerSecretsCallsPath) {
         throw 'Fresh certificate-mode azd up requested or stored a blueprint client secret.'
+    }
+    $certificateViewerCall = Get-Content -LiteralPath $viewerCallsPath -Raw | ConvertFrom-Json
+    if ($certificateViewerCall.deployViewer -ne 'true') {
+        throw 'Fresh certificate-mode azd up did not refresh DEPLOY_VIEWER before viewer bootstrap.'
     }
     $order = @(Get-Content -LiteralPath $orderPath)
     $expectedOrder = @(
