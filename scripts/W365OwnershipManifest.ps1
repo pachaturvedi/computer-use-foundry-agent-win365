@@ -101,7 +101,8 @@ function Read-W365OwnershipManifest {
 function Write-W365OwnershipManifest {
     param(
         [Parameter(Mandatory)][string]$Path,
-        [Parameter(Mandatory)][hashtable]$Manifest
+        [Parameter(Mandatory)][hashtable]$Manifest,
+        [scriptblock]$BeforeReplace
     )
 
     $directory = Split-Path -Parent $Path
@@ -110,7 +111,23 @@ function Write-W365OwnershipManifest {
     }
 
     $json = ConvertTo-Json (Copy-W365ManifestValue -Value $Manifest) -Depth 80
-    Set-Content -LiteralPath $Path -Value $json
+    $temporaryPath = Join-Path $directory (
+        '.{0}.{1}.tmp' -f @([IO.Path]::GetFileName($Path), [guid]::NewGuid().ToString('N')))
+    try {
+        [IO.File]::WriteAllText(
+            $temporaryPath,
+            $json,
+            [Text.UTF8Encoding]::new($false))
+        if ($null -ne $BeforeReplace) {
+            & $BeforeReplace
+        }
+        [IO.File]::Move($temporaryPath, $Path, $true)
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporaryPath) {
+            Remove-Item -LiteralPath $temporaryPath -Force
+        }
+    }
 }
 
 function Read-AzdEnvironmentFile {
@@ -146,7 +163,8 @@ function Read-AzdEnvironmentFile {
 function Set-AzdEnvironmentFileValues {
     param(
         [Parameter(Mandatory)][string]$Path,
-        [Parameter(Mandatory)][System.Collections.IDictionary]$Values
+        [Parameter(Mandatory)][System.Collections.IDictionary]$Values,
+        [scriptblock]$BeforeReplace
     )
 
     if (!(Test-Path -LiteralPath $Path)) {
@@ -181,5 +199,22 @@ function Set-AzdEnvironmentFileValues {
         $lines.Add('{0}="{1}"' -f @([string]$entry.Key, [string]$entry.Value))
     }
 
-    Set-Content -LiteralPath $Path -Value $lines
+    $directory = Split-Path -Parent $Path
+    $temporaryPath = Join-Path $directory (
+        '.{0}.{1}.tmp' -f @([IO.Path]::GetFileName($Path), [guid]::NewGuid().ToString('N')))
+    try {
+        [IO.File]::WriteAllLines(
+            $temporaryPath,
+            [string[]]$lines,
+            [Text.UTF8Encoding]::new($false))
+        if ($null -ne $BeforeReplace) {
+            & $BeforeReplace $temporaryPath $Path
+        }
+        [IO.File]::Move($temporaryPath, $Path, $true)
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporaryPath) {
+            Remove-Item -LiteralPath $temporaryPath -Force
+        }
+    }
 }

@@ -51,10 +51,30 @@ $rows = @(
 Write-Host ''
 Write-Host "Deployment result: $Environment"
 $rows | Format-Table -AutoSize -Wrap | Out-String | Write-Host
-if ((Get-Value 'W365_ENABLED') -eq 'true') {
-    $agentVersion = Get-Value 'AGENT_WIN365_DESKTOP_AGENT_VERSION'
-    Write-Host "Next: start a fresh hosted-agent session pinned to active version ${agentVersion}:"
-    Write-Host "  azd ai agent invoke $(Get-Value 'FOUNDRY_AGENT_NAME') --environment $Environment --version $agentVersion --new-session '<task>'"
+$agentVersion = [string]$values['AGENT_WIN365_DESKTOP_AGENT_VERSION']
+$agentName = [string]$values['FOUNDRY_AGENT_NAME']
+if ([string]::IsNullOrWhiteSpace($agentName) -or
+    [string]::IsNullOrWhiteSpace($agentVersion)) {
+    Write-Warning 'Next-step commands were not printed because the hosted-agent name or version is missing from the selected azd environment.'
+}
+elseif ((Get-Value 'W365_ENABLED') -eq 'true') {
+        Write-Host 'Next:'
+        Write-Host '  1. Verify the active hosted-agent deployment:'
+        Write-Host "     azd ai agent show $agentName --environment $Environment"
+        Write-Host '  2. Run the repository invoice scenario in a fresh session:'
+        Write-Host '     $task = Get-Content .\samples\prompts\invoice-processing-direct.txt -Raw'
+        Write-Host "     azd ai agent invoke $agentName --environment $Environment --version $agentVersion --new-session --new-conversation --timeout 1200 `$task"
+        Write-Host ''
+        Write-Host 'Optional after the smoke test succeeds:'
+        Write-Host "  azd ai agent eval generate --agent $agentName --environment $Environment"
+}
+else {
+    Write-Host 'Next:'
+    Write-Host '  1. Verify the W365-disabled bootstrap agent:'
+    Write-Host "     azd ai agent show $agentName --environment $Environment"
+    Write-Host '  2. When tenant onboarding is ready, enable phase two:'
+    Write-Host "     azd env set ENABLE_W365 true --environment $Environment"
+    Write-Host "     azd up --environment $Environment"
 }
 Write-SampleVerbose -Component 'deployment-summary' -Message 'Final values were loaded from the selected azd environment.'
 Write-SampleDebug -Component 'deployment-summary' -Message "Environment file contains $($values.Count) non-secret entries."

@@ -555,8 +555,46 @@ function New-OwnershipManifest {
             $manifest.graph[$mapName] = [ordered]@{}
         }
     }
+    if (!$manifest.Contains('operations') -or !($manifest.operations -is [System.Collections.IDictionary])) {
+        $manifest['operations'] = [ordered]@{}
+    }
 
     return $manifest
+}
+function Save-OwnershipManifest {
+    $script:ownershipManifest['updatedAtUtc'] = [DateTimeOffset]::UtcNow.ToString('o')
+    Write-W365OwnershipManifest -Path $script:ownershipManifestTarget.Path -Manifest $script:ownershipManifest
+}
+function Start-OwnershipOperation {
+    param(
+        [Parameter(Mandatory)][string]$Key,
+        [Parameter(Mandatory)][System.Collections.IDictionary]$Intent
+    )
+
+    if ($script:ownershipManifest.operations.Contains($Key)) {
+        $existingOperation = $script:ownershipManifest.operations[$Key]
+        foreach ($intentKey in $Intent.Keys) {
+            $existingValue = ConvertTo-Json (Copy-W365ManifestValue -Value $existingOperation[$intentKey]) -Depth 80 -Compress
+            $requestedValue = ConvertTo-Json (Copy-W365ManifestValue -Value $Intent[$intentKey]) -Depth 80 -Compress
+            if ($existingValue -ne $requestedValue) {
+                throw "Pending ownership operation '$Key' does not match the requested mutation. Resolve it manually."
+            }
+        }
+        return $existingOperation
+    }
+
+    $operation = Copy-W365ManifestValue -Value $Intent
+    $operation['status'] = 'pending'
+    $operation['startedAtUtc'] = [DateTimeOffset]::UtcNow.ToString('o')
+    $script:ownershipManifest.operations[$Key] = $operation
+    Save-OwnershipManifest
+    return $operation
+}
+function Complete-OwnershipOperation {
+    param([Parameter(Mandatory)][string]$Key)
+
+    $script:ownershipManifest.operations.Remove($Key)
+    Save-OwnershipManifest
 }
 function Get-OptionalObjectValue {
     param(
@@ -722,11 +760,38 @@ function Resolve-OrCreatePool {
         [string]$PersistedPoolId
     )
 
+    $pendingPoolCreate = if ($OwnershipManifest -and $OwnershipManifest.operations.Contains('w365.pool.create')) {
+        $OwnershipManifest.operations['w365.pool.create']
+    }
+    else {
+        $null
+    }
+    $ownershipForPoolResolution = if ($OwnershipManifest.w365.Contains('pool')) {
+        $OwnershipManifest
+    }
+    else {
+        $null
+    }
     $resolvedPoolId = Resolve-W365OwnedPoolId `
         -ExplicitPoolId $PoolId `
         -PoolReference $PoolIdOrUrl `
-        -OwnershipManifest $OwnershipManifest `
+        -OwnershipManifest $ownershipForPoolResolution `
         -PersistedPoolId $persistedPoolId
+    if ($resolvedPoolId -eq [guid]::Empty -and $pendingPoolCreate) {
+        $pendingDisplayName = [string]$pendingPoolCreate.displayName
+        if ($pendingDisplayName -ne [string]$PoolDisplayName) {
+            throw 'Pending pool creation does not match the requested pool name. Resolve the ownership manifest manually.'
+        }
+        $matchingPools = @(List 'beta/deviceManagement/virtualEndpoint/cloudPcPools' |
+            Where-Object { [string]$_.displayName -eq $pendingDisplayName })
+        $reconciledPool = SingleOrNone $matchingPools "pending Cloud PC pool creation '$pendingDisplayName'"
+        if ($reconciledPool) {
+            $resolvedPoolId = [guid]$reconciledPool.id
+        }
+        else {
+            throw "The outcome of pending Cloud PC pool creation '$pendingDisplayName' is still unknown. No create request was replayed."
+        }
+    }
     if ($resolvedPoolId -ne [guid]::Empty) {
         $existingPool = Graph GET "beta/deviceManagement/virtualEndpoint/cloudPcPools/$resolvedPoolId"
         if ($existingPool['@odata.type'] -ne '#microsoft.graph.cloudPcAgentPool') {
@@ -734,19 +799,76 @@ function Resolve-OrCreatePool {
         }
 
         $patch = New-PoolUpdateRequest -ExistingPool $existingPool
+        $pendingPoolUpdate = $OwnershipManifest.operations['w365.pool.update']
         if ($patch.Count -gt 1) {
+            $poolUpdateOperationKey = 'w365.pool.update'
+            $poolBeforeUpdate = if ($pendingPoolUpdate) {
+                Copy-W365ManifestValue -Value $pendingPoolUpdate.previous
+            }
+            else {
+                Copy-W365ManifestValue -Value $existingPool
+            }
+            Start-OwnershipOperation -Key $poolUpdateOperationKey -Intent ([ordered]@{
+                kind = 'update'
+                id = [string]$resolvedPoolId
+                previous = $poolBeforeUpdate
+                desiredPatch = Copy-W365ManifestValue -Value $patch
+            }) | Out-Null
             Graph PATCH "beta/deviceManagement/virtualEndpoint/cloudPcPools/$resolvedPoolId" $patch | Out-Null
             $existingPool = Graph GET "beta/deviceManagement/virtualEndpoint/cloudPcPools/$resolvedPoolId"
+            $script:ownershipManifest.w365['pool'] = Merge-OwnershipEntry `
+                -ExistingEntry $script:ownershipManifest.w365['pool'] `
+                -CurrentEntry ([ordered]@{
+                    id = [string]$existingPool.id
+                    displayName = [string]$existingPool.displayName
+                    description = [string]$existingPool.description
+                    disposition = 'reused'
+                    previous = $poolBeforeUpdate
+                }) `
+                -IdentityKeys @('id') `
+                -PreserveKeys @('previous') `
+                -Label 'W365 pool'
+            Complete-OwnershipOperation -Key $poolUpdateOperationKey
+        }
+        elseif ($pendingPoolUpdate) {
+            if ([string]$pendingPoolUpdate.id -ne [string]$resolvedPoolId) {
+                throw 'Pending pool update does not match the resolved pool. Resolve the ownership manifest manually.'
+            }
+            $script:ownershipManifest.w365['pool'] = Merge-OwnershipEntry `
+                -ExistingEntry $script:ownershipManifest.w365['pool'] `
+                -CurrentEntry ([ordered]@{
+                    id = [string]$existingPool.id
+                    displayName = [string]$existingPool.displayName
+                    description = [string]$existingPool.description
+                    disposition = 'reused'
+                    previous = Copy-W365ManifestValue -Value $pendingPoolUpdate.previous
+                }) `
+                -IdentityKeys @('id') `
+                -PreserveKeys @('previous') `
+                -Label 'W365 pool'
+            Complete-OwnershipOperation -Key 'w365.pool.update'
         }
 
         return [pscustomobject]@{
             Id = [guid]$existingPool.id
             Pool = $existingPool
-            Created = $false
+            Created = $null -ne $pendingPoolCreate
         }
     }
 
     $createRequest = New-PoolCreateRequest
+    $sameNamePool = SingleOrNone @(
+        List 'beta/deviceManagement/virtualEndpoint/cloudPcPools' |
+            Where-Object { [string]$_.displayName -eq [string]$createRequest.displayName }
+    ) "Cloud PC pool named '$([string]$createRequest.displayName)'"
+    if ($sameNamePool) {
+        throw "A Cloud PC pool named '$([string]$createRequest.displayName)' already exists without ownership evidence. Supply its explicit pool ID only if it is intended for reuse."
+    }
+    Start-OwnershipOperation -Key 'w365.pool.create' -Intent ([ordered]@{
+        kind = 'create'
+        displayName = [string]$createRequest.displayName
+        request = Copy-W365ManifestValue -Value $createRequest
+    }) | Out-Null
     $createdPool = Graph POST 'beta/deviceManagement/virtualEndpoint/cloudPcPools' $createRequest
     return [pscustomobject]@{
         Id = [guid]$createdPool.id
@@ -845,6 +967,31 @@ $existingManifest = if ($manifestTarget) {
 else {
     $null
 }
+if ($null -eq $manifestTarget) {
+    throw 'An ownership manifest path is required before W365 or Microsoft Graph resources can be changed.'
+}
+$script:ownershipManifestTarget = $manifestTarget
+$script:ownershipManifest = New-OwnershipManifest `
+    -ExistingManifest $existingManifest `
+    -EnvironmentName $manifestTarget.EnvironmentName
+$script:ownershipManifest.graph['blueprint'] = Merge-OwnershipEntry `
+    -ExistingEntry $script:ownershipManifest.graph['blueprint'] `
+    -CurrentEntry ([ordered]@{
+        appId = [string]$blueprint.appId
+        objectId = [string]$blueprint.id
+        principalId = [string]$principal.id
+    }) `
+    -IdentityKeys @('appId', 'objectId', 'principalId') `
+    -Label 'Foundry blueprint'
+$script:ownershipManifest.graph['agent'] = Merge-OwnershipEntry `
+    -ExistingEntry $script:ownershipManifest.graph['agent'] `
+    -CurrentEntry ([ordered]@{
+        appId = [string]$agent.appId
+        objectId = [string]$agent.id
+    }) `
+    -IdentityKeys @('appId', 'objectId') `
+    -Label 'Foundry agent identity'
+$existingManifest = $script:ownershipManifest
 $environmentValues = [ordered]@{}
 if ($manifestTarget -and ![string]::IsNullOrWhiteSpace($manifestTarget.EnvironmentName)) {
     $environmentFilePath = Join-Path `
@@ -887,30 +1034,27 @@ $poolState = Resolve-OrCreatePool `
 $pool = $poolState.Pool
 $PoolId = $poolState.Id
 if ($poolState.Created -and $manifestTarget) {
-    $existingManifest = New-OwnershipManifest `
-        -ExistingManifest $existingManifest `
-        -EnvironmentName $manifestTarget.EnvironmentName
-    $existingManifest.w365['pool'] = [ordered]@{
+    $script:ownershipManifest.w365['pool'] = Merge-OwnershipEntry `
+        -ExistingEntry $script:ownershipManifest.w365['pool'] `
+        -CurrentEntry ([ordered]@{
         id = $PoolId.ToString()
         displayName = [string]$pool.displayName
         description = [string]$pool.description
         disposition = 'created'
-    }
-    $existingManifest.graph['blueprint'] = [ordered]@{
-        appId = [string]$blueprint.appId
-        objectId = [string]$blueprint.id
-        principalId = [string]$principal.id
-    }
-    $existingManifest.graph['agent'] = [ordered]@{
-        appId = [string]$agent.appId
-        objectId = [string]$agent.id
-    }
-    Write-W365OwnershipManifest -Path $manifestTarget.Path -Manifest $existingManifest
+    }) -IdentityKeys @('id') -Label 'W365 pool'
+    Complete-OwnershipOperation -Key 'w365.pool.create'
+    $existingManifest = $script:ownershipManifest
 }
 $inheritPath = "v1.0/applications/microsoft.graph.agentIdentityBlueprint/$($blueprint.appId)/inheritablePermissions"
 $inheritances = @(List $inheritPath)
 $grants = @(List "v1.0/oauth2PermissionGrants?`$filter=clientId eq '$($principal.id)'")
-$requiredResourceAccessBefore = Copy-W365ManifestValue -Value @($blueprint.requiredResourceAccess | Where-Object { $null -ne $_ })
+$pendingBlueprintOperation = $script:ownershipManifest.operations['graph.blueprint.requiredResourceAccess']
+$requiredResourceAccessBefore = if ($pendingBlueprintOperation) {
+    Copy-W365ManifestValue -Value @($pendingBlueprintOperation.previous)
+}
+else {
+    Copy-W365ManifestValue -Value @($blueprint.requiredResourceAccess | Where-Object { $null -ne $_ })
+}
 foreach ($resource in $resources) {
     foreach ($scope in $resource.Scopes) {
         $match = @($resource.Sp.oauth2PermissionScopes | Where-Object { $_.value -eq $scope -and $_.isEnabled })
@@ -957,12 +1101,50 @@ foreach ($entry in $required) {
         }
     }
 }
+Start-OwnershipOperation -Key 'graph.blueprint.requiredResourceAccess' -Intent ([ordered]@{
+    kind = 'update'
+    objectId = [string]$blueprint.id
+    previous = Copy-W365ManifestValue -Value $requiredResourceAccessBefore
+    added = Copy-W365ManifestValue -Value $requiredResourceAccessAdded
+    desired = Copy-W365ManifestValue -Value $required
+}) | Out-Null
 Graph PATCH $bpPath @{ requiredResourceAccess = $required } | Out-Null
+$script:ownershipManifest.graph['blueprint'] = Merge-OwnershipEntry `
+    -ExistingEntry $script:ownershipManifest.graph['blueprint'] `
+    -CurrentEntry ([ordered]@{
+        appId = [string]$blueprint.appId
+        objectId = [string]$blueprint.id
+        principalId = [string]$principal.id
+        requiredResourceAccessBefore = $requiredResourceAccessBefore
+        requiredResourceAccessAdded = $requiredResourceAccessAdded
+    }) `
+    -IdentityKeys @('appId', 'objectId', 'principalId') `
+    -PreserveKeys @('requiredResourceAccessBefore', 'requiredResourceAccessAdded') `
+    -Label 'Foundry blueprint'
+Complete-OwnershipOperation -Key 'graph.blueprint.requiredResourceAccess'
 foreach ($resource in $resources) {
     $grant = $resource.Grant
-    $grantExisted = $null -ne $grant
-    $previousScope = if ($grantExisted) { [string]$grant.scope } else { '' }
+    $operationKey = "graph.permissionGrant.$($resource.Sp.appId)"
+    $pendingGrant = $script:ownershipManifest.operations[$operationKey]
+    $grantExisted = if ($pendingGrant) { [bool]$pendingGrant.existedBefore } else { $null -ne $grant }
+    $previousScope = if ($pendingGrant) {
+        [string]$pendingGrant.previousScope
+    }
+    elseif ($grantExisted) {
+        [string]$grant.scope
+    }
+    else {
+        ''
+    }
     $scope = @(@($(if ($grant) { $grant.scope -split ' ' })) + $resource.Scopes | Where-Object { $_ } | Sort-Object -Unique) -join ' '
+    Start-OwnershipOperation -Key $operationKey -Intent ([ordered]@{
+        kind = if ($grantExisted) { 'update' } else { 'create' }
+        resourceAppId = [string]$resource.Sp.appId
+        resourceId = [string]$resource.Sp.id
+        existedBefore = $grantExisted
+        previousScope = $previousScope
+        desiredScope = $scope
+    }) | Out-Null
     if ($grant) {
         Graph PATCH "v1.0/oauth2PermissionGrants/$($grant.id)" @{ scope = $scope } | Out-Null
     }
@@ -979,6 +1161,13 @@ foreach ($resource in $resources) {
         previousScope = $previousScope
         scope = $scope
     }
+    Merge-OwnershipMapEntry -Container $script:ownershipManifest.graph.permissionGrants `
+        -Key $resource.Sp.appId `
+        -Entry $grantManifestEntries[$resource.Sp.appId] `
+        -IdentityKeys @('resourceAppId', 'resourceId') `
+        -PreserveKeys @('previousScope') `
+        -Label "permission grant $($resource.Sp.appId)"
+    Complete-OwnershipOperation -Key $operationKey
     $inheritance = @{
         resourceAppId = $resource.Sp.appId
         inheritableScopes = @{ '@odata.type' = '#microsoft.graph.allAllowedScopes'; kind = 'allAllowed' }
@@ -986,7 +1175,18 @@ foreach ($resource in $resources) {
     }
     $inheritanceDisposition = 'reused'
     $currentInheritance = $resource.ExistingInheritance
+    $inheritanceOperationKey = "graph.inheritance.$($resource.Sp.appId)"
+    $pendingInheritance = $script:ownershipManifest.operations[$inheritanceOperationKey]
+    if ($pendingInheritance -and $currentInheritance) {
+        $inheritanceDisposition = 'created'
+    }
     if (!$resource.ExistingInheritance) {
+        Start-OwnershipOperation -Key $inheritanceOperationKey -Intent ([ordered]@{
+            kind = 'create'
+            resourceAppId = [string]$resource.Sp.appId
+            previous = $null
+            desired = Copy-W365ManifestValue -Value $inheritance
+        }) | Out-Null
         $currentInheritance = Graph POST $inheritPath $inheritance
         $inheritanceDisposition = 'created'
     }
@@ -997,6 +1197,15 @@ foreach ($resource in $resources) {
         previous = Copy-W365ManifestValue -Value $resource.ExistingInheritance
         current = Copy-W365ManifestValue -Value $currentInheritance
     }
+    Merge-OwnershipMapEntry -Container $script:ownershipManifest.graph.inheritablePermissions `
+        -Key $resource.Sp.appId `
+        -Entry $inheritanceManifestEntries[$resource.Sp.appId] `
+        -IdentityKeys @('resourceAppId') `
+        -PreserveKeys @('previous') `
+        -Label "inheritance $($resource.Sp.appId)"
+    if ($script:ownershipManifest.operations.Contains($inheritanceOperationKey)) {
+        Complete-OwnershipOperation -Key $inheritanceOperationKey
+    }
 }
 $federationManifestEntries = [ordered]@{}
 foreach ($existingFic in @($existingFics)) {
@@ -1005,16 +1214,33 @@ foreach ($existingFic in @($existingFics)) {
         continue
     }
 
+    $existingFederationOperationKey = "graph.federation.$ficName"
+    $pendingFederation = $script:ownershipManifest.operations[$existingFederationOperationKey]
     $federationManifestEntries[$ficName] = [ordered]@{
         id = [string](Get-OptionalObjectValue -Object $existingFic -Name 'id')
         name = $ficName
         subject = [string]$existingFic.subject
         issuer = [string]$existingFic.issuer
         audiences = @($existingFic.audiences)
-        disposition = 'reused'
+        disposition = if ($pendingFederation) { 'created' } else { 'reused' }
+    }
+    Merge-OwnershipMapEntry -Container $script:ownershipManifest.graph.federatedIdentityCredentials `
+        -Key $ficName `
+        -Entry $federationManifestEntries[$ficName] `
+        -IdentityKeys @('name', 'subject') `
+        -Label "federation $ficName"
+    if ($pendingFederation) {
+        Complete-OwnershipOperation -Key $existingFederationOperationKey
     }
 }
 foreach ($federation in $federations) {
+    $federationOperationKey = "graph.federation.$($federation.name)"
+    Start-OwnershipOperation -Key $federationOperationKey -Intent ([ordered]@{
+        kind = 'create'
+        name = [string]$federation.name
+        subject = [string]$federation.subject
+        desired = Copy-W365ManifestValue -Value $federation
+    }) | Out-Null
     $createdFederation = Graph POST $ficPath $federation
     $federationManifestEntries[$federation.name] = [ordered]@{
         id = [string](Get-OptionalObjectValue -Object $createdFederation -Name 'id')
@@ -1024,23 +1250,74 @@ foreach ($federation in $federations) {
         audiences = @($federation.audiences)
         disposition = 'created'
     }
+    Merge-OwnershipMapEntry -Container $script:ownershipManifest.graph.federatedIdentityCredentials `
+        -Key $federation.name `
+        -Entry $federationManifestEntries[$federation.name] `
+        -IdentityKeys @('name', 'subject') `
+        -Label "federation $($federation.name)"
+    Complete-OwnershipOperation -Key $federationOperationKey
 }
 Write-Output "Existing agent principal ID: $($agent.id)"
- $createdAgentUser = $false
+$agentUserOperationKey = 'w365.agentUser.create'
+$pendingAgentUser = $script:ownershipManifest.operations[$agentUserOperationKey]
+$createdAgentUser = $null -ne $pendingAgentUser
 if (!$agentUser) {
+    Start-OwnershipOperation -Key $agentUserOperationKey -Intent ([ordered]@{
+        kind = 'create'
+        userPrincipalName = $AgentUserPrincipalName
+        parentAgentObjectId = [string]$agent.id
+    }) | Out-Null
     $agentUser = Graph POST 'beta/users/microsoft.graph.agentUser' @{
         displayName = "$($agent.displayName) user"; userPrincipalName = $AgentUserPrincipalName
         mailNickname = $AgentUserPrincipalName.Split('@')[0]; accountEnabled = $true; identityParentId = $agent.id
     }
     $createdAgentUser = $true
 }
+$script:ownershipManifest.w365['agentUser'] = Merge-OwnershipEntry `
+    -ExistingEntry $script:ownershipManifest.w365['agentUser'] `
+    -CurrentEntry ([ordered]@{
+        id = [string]$agentUser.id
+        userPrincipalName = [string]$agentUser.userPrincipalName
+        parentAgentObjectId = [string]$agent.id
+        disposition = if ($createdAgentUser) { 'created' } else { 'reused' }
+    }) `
+    -IdentityKeys @('id', 'userPrincipalName', 'parentAgentObjectId') `
+    -Label 'W365 agent user'
+if ($script:ownershipManifest.operations.Contains($agentUserOperationKey)) {
+    Complete-OwnershipOperation -Key $agentUserOperationKey
+}
 $assignmentPath = "beta/deviceManagement/virtualEndpoint/cloudPcPools/$PoolId/assignments"
 $assigned = SingleOrNone @(List $assignmentPath | Where-Object { $_.userPrincipalId -eq $agentUser.id }) 'agent pool assignment'
- $createdAssignment = $null
+$assignmentOperationKey = 'w365.pool.assignment.create'
+$pendingAssignment = $script:ownershipManifest.operations[$assignmentOperationKey]
+if ($pendingAssignment -and
+    ([string]$pendingAssignment.poolId -ne $PoolId.ToString() -or
+    [string]$pendingAssignment.userPrincipalId -ne [string]$agentUser.id)) {
+    throw 'Pending pool assignment does not match the resolved pool and agent user. Resolve the ownership manifest manually.'
+}
+$createdAssignment = $null
 if (!$assigned) {
+    Start-OwnershipOperation -Key $assignmentOperationKey -Intent ([ordered]@{
+        kind = 'create'
+        poolId = $PoolId.ToString()
+        userPrincipalId = [string]$agentUser.id
+    }) | Out-Null
     $createdAssignment = Graph POST $assignmentPath @{
         '@odata.type' = '#microsoft.graph.cloudPcAgentPoolUserAssignment'; userPrincipalId = $agentUser.id
     }
+}
+$script:ownershipManifest.w365['assignment'] = Merge-OwnershipEntry `
+    -ExistingEntry $script:ownershipManifest.w365['assignment'] `
+    -CurrentEntry ([ordered]@{
+        id = if ($assigned) { [string](Get-OptionalObjectValue -Object $assigned -Name 'id') } else { [string](Get-OptionalObjectValue -Object $createdAssignment -Name 'id') }
+        poolId = $PoolId.ToString()
+        userPrincipalId = [string]$agentUser.id
+        disposition = if ($assigned -and !$pendingAssignment) { 'reused' } else { 'created' }
+    }) `
+    -IdentityKeys @('poolId', 'userPrincipalId') `
+    -Label 'W365 pool assignment'
+if ($script:ownershipManifest.operations.Contains($assignmentOperationKey)) {
+    Complete-OwnershipOperation -Key $assignmentOperationKey
 }
 $phaseTwoValues = [ordered]@{
     W365_TENANT_ID = $TenantId.ToString()

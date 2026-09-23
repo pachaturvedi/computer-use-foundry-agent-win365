@@ -44,11 +44,11 @@ function Test-StrictBoolean {
     if ([string]::IsNullOrWhiteSpace($Value)) {
         return $false
     }
-    if ($Value -notin @('true', 'false')) {
+    if ($Value -cnotin @('true', 'false')) {
         throw "Expected a strict true/false value, received '$Value'."
     }
 
-    return $Value -eq 'true'
+    return $Value -ceq 'true'
 }
 
 function Select-ProfileOption {
@@ -136,7 +136,7 @@ function Get-DiscoveryResult {
 
 $environmentPath = Join-Path $RepositoryRoot ".azure\$Environment\.env"
 $environmentValues = Read-AzdEnvironmentFile -Path $environmentPath
-$config = Read-DeploymentConfigFile -Path $ConfigPath
+$config = (Get-DeploymentConfig -RepositoryRoot $RepositoryRoot -ConfigPath $ConfigPath).Values
 $updates = [ordered]@{}
 $nonInteractive = Test-StrictBoolean -Value ([string]$env:AZD_NON_INTERACTIVE)
 
@@ -210,6 +210,12 @@ if (!$ViewerOnly) {
                 elseif ($pools.Count -eq 1) {
                     @($pools[0])
                 }
+                elseif ($pools.Count -eq 0) {
+                    throw 'No Windows 365 agent pools were discovered. Verify tenant access and create or approve a pool before selecting existing-pool mode.'
+                }
+                elseif ($nonInteractive) {
+                    throw "Multiple Windows 365 agent pools were discovered. Select one with: azd env set W365_POOL_ID `"<pool-guid>`" --environment '$Environment'."
+                }
                 else {
                     @(Select-ProfileOption `
                         -Label 'Windows 365 agent pool' `
@@ -244,6 +250,9 @@ if (!$ViewerOnly) {
                     @($billingPlans[0])
                 }
                 elseif ($billingPlans.Count -gt 1) {
+                    if ($nonInteractive) {
+                        throw "Multiple Windows 365 billing plans were discovered. Select one with: azd env set W365_POOL_BILLING_PLAN_ID `"<billing-plan-guid>`" --environment '$Environment'."
+                    }
                     @(Select-ProfileOption `
                         -Label 'Windows 365 billing plan' `
                         -Options $billingPlans `
@@ -276,13 +285,22 @@ if (!$ViewerOnly) {
                 }
 
                 $acceptanceDefaults = $config.w365AcceptanceDefaults
-                $defaultRegion = [string]@($acceptanceDefaults.poolRegions)[0]
+                $defaultRegion = if ($config.w365.ContainsKey('poolRegions') -and
+                    @($config.w365.poolRegions).Count -gt 0) {
+                    [string]@($config.w365.poolRegions)[0]
+                }
+                else {
+                    [string]@($acceptanceDefaults.poolRegions)[0]
+                }
                 $regions = @($discovery.regions)
                 $selectedRegion = @($regions | Where-Object {
                     [string]$_.id -eq $defaultRegion -or
                     [string]$_.regionName -eq $defaultRegion
                 })
                 if ($selectedRegion.Count -ne 1) {
+                    if ($nonInteractive) {
+                        throw "The configured default W365 region '$defaultRegion' was not discovered uniquely. Run .\scripts\Get-W365DiscoveryOptions.ps1 -TenantId '$tenantId' -UseDeviceCode -Configure to save one tenant-supported region, then rerun the same azd environment."
+                    }
                     $selectedRegion = @(Select-ProfileOption `
                         -Label 'Windows 365 region' `
                         -Options $regions `
@@ -293,9 +311,18 @@ if (!$ViewerOnly) {
                 }
 
                 $images = @($discovery.galleryImages)
-                $defaultImage = [string]$acceptanceDefaults.poolImageId
+                $defaultImage = if ($config.w365.ContainsKey('poolImageId') -and
+                    ![string]::IsNullOrWhiteSpace([string]$config.w365.poolImageId)) {
+                    [string]$config.w365.poolImageId
+                }
+                else {
+                    [string]$acceptanceDefaults.poolImageId
+                }
                 $selectedImage = @($images | Where-Object { [string]$_.id -eq $defaultImage })
                 if ($selectedImage.Count -ne 1) {
+                    if ($nonInteractive) {
+                        throw "The configured default W365 gallery image '$defaultImage' was not discovered uniquely. Run .\scripts\Get-W365DiscoveryOptions.ps1 -TenantId '$tenantId' -UseDeviceCode -Configure to save one tenant-supported image, then rerun the same azd environment."
+                    }
                     $selectedImage = @(Select-ProfileOption `
                         -Label 'Windows 365 gallery image' `
                         -Options $images `
@@ -358,7 +385,12 @@ if ($w365StillEnabled) {
     }
 
     if ($ViewerMode -eq 'existing') {
-        $resolvedResourceId = $ManagedEnvironmentResourceId
+        $resolvedResourceId = if (![string]::IsNullOrWhiteSpace($ManagedEnvironmentResourceId)) {
+            $ManagedEnvironmentResourceId
+        }
+        else {
+            [string]$environmentValues['VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID']
+        }
         if ([string]::IsNullOrWhiteSpace($resolvedResourceId)) {
             $subscriptionId = [guid]::Empty
             if (![guid]::TryParse([string]$environmentValues['AZURE_SUBSCRIPTION_ID'], [ref]$subscriptionId) -or
@@ -377,9 +409,16 @@ if ($w365StillEnabled) {
             if (!$?) {
                 throw 'Azure Container Apps managed-environment discovery failed.'
             }
-            $candidates = @(($json | Out-String | ConvertFrom-Json -Depth 10))
+            $candidates = @(($json | Out-String | ConvertFrom-Json -Depth 10) |
+                Where-Object { $null -ne $_ })
             $selectedEnvironment = if ($candidates.Count -eq 1) {
                 $candidates[0]
+            }
+            elseif ($candidates.Count -eq 0) {
+                throw 'No succeeded Azure Container Apps managed environments were discovered. Create one or select viewer hosting mode new or skip.'
+            }
+            elseif ($nonInteractive) {
+                throw "Multiple Azure Container Apps managed environments were discovered. Select one with: azd env set VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID `"<managed-environment-resource-id>`" --environment '$Environment'."
             }
             else {
                 Select-ProfileOption `

@@ -486,6 +486,29 @@ try {
         }
     }
     Write-W365OwnershipManifest -Path $manifestPath -Manifest $manifest
+    $originalManifestJson = Get-Content -LiteralPath $manifestPath -Raw
+    $replacementManifest = Copy-W365ManifestValue -Value $manifest
+    $replacementManifest.schemaVersion = 2
+    $manifestInterruptionFailed = $false
+    try {
+        Write-W365OwnershipManifest `
+            -Path $manifestPath `
+            -Manifest $replacementManifest `
+            -BeforeReplace { throw 'Simulated ownership-manifest replacement interruption.' }
+    }
+    catch {
+        $manifestInterruptionFailed =
+            $_.Exception.Message -match 'Simulated ownership-manifest replacement interruption'
+    }
+    $manifestTemporaryFiles = @(Get-ChildItem `
+        -LiteralPath (Split-Path -Parent $manifestPath) `
+        -Filter '.w365-ownership.json.*.tmp' `
+        -ErrorAction SilentlyContinue)
+    if (!$manifestInterruptionFailed -or
+        (Get-Content -LiteralPath $manifestPath -Raw) -ne $originalManifestJson -or
+        $manifestTemporaryFiles.Count -ne 0) {
+        throw 'Interrupted ownership-manifest replacement damaged prior ownership evidence or left a temporary file.'
+    }
 
     $persisted = [ordered]@{
         W365_POOL_ID = 'pool-id'

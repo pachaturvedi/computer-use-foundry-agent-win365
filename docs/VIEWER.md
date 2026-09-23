@@ -50,8 +50,10 @@ remain failures.
 Viewer infrastructure is requested only after the shared storage account,
 container, and exact undecorated HTTPS Blob URI are validated. Missing or
 inconsistent outputs stop before ACA provisioning. Fix the reported state
-configuration and rerun `azd up`; the onboarding retry re-enters phase two, and
-no viewer cleanup is required for a failure before viewer provisioning.
+configuration and rerun
+`azd up --environment "<azd-environment-name>"`;
+the onboarding retry re-enters phase two, and no viewer cleanup is required for
+a failure before viewer provisioning.
 
 The one-command deployment provisions the ACA/ACR/UAMI bootstrap after shared
 state, builds and health-checks the viewer image, completes W365 setup,
@@ -62,7 +64,15 @@ or ignored `config\deployment.local.json` are carried through automatically.
 
 If the onboarding values are absent, the ACA viewer still deploys and reports
 healthy bootstrap status, but live-view and take-control routes remain disabled.
-The final summary lists the missing values; set them and rerun `azd up`.
+The final summary lists the missing values; set them and rerun
+`azd up --environment "<azd-environment-name>"`.
+
+If deployment is interrupted after viewer bootstrap or activation begins,
+rerun that same command for the same azd environment. Post-up retains the
+pre-mutation viewer baseline and will either confirm that nothing changed or
+redeploy the hosted agent before reporting completion. Do not clear
+`W365_AGENT_REDEPLOY_CHECK_PENDING` or `W365_AGENT_REDEPLOY_PENDING` manually,
+and do not substitute a standalone `DeployAgent` run for this recovery path.
 
 ## Bootstrap and local mode
 

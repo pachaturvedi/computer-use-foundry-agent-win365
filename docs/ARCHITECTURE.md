@@ -88,6 +88,25 @@ The main control-plane entry points are:
 - [`Invoke-W365SetupFlow.ps1`](../scripts/Invoke-W365SetupFlow.ps1)
 - [`Setup-W365.ps1`](../scripts/Setup-W365.ps1)
 
+### Deployment completion and viewer redeployment state
+
+`Complete-AzdUp.ps1` owns the durable post-deployment handshake in the selected
+`.azure\<environment>\.env` file. Before viewer bootstrap or live activation
+can mutate runtime configuration, it writes
+`W365_AGENT_REDEPLOY_CHECK_PENDING=true` with the prior viewer URL and live
+state. After the mutation it compares the persisted baseline:
+
+- no change clears only the comparison marker;
+- a change sets `W365_AGENT_REDEPLOY_PENDING=true`; and
+- only a successful guarded hosted-agent deployment clears the redeployment
+  marker.
+
+Failures or process termination preserve the comparison or redeployment state
+for the next run. A same-environment `azd up` retry reconciles that state. When
+the optional `Invoke-AzdUp.ps1` wrapper is used, it additionally requires both
+pending markers to be false before persisting wrapper completion or printing
+success. Operators must not edit these markers manually.
+
 ## Request path
 
 Bootstrap starts before model initialization. With `W365_ENABLED=false`, the
@@ -268,6 +287,17 @@ Setup records which Entra and W365 objects were created or reused plus the
 blueprint's prior state. Cleanup removes only recorded sample-owned entries,
 restores reused grants to their prior scopes, and blocks shared-project cleanup
 without explicit approval.
+
+Setup and Key Vault bootstrap treat each remote control-plane change as a
+durable operation. The ownership manifest is atomically updated with a
+`pending` intent before the request is sent, then updated immediately with the
+confirmed object ID, created/reused disposition, and any restoration baseline.
+If the provider committed a request but the local process stopped before that
+confirmation was written, the next run compares the pending target with remote
+state and preserves the original `created` disposition rather than adopting it
+as reused. Mismatched or ambiguous pending state fails closed. Operators must
+retry with the same environment and inputs; teardown continues to act only on
+confirmed manifest ownership.
 
 ## Fail-closed recovery
 

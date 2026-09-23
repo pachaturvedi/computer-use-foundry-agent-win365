@@ -119,6 +119,11 @@ azd env new "<resource-prefix>-dev" `
 azd up --environment "<resource-prefix>-dev"
 ```
 
+The checked-in azd hooks perform both deployment phases. Wait for the final
+sample deployment table and scenario-specific `Next` section; Foundry may print
+generic service-level guidance after the bootstrap agent deploys, before W365
+and the optional viewer finish.
+
 The command deploys the Foundry bootstrap first. It then asks whether to reuse
 an existing W365 agent pool, create a new pool, or keep a Foundry-only
 deployment. New-pool setup uses the reviewed region and image defaults and asks
@@ -156,10 +161,10 @@ azd env set ENABLE_W365 false --environment "<resource-prefix>-dev"
 azd up --environment "<resource-prefix>-dev"
 ```
 
-Do not run `azd init` or `azd ai agent init` inside this clone. Direct `azd up`
-is the complete path for a new, dedicated managed environment. Use the
-[deployment guide](docs/DEPLOYMENT.md) when reusing a shared Foundry project or
-when separate previews and approvals are required.
+Do not run `azd init` or `azd ai agent init` inside this clone. Use the
+[deployment guide](docs/DEPLOYMENT.md) when reusing a shared Foundry project,
+requiring separate previews and approvals, or using the optional guarded
+PowerShell wrapper for unattended execution and stricter cancellation handling.
 
 ## Verify live behavior
 

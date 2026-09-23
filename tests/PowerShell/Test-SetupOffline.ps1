@@ -13,6 +13,7 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
     $script:poolId = '55555555-5555-5555-5555-555555555555'
     $script:billingPlanId = '66666666-6666-6666-6666-666666666666'
     $script:failBlueprintPatch = $false
+    $script:failPoolCreateAfterCommit = $false
     $script:connectCalls = 0
     $script:timeoutFailuresRemaining = 1
     $script:lastContextScope = ''
@@ -79,6 +80,9 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
                 return @{ value = @(@{ id = "sp-$id"; appId = $id; oauth2PermissionScopes = @($names | ForEach-Object { @{ id = "scope-$_"; value = $_; isEnabled = $true } }) }) }
             }
             if ($path -like '*cloudPcPools/*/assignments') { return @{ value = $script:ledger.Assignments } }
+            if ($path -eq 'beta/deviceManagement/virtualEndpoint/cloudPcPools') {
+                return @{ value = @($script:ledger.Pool | Where-Object { $_ }) }
+            }
             if ($path -like '*cloudPcPools/*') { return $script:ledger.Pool }
             if ($path.StartsWith('v1.0/applications/microsoft.graph.agentIdentityBlueprint?')) { return @{ value = @($script:ledger.Blueprint | Where-Object { $_ }) } }
             if ($path.StartsWith('v1.0/applications/blueprint-object?')) { return $script:ledger.Blueprint }
@@ -120,6 +124,10 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
                 'beta/deviceManagement/virtualEndpoint/cloudPcPools' {
                     $bodyObject.id = '77777777-7777-7777-7777-777777777777'
                     $script:ledger.Pool = $bodyObject
+                    if ($script:failPoolCreateAfterCommit) {
+                        $script:failPoolCreateAfterCommit = $false
+                        throw 'Simulated interruption after remote pool creation.'
+                    }
                     return $bodyObject
                 }
                 '*/inheritablePermissions' { $script:ledger.Inheritance += $bodyObject; return $bodyObject }
@@ -262,6 +270,19 @@ try {
         PoolEnableSingleSignOn = $true; BillingConfirmed = $true; Confirm = $false; SkipAzdEnvironmentSync = $true
         OwnershipManifestPath = $ownershipManifestPath
     }
+    & $module { $script:failPoolCreateAfterCommit = $true }
+    $poolCreateInterrupted = $false
+    try {
+        & "$scriptsRoot\Setup-W365.ps1" @createArgs | Out-Null
+    }
+    catch {
+        $poolCreateInterrupted = $_.Exception.Message -match 'Simulated interruption after remote pool creation'
+    }
+    $poolPendingManifest = Get-Content -LiteralPath $ownershipManifestPath -Raw | ConvertFrom-Json -AsHashtable
+    if (!$poolCreateInterrupted -or !$poolPendingManifest.operations.Contains('w365.pool.create')) {
+        throw 'Setup did not preserve pending ownership after the ambiguous pool-create outcome.'
+    }
+
     $createOutput = & "$scriptsRoot\Setup-W365.ps1" @createArgs
     if ('W365_POOL_ID=77777777-7777-7777-7777-777777777777' -notin $createOutput -or
         'W365_POOL_NAME=Created pool' -notin $createOutput -or

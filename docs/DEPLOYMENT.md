@@ -69,7 +69,6 @@ Create an isolated environment and run the complete deployment:
 azd env new "<resource-prefix>-dev" `
     --subscription "<subscription-id>" `
     --location eastus
-
 azd up --environment "<resource-prefix>-dev"
 ```
 
@@ -90,6 +89,30 @@ The interactive flow then:
 6. completes approved W365/Entra setup and stores ownership evidence;
 7. deploys the same agent name with W365 enabled; and
 8. activates the viewer when all tenant-specific inputs are available.
+
+The checked-in azd hooks complete W365 and viewer setup after the Foundry
+bootstrap. Wait for the final sample deployment table and mode-specific next
+commands; generic Foundry guidance can appear before `postup` finishes.
+
+For unattended execution or stricter Windows process-tree cancellation,
+same-environment locking, and final-state verification, use the optional
+wrapper:
+
+```powershell
+pwsh -NoProfile -File .\scripts\Invoke-AzdUp.ps1 `
+    -Environment "<resource-prefix>-dev" `
+    -ConfirmResourceChanges `
+    -NoPrompt
+```
+
+Before viewer bootstrap or activation can change runtime configuration, post-up
+persists `W365_AGENT_REDEPLOY_CHECK_PENDING=true` with the previous viewer URL
+and live state. Reconciliation clears that comparison marker when nothing
+changed or promotes it to `W365_AGENT_REDEPLOY_PENDING=true` when hosted-agent
+redeployment is required. The confirmed marker is cleared only after the
+hosted agent is redeployed successfully. A failed or canceled run cannot report
+completion while either marker remains. Correct the reported prerequisite and
+rerun `azd up --environment "<resource-prefix>-dev"` for the same environment.
 
 Expected result:
 
@@ -386,6 +409,19 @@ azd env set HOSTED_ALLOWED_USER_ID pending --environment $environment
 azd env set W365_BLUEPRINT_CREDENTIAL_MODE client_secret `
     --environment $environment
 
+pwsh -NoProfile -File .\scripts\Set-ViewerSecrets.ps1 `
+    -Environment $environment `
+    -BlueprintOnly `
+    -BootstrapOperatorAccess
+```
+
+`HOSTED_ALLOWED_USER_ID=pending` denies W365 access until the intended Foundry
+caller partition is bound. The blueprint credential is collected through a
+secure prompt and stored in Key Vault; it is not persisted in source, JSON,
+logs, command history, or azd environment state.
+
+### Managed-identity federation opt-in
+
 Managed-identity mode requires explicit authorization for the exact discovered
 agent principal and remains blocked on the tested host:
 
@@ -402,6 +438,8 @@ pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
    -ConfirmResourceChanges `
    -UseDeviceCode
 ```
+
+### Key Vault certificate mode
 
 `key_vault_certificate` mode uses a self-signed, non-exportable Key Vault
 certificate instead of a shared secret; see
@@ -508,13 +546,22 @@ Expected result:
 - an enabled immutable agent version is active.
 
 If W365 setup succeeds but final agent deployment fails, fix the reported
-deployment prerequisite and rerun only:
+deployment prerequisite, then rerun the complete workflow for the same
+environment:
 
 ```powershell
-pwsh -NoProfile -File .\scripts\Invoke-AzdDeployment.ps1 `
-    -Environment $environment `
-    -Mode DeployAgent `
-    -ConfirmResourceChanges
+azd up --environment $environment
+```
+
+The retained ownership and redeployment markers make this retry idempotent. Do
+not clear them manually or invoke the agent deployment stage directly. If
+recovery cannot complete, use the ownership-aware teardown:
+
+```powershell
+pwsh -NoProfile -File .\scripts\Invoke-AzdDown.ps1 `
+    -EnvironmentName $environment `
+    -Purge `
+    -Force
 ```
 
 ## Bind the hosted operator
@@ -596,6 +643,21 @@ $environment = "<azd-environment-name>"
 azd up --environment $environment
 ```
 
+If deployment fails or is canceled, treat the deployment as partial. Inspect
+the reported stage and retained ownership evidence before retrying the same
+environment. If the environment will be abandoned, remove it through the
+ownership-aware teardown:
+
+```powershell
+pwsh -NoProfile -File .\scripts\Invoke-AzdDown.ps1 `
+    -EnvironmentName $environment `
+    -Purge `
+    -Force
+```
+
+Do not replace this command with raw resource-group deletion; the wrapper
+cleans tenant-owned W365 and Entra resources before Azure infrastructure.
+
 Stop or drain active tasks before deployment or identity changes. Preserve the
 same Foundry agent name and reject unexpected blueprint or agent identity
 replacement.
@@ -608,6 +670,8 @@ Set sanitized operational verbosity in the selected environment:
 $environment = "<azd-environment-name>"
 
 azd env set SAMPLE_LOG_LEVEL verbose --environment $environment
+
+azd up --environment $environment
 ```
 
 Supported values are `summary`, `verbose`, and `debug`. PowerShell scripts also
@@ -660,7 +724,8 @@ End known active sessions, review the ownership manifests, then run:
 ```powershell
 pwsh -NoProfile -File .\scripts\Invoke-AzdDown.ps1 `
     -EnvironmentName "<azd-environment-name>" `
-    -Purge
+    -Purge `
+    -Force
 ```
 
 The wrapper:
@@ -736,9 +801,10 @@ retained failed environment.
 | Foundry returns 403 | Verify project-scoped Foundry data-plane roles and wait for RBAC propagation; do not grant broad roles blindly. |
 | Model validation or deployment fails | Confirm the exact deployment name, supported capabilities, SKU, quota, version, and region. No agent version is published until validation succeeds. |
 | Viewer managed-environment quota is exhausted | Explicitly select an approved existing ACA environment or request quota. The deployment never selects one automatically. |
-| Viewer remains in bootstrap mode | Obtain the approved screen-share values, complete OIDC/Key Vault setup in [Viewer](VIEWER.md), and rerun `azd up`. |
+| Viewer remains in bootstrap mode | Obtain the approved screen-share values, complete OIDC/Key Vault setup in [Viewer](VIEWER.md), and rerun `azd up --environment "<azd-environment-name>"`. |
+| Hosted-agent redeployment remains pending | Configure the operator values in [Configure the operator and default credential mode](#configure-the-operator-and-default-credential-mode) and [Bind the hosted operator](#bind-the-hosted-operator), then rerun `azd up` for the same environment. Do not clear `W365_AGENT_REDEPLOY_PENDING` manually. |
 | W365 setup is blocked | Follow the exact prerequisite or ownership error in [Windows 365 setup](W365-SETUP.md); do not bypass parent, consent, billing, or manifest checks. |
-| Agent deployment fails after W365 setup | Rerun only the guarded `DeployAgent` command after fixing the reported deployment prerequisite. |
+| Agent deployment fails after W365 setup or viewer configuration changes | Fix the reported prerequisite, then rerun `azd up` for the same environment so the durable redeployment marker is reconciled. |
 | Invocation is disconnected or ambiguous | Do not replay. Inspect sanitized logs and follow [fail-closed recovery](ARCHITECTURE.md#fail-closed-recovery). |
 | Teardown reports a missing layer deployment | Use `Invoke-AzdDown.ps1`; it continues to remaining layers and verifies residual resource groups. |
 | Teardown reports any other error | Stop and resolve the exact authentication, authorization, ownership, provider, or residual-resource failure. |

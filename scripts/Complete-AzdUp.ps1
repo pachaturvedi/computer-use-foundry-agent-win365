@@ -44,11 +44,11 @@ function Test-EnabledValue {
     if ([string]::IsNullOrWhiteSpace($Value)) {
         return $false
     }
-    if ($Value -notin @('true', 'false')) {
+    if ($Value -cnotin @('true', 'false')) {
         throw "Expected a strict true/false value, received '$Value'."
     }
 
-    return $Value -eq 'true'
+    return $Value -ceq 'true'
 }
 
 function Import-AzdEnvironmentValues {
@@ -216,6 +216,28 @@ if ($enableW365 -and !$w365AlreadyEnabled) {
     $currentValues = Import-AzdEnvironmentValues -Root $RepositoryRoot -EnvironmentName $environmentName
 }
 
+$viewerUrlBefore = [string]$currentValues['VIEWER_PUBLIC_URL']
+$hostedAgentPossible = $enableW365 -or
+    (Test-EnabledValue -Value ([string]$currentValues['W365_ENABLED']))
+$agentRedeployPendingBeforeBootstrap = Test-EnabledValue -Value (
+    [string]$currentValues['W365_AGENT_REDEPLOY_PENDING'])
+$agentRedeployCheckPendingBeforeBootstrap = Test-EnabledValue -Value (
+    [string]$currentValues['W365_AGENT_REDEPLOY_CHECK_PENDING'])
+if ($deployViewer -and $hostedAgentPossible -and
+    !$agentRedeployPendingBeforeBootstrap -and
+    !$agentRedeployCheckPendingBeforeBootstrap) {
+    $environmentPath = Join-Path $RepositoryRoot ".azure\$environmentName\.env"
+    Set-AzdEnvironmentFileValues -Path $environmentPath -Values @{
+        W365_AGENT_REDEPLOY_CHECK_PENDING = 'true'
+        W365_AGENT_REDEPLOY_BASELINE_VIEWER_URL = $viewerUrlBefore
+        W365_AGENT_REDEPLOY_BASELINE_VIEWER_LIVE_ENABLED = [string]$currentValues['VIEWER_LIVE_ENABLED']
+    }
+    $currentValues['W365_AGENT_REDEPLOY_CHECK_PENDING'] = 'true'
+    $currentValues['W365_AGENT_REDEPLOY_BASELINE_VIEWER_URL'] = $viewerUrlBefore
+    $currentValues['W365_AGENT_REDEPLOY_BASELINE_VIEWER_LIVE_ENABLED'] =
+        [string]$currentValues['VIEWER_LIVE_ENABLED']
+}
+
 $credentialMode = [string]$currentValues['W365_BLUEPRINT_CREDENTIAL_MODE']
 if ([string]::IsNullOrWhiteSpace($credentialMode)) {
     $credentialMode = 'key_vault_certificate'
@@ -333,14 +355,6 @@ if ($enableW365 -and !$w365AlreadyEnabled -and !$credentialAccessFinalized) {
     $currentValues = Import-AzdEnvironmentValues -Root $RepositoryRoot -EnvironmentName $environmentName
 }
 
-$viewerUrlBefore = [string]$currentValues['VIEWER_PUBLIC_URL']
-Write-SampleVerbose -Component 'postup' -Message 'Running viewer bootstrap before enabled W365 deployment.'
-Write-SampleDebug -Component 'postup' -Message "Viewer URL existed before bootstrap: $(![string]::IsNullOrWhiteSpace($viewerUrlBefore))."
-& $ViewerBootstrapScriptPath
-
-$currentValues = Import-AzdEnvironmentValues -Root $RepositoryRoot -EnvironmentName $environmentName
-$deployViewer = Test-EnabledValue -Value ([string]$currentValues['DEPLOY_VIEWER'])
-$credentialMode = [string]$currentValues['W365_BLUEPRINT_CREDENTIAL_MODE']
 $w365VaultName = [string]$currentValues['W365_KEY_VAULT_NAME']
 if ([string]::IsNullOrWhiteSpace($w365VaultName)) {
     $w365VaultName = [string]$currentValues['VIEWER_KEY_VAULT_NAME']
@@ -353,14 +367,22 @@ if ($requiresBlueprintSecret) {
     }
     Write-SampleVerbose -Component 'postup' -Message 'Ensuring the blueprint client secret exists in the shared W365 Key Vault.'
     Write-SampleDebug -Component 'postup' -Message "Credential mode=$credentialMode; vault=$w365VaultName."
-    & $ViewerSecretsScriptPath -Environment $environmentName -BlueprintOnly
+    & $ViewerSecretsScriptPath `
+        -Environment $environmentName `
+        -BlueprintOnly `
+        -BootstrapOperatorAccess
     if (!$?) {
         throw 'Blueprint secret storage failed.'
     }
 }
 
-$hostedAgentPossible = $enableW365 -or
-    (Test-EnabledValue -Value ([string]$currentValues['W365_ENABLED']))
+Write-SampleVerbose -Component 'postup' -Message 'Running viewer bootstrap before enabled W365 deployment.'
+Write-SampleDebug -Component 'postup' -Message "Viewer URL existed before bootstrap: $(![string]::IsNullOrWhiteSpace($viewerUrlBefore))."
+& $ViewerBootstrapScriptPath
+
+$currentValues = Import-AzdEnvironmentValues -Root $RepositoryRoot -EnvironmentName $environmentName
+$deployViewer = Test-EnabledValue -Value ([string]$currentValues['DEPLOY_VIEWER'])
+
 if ($hostedAgentPossible -and ![string]::IsNullOrWhiteSpace($environmentName)) {
     Write-SampleVerbose -Component 'postup' -Message 'Resolving hosted-agent operator defaults (OPERATOR_TENANT_ID, OPERATOR_OBJECT_ID, HOSTED_ALLOWED_USER_ID) before any hosted-agent deployment.'
     $environmentFilePath = Join-Path (Join-Path $RepositoryRoot ".azure\$environmentName") '.env'
@@ -383,6 +405,10 @@ if ($enableW365) {
         Write-Host "W365 environment '$environmentName' is already complete; setup redeployment skipped."
     }
     else {
+        $environmentPath = Join-Path $RepositoryRoot ".azure\$environmentName\.env"
+        Set-AzdEnvironmentFileValues -Path $environmentPath -Values @{
+            W365_AGENT_REDEPLOY_PENDING = 'true'
+        }
         $previousPostUpGuard = $env:W365_POSTUP_IN_PROGRESS
         $env:W365_POSTUP_IN_PROGRESS = 'true'
         try {
@@ -480,6 +506,16 @@ else {
     Write-Host 'W365 setup skipped because ENABLE_W365 is not true.'
 }
 
+if ($w365SetupRan) {
+    $environmentPath = Join-Path $RepositoryRoot ".azure\$environmentName\.env"
+    Set-AzdEnvironmentFileValues -Path $environmentPath -Values @{
+        W365_AGENT_REDEPLOY_PENDING = 'false'
+        W365_AGENT_REDEPLOY_CHECK_PENDING = 'false'
+        W365_AGENT_REDEPLOY_BASELINE_VIEWER_URL = ''
+        W365_AGENT_REDEPLOY_BASELINE_VIEWER_LIVE_ENABLED = ''
+    }
+}
+
 if (![string]::IsNullOrWhiteSpace($env:AZURE_ENV_NAME)) {
     $environmentName = $env:AZURE_ENV_NAME
     $updatedValues = Import-AzdEnvironmentValues -Root $RepositoryRoot -EnvironmentName $environmentName
@@ -501,9 +537,21 @@ if (![string]::IsNullOrWhiteSpace($env:AZURE_ENV_NAME)) {
             [string]::IsNullOrWhiteSpace([string]$updatedValues[$_])
         })
         if ($missing.Count -gt 0) {
-            Write-Warning "Viewer remains in bootstrap mode. Set these values and rerun azd up: $($missing -join ', ')."
+            Write-Warning "Viewer remains in bootstrap mode. Set these values and rerun .\scripts\Invoke-AzdUp.ps1 -Environment '$environmentName' -ConfirmResourceChanges: $($missing -join ', ')."
         }
         else {
+            $environmentPath = Join-Path $RepositoryRoot ".azure\$environmentName\.env"
+            if (!(Test-EnabledValue -Value (
+                [string]$updatedValues['W365_AGENT_REDEPLOY_PENDING'])) -and
+                !(Test-EnabledValue -Value (
+                    [string]$updatedValues['W365_AGENT_REDEPLOY_CHECK_PENDING']))) {
+                Set-AzdEnvironmentFileValues -Path $environmentPath -Values @{
+                    W365_AGENT_REDEPLOY_CHECK_PENDING = 'true'
+                    W365_AGENT_REDEPLOY_BASELINE_VIEWER_URL = $viewerUrlAfter
+                    W365_AGENT_REDEPLOY_BASELINE_VIEWER_LIVE_ENABLED =
+                        [string]$updatedValues['VIEWER_LIVE_ENABLED']
+                }
+            }
             Write-SampleVerbose -Component 'postup' -Message 'All live viewer prerequisites are present; requesting activation approval.'
             Write-SampleDebug -Component 'postup' -Message "Environment=$environmentName; viewerUrl=$viewerUrlAfter."
             Confirm-ViewerLiveActivation
@@ -517,17 +565,52 @@ if (![string]::IsNullOrWhiteSpace($env:AZURE_ENV_NAME)) {
         }
     }
 
+    $agentRedeployPending = Test-EnabledValue -Value (
+        [string]$updatedValues['W365_AGENT_REDEPLOY_PENDING'])
+    $agentRedeployCheckPending = Test-EnabledValue -Value (
+        [string]$updatedValues['W365_AGENT_REDEPLOY_CHECK_PENDING'])
+    $baselineKnown =
+        $updatedValues.Contains('W365_AGENT_REDEPLOY_BASELINE_VIEWER_URL') -and
+        $updatedValues.Contains('W365_AGENT_REDEPLOY_BASELINE_VIEWER_LIVE_ENABLED')
     $viewerConfigurationChanged = $viewerLiveActivated -or (
+        $agentRedeployCheckPending -and (
+            !$baselineKnown -or
+            $viewerUrlAfter -ne
+                [string]$updatedValues['W365_AGENT_REDEPLOY_BASELINE_VIEWER_URL'] -or
+            [string]$updatedValues['VIEWER_LIVE_ENABLED'] -ne
+                [string]$updatedValues['W365_AGENT_REDEPLOY_BASELINE_VIEWER_LIVE_ENABLED'])) -or (
         !$w365SetupRan -and $viewerUrlAfter -ne $viewerUrlBefore)
-    if ($w365EnabledAfter -and
-        ![string]::IsNullOrWhiteSpace($viewerUrlAfter) -and
-        $viewerConfigurationChanged) {
+    if ($agentRedeployCheckPending) {
+        $environmentPath = Join-Path $RepositoryRoot ".azure\$environmentName\.env"
+        $reconciliationValues = @{
+            W365_AGENT_REDEPLOY_CHECK_PENDING = 'false'
+        }
+        if ($viewerConfigurationChanged) {
+            $reconciliationValues['W365_AGENT_REDEPLOY_PENDING'] = 'true'
+            $agentRedeployPending = $true
+        }
+        else {
+            $reconciliationValues['W365_AGENT_REDEPLOY_BASELINE_VIEWER_URL'] = ''
+            $reconciliationValues['W365_AGENT_REDEPLOY_BASELINE_VIEWER_LIVE_ENABLED'] = ''
+        }
+        Set-AzdEnvironmentFileValues -Path $environmentPath -Values $reconciliationValues
+        $updatedValues['W365_AGENT_REDEPLOY_CHECK_PENDING'] = 'false'
+    }
+    elseif ($viewerConfigurationChanged -and !$agentRedeployPending) {
+        $environmentPath = Join-Path $RepositoryRoot ".azure\$environmentName\.env"
+        Set-AzdEnvironmentFileValues -Path $environmentPath -Values @{
+            W365_AGENT_REDEPLOY_PENDING = 'true'
+        }
+        $updatedValues['W365_AGENT_REDEPLOY_PENDING'] = 'true'
+        $agentRedeployPending = $true
+    }
+    if ($w365EnabledAfter -and $agentRedeployPending) {
         $agentRequired = @('OPERATOR_TENANT_ID', 'OPERATOR_OBJECT_ID', 'HOSTED_ALLOWED_USER_ID')
         $agentMissing = @($agentRequired | Where-Object {
             [string]::IsNullOrWhiteSpace([string]$updatedValues[$_])
         })
         if ($agentMissing.Count -gt 0) {
-            Write-Warning "Skipping hosted-agent redeploy: the running container would crash on startup without $($agentMissing -join ', '). Set these values (see 'Bind the hosted operator' in docs/DEPLOYMENT.md) and rerun azd up."
+            throw "Hosted-agent redeployment is required after the viewer configuration changed, but the running container would crash on startup without $($agentMissing -join ', '). Set these values (see 'Configure the operator and default credential mode' and 'Bind the hosted operator' in docs/DEPLOYMENT.md) and rerun .\scripts\Invoke-AzdUp.ps1 -Environment '$environmentName' -ConfirmResourceChanges."
         }
         else {
             $redeployReason = if ($viewerLiveActivated -and $w365SetupRan) {
@@ -537,7 +620,12 @@ if (![string]::IsNullOrWhiteSpace($env:AZURE_ENV_NAME)) {
                 "Viewer URL '$viewerUrlAfter' was activated"
             }
             else {
-                "Viewer URL '$viewerUrlAfter' was added"
+                if ([string]::IsNullOrWhiteSpace($viewerUrlAfter)) {
+                    'Windows 365 setup requires hosted-agent recovery'
+                }
+                else {
+                    "Viewer URL '$viewerUrlAfter' was added"
+                }
             }
             Write-Host "$redeployReason; redeploying the hosted agent so live-view links are available."
             $previousPostUpGuard = $env:W365_POSTUP_IN_PROGRESS
@@ -555,12 +643,43 @@ if (![string]::IsNullOrWhiteSpace($env:AZURE_ENV_NAME)) {
                     $previousPostUpGuard,
                     'Process')
             }
+            $environmentPath = Join-Path $RepositoryRoot ".azure\$environmentName\.env"
+            Set-AzdEnvironmentFileValues -Path $environmentPath -Values @{
+                W365_AGENT_REDEPLOY_PENDING = 'false'
+                W365_AGENT_REDEPLOY_CHECK_PENDING = 'false'
+                W365_AGENT_REDEPLOY_BASELINE_VIEWER_URL = ''
+                W365_AGENT_REDEPLOY_BASELINE_VIEWER_LIVE_ENABLED = ''
+            }
         }
     }
 
-    & $DeploymentSummaryScriptPath -RepositoryRoot $RepositoryRoot -Environment $environmentName
-    if (!$?) {
-        throw 'Deployment summary failed.'
+    $updatedValues = Import-AzdEnvironmentValues -Root $RepositoryRoot -EnvironmentName $environmentName
+    if (Test-EnabledValue -Value ([string]$updatedValues['W365_AGENT_REDEPLOY_PENDING'])) {
+        throw "Hosted-agent redeployment remains pending. Restore the required W365 and viewer configuration, then rerun .\scripts\Invoke-AzdUp.ps1 -Environment '$environmentName' -ConfirmResourceChanges."
+    }
+    if (Test-EnabledValue -Value ([string]$updatedValues['W365_AGENT_REDEPLOY_CHECK_PENDING'])) {
+        throw "Viewer configuration reconciliation remains pending. Rerun .\scripts\Invoke-AzdUp.ps1 -Environment '$environmentName' -ConfirmResourceChanges."
+    }
+    $environmentPath = Join-Path $RepositoryRoot ".azure\$environmentName\.env"
+    Set-AzdEnvironmentFileValues -Path $environmentPath -Values @{
+        W365_AGENT_REDEPLOY_PENDING = 'false'
+        W365_AGENT_REDEPLOY_CHECK_PENDING = 'false'
+    }
+
+    if (!(Test-EnabledValue -Value $env:W365_AZD_UP_WRAPPER)) {
+        & $DeploymentSummaryScriptPath -RepositoryRoot $RepositoryRoot -Environment $environmentName
+        if (!$?) {
+            throw 'Deployment summary failed.'
+        }
+    }
+    else {
+        if ([string]::IsNullOrWhiteSpace($env:W365_AZD_UP_RUN_ID)) {
+            throw 'The azd up wrapper did not supply its run-specific completion ID.'
+        }
+        $environmentPath = Join-Path $RepositoryRoot ".azure\$environmentName\.env"
+        Set-AzdEnvironmentFileValues -Path $environmentPath -Values @{
+            W365_AZD_UP_POSTUP_RUN_ID = $env:W365_AZD_UP_RUN_ID
+        }
     }
 }
 

@@ -98,10 +98,37 @@ try {
     if ($summary -notmatch 'sample-dev-kv' -or
         $summary -notmatch 'samplestorage' -or
         $summary -notmatch 'ACA viewer.+Skipped' -or
-        $summary -notmatch 'fresh hosted-agent session pinned to active version 42' -or
-        $summary -notmatch 'azd ai agent invoke win365-desktop-agent --environment sample-dev --version 42 --new-session' -or
+        $summary -notmatch 'Verify the active hosted-agent deployment' -or
+        $summary -notmatch 'azd ai agent show win365-desktop-agent --environment sample-dev' -or
+        $summary -notmatch 'Run the repository invoice scenario in a fresh session' -or
+        $summary -notmatch [regex]::Escape('$task = Get-Content .\samples\prompts\invoice-processing-direct.txt -Raw') -or
+        $summary -notmatch 'azd ai agent invoke win365-desktop-agent --environment sample-dev --version 42 --new-session --new-conversation --timeout 1200 \$task' -or
+        $summary -notmatch 'Optional after the smoke test succeeds' -or
+        $summary -notmatch 'azd ai agent eval generate --agent win365-desktop-agent --environment sample-dev' -or
         $summary -match '(?i)secret-value|access-token') {
         throw "Deployment summary was incomplete or unsafe: $summary"
+    }
+
+    Set-Content -LiteralPath (Join-Path $environmentDirectory '.env') -Value @(
+        'AZURE_RESOURCE_GROUP="sample-dev-rg"',
+        'AZURE_AI_PROJECT_NAME="sample-project"',
+        'FOUNDRY_AGENT_NAME="win365-desktop-agent"',
+        'AGENT_WIN365_DESKTOP_AGENT_ENDPOINT="https://agent.example.com"',
+        'AGENT_WIN365_DESKTOP_AGENT_VERSION="43"',
+        'ENABLE_W365="false"',
+        'DEPLOY_STATE="false"',
+        'DEPLOY_VIEWER="false"',
+        'W365_ENABLED="false"'
+    )
+    $bootstrapSummary = & (Join-Path $root 'scripts\Show-DeploymentSummary.ps1') `
+        -RepositoryRoot $tempRoot `
+        -Environment $environmentName 6>&1 | Out-String
+    if ($bootstrapSummary -notmatch 'Verify the W365-disabled bootstrap agent' -or
+        $bootstrapSummary -notmatch 'azd ai agent show win365-desktop-agent --environment sample-dev' -or
+        $bootstrapSummary -notmatch 'azd env set ENABLE_W365 true --environment sample-dev' -or
+        $bootstrapSummary -notmatch [regex]::Escape('azd up --environment sample-dev') -or
+        $bootstrapSummary -match 'Run the repository invoice scenario') {
+        throw "Foundry-only deployment summary was incomplete or misleading: $bootstrapSummary"
     }
 
     $foundryBicep = Get-Content -LiteralPath (Join-Path $root 'infra\foundry\main.bicep') -Raw
@@ -123,6 +150,17 @@ try {
     $foundryParameters = Get-Content -LiteralPath (Join-Path $root 'infra\foundry\main.parameters.json') -Raw
     $stateParameters = Get-Content -LiteralPath (Join-Path $root 'infra\state\main.parameters.json') -Raw
     $viewerParameters = Get-Content -LiteralPath (Join-Path $root 'infra\viewer\main.parameters.json') -Raw
+    $deploymentGuide = Get-Content -LiteralPath (Join-Path $root 'docs\DEPLOYMENT.md') -Raw
+    $azdDownCommand = Get-Command (Join-Path $root 'scripts\Invoke-AzdDown.ps1')
+    if ($azdDownCommand.Parameters.Keys -notcontains 'EnvironmentName' -or
+        $azdDownCommand.Parameters.Keys -notcontains 'Purge' -or
+        $azdDownCommand.Parameters.Keys -notcontains 'Force' -or
+        $azdDownCommand.Parameters.Keys -contains 'ConfirmResourceChanges' -or
+        $deploymentGuide -match 'Invoke-AzdDown\.ps1\s+`\r?\n\s+-Environment\s' -or
+        $deploymentGuide -notmatch 'Invoke-AzdDown\.ps1\s+`\r?\n\s+-EnvironmentName\s' -or
+        $deploymentGuide -notmatch '(?ms)Invoke-AzdDown\.ps1\s+`.*?-Purge\s+`.*?-Force') {
+        throw 'Deployment teardown guidance does not use the exact EnvironmentName, Purge, and Force parameters.'
+    }
     if ($foundryBicep -notmatch "resource environmentResourceGroup 'Microsoft.Resources/resourceGroups@" -or
         $stateBicep -notmatch "resource environmentResourceGroup 'Microsoft.Resources/resourceGroups@[^']+' existing" -or
         $viewerBicep -notmatch "resource environmentResourceGroup 'Microsoft.Resources/resourceGroups@[^']+' existing" -or
