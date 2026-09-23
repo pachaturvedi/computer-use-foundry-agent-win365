@@ -99,6 +99,7 @@ $connectArguments = @{
 if ($UseDeviceCode) {
     Write-W365DeviceCodeGuidance `
         -Purpose 'to configure viewer sign-in' `
+        -RequiredAccess 'Application Administrator or Cloud Application Administrator, to create the viewer app registration' `
         -DeviceCodeMaxAttempts $DeviceCodeMaxAttempts
 }
 

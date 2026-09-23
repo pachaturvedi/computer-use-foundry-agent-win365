@@ -268,6 +268,7 @@ if (!(Test-GraphContext -Context $context -RequiredTenantId $TenantId -RequiredS
     if ($UseDeviceCode) {
         Write-W365DeviceCodeGuidance `
             -Purpose 'for W365 setup' `
+            -RequiredAccess 'Agent ID Administrator (or blueprint owner) plus Cloud PC Administrator; Privileged Role Administrator is additionally required to reconcile delegated permission grants' `
             -DeviceCodeMaxAttempts $DeviceCodeMaxAttempts
     }
 

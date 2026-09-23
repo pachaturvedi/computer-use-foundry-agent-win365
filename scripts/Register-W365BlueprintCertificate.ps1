@@ -70,6 +70,7 @@ if (!(Test-GraphContext -Context $context -RequiredTenantId $TenantId -RequiredS
     if ($UseDeviceCode) {
         Write-W365DeviceCodeGuidance `
             -Purpose 'to register the blueprint certificate' `
+            -RequiredAccess 'owner of the agent identity blueprint (the Agent ID Developer role makes the creator an owner), with one-time admin consent to AgentIdentityBlueprint.AddRemoveCreds.All' `
             -DeviceCodeMaxAttempts $DeviceCodeMaxAttempts
     }
 

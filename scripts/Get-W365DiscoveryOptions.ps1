@@ -109,6 +109,7 @@ if (!$hasRequiredContext) {
     if ($UseDeviceCode) {
         Write-W365DeviceCodeGuidance `
             -Purpose 'for read-only W365 discovery' `
+            -RequiredAccess 'Cloud PC Reader; no write access is used' `
             -DeviceCodeMaxAttempts $DeviceCodeMaxAttempts
     }
 
