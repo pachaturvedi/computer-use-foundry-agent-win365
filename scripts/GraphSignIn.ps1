@@ -16,6 +16,9 @@ Dot-source library. It never logs tokens, device codes, or credentials.
 #>
 Set-StrictMode -Version Latest
 
+Write-Verbose '[GraphSignIn] Loaded shared Microsoft Graph delegated sign-in helpers.'
+Write-Debug '[GraphSignIn] Device-code retries are bounded and authentication material is never logged.'
+
 function Test-GraphContext {
     param(
         $Context,
@@ -111,5 +114,4 @@ function Connect-W365GraphContext {
             -DeviceCodeMaxAttempts $DeviceCodeMaxAttempts
     }
 }
-
 

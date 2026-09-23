@@ -127,7 +127,58 @@ public sealed class DesktopRuntimeTests
     }
 
     [Fact]
-    public async Task ExpiredStateIsNotAutomaticallyClearedOrReallocatedAsync()
+    public async Task CapacityExhaustionClearsUnallocatedIntentAsync()
+    {
+        using var temporaryStore = new TemporarySessionStore();
+        using var handler = new McpHandler { StartErrorMessage = "No free W365 sessions are available." };
+        using var http = new HttpClient(handler);
+        var store = temporaryStore.Create();
+        using var runtime = Runtime(
+            http,
+            handler,
+            store,
+            new DesktopRuntimeOptions { StartSessionCapacityRetryAttempts = 1 });
+
+        await Assert.ThrowsAsync<McpToolException>(() => runtime.OpenAsync(default));
+        await runtime.CloseAsync(default);
+        await using (var rejected = await store.OpenAsync(default))
+        {
+            Assert.Null(rejected.State);
+        }
+
+        handler.StartErrorMessage = null;
+        using var next = new DesktopRuntime(
+            new McpConnection(http, new FakeAgentUserTokenProvider(), TestSettings.Create()),
+            store,
+            TestSettings.Create(),
+            "next",
+            NullLogger.Instance);
+        await next.OpenAsync(default);
+        await next.CloseAsync(default);
+
+        Assert.Equal(2, handler.StartCount);
+    }
+
+    [Fact]
+    public async Task OtherStartToolErrorsRemainDurablyBlockedAsync()
+    {
+        using var temporaryStore = new TemporarySessionStore();
+        using var handler = new McpHandler { StartErrorMessage = "StartSession failed after dispatch." };
+        using var http = new HttpClient(handler);
+        var store = temporaryStore.Create();
+        using var runtime = Runtime(http, handler, store);
+
+        await Assert.ThrowsAsync<McpToolException>(() => runtime.OpenAsync(default));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => runtime.CloseAsync(default));
+        await using var rejected = await store.OpenAsync(default);
+
+        Assert.Equal(DesktopSessionPhase.Starting, rejected.State!.Phase);
+        Assert.True(rejected.State.OperationInFlight);
+        Assert.Null(rejected.State.SessionId);
+    }
+
+    [Fact]
+    public async Task ExpiredActiveStateIsNotAutomaticallyClearedOrReallocatedAsync()
     {
         using var temporaryStore = new TemporarySessionStore();
         using var handler = new McpHandler();
@@ -148,6 +199,46 @@ public sealed class DesktopRuntimeTests
         Assert.Equal(0, handler.StartCount);
         await using var persisted = await store.OpenAsync(default);
         Assert.NotNull(persisted.State);
+    }
+
+    [Fact]
+    public async Task ExpiredAmbiguousStartIsRecoveredWithTheSameIdempotencyKeyAsync()
+    {
+        using var temporaryStore = new TemporarySessionStore();
+        using var handler = new McpHandler { FailStart = true };
+        using var http = new HttpClient(handler);
+        var store = temporaryStore.Create();
+        using (var originalRequest = Runtime(http, handler, store))
+        {
+            await Assert.ThrowsAsync<HttpRequestException>(() => originalRequest.OpenAsync(default));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => originalRequest.CloseAsync(default));
+        }
+
+        await using (var expired = await store.OpenAsync(default))
+        {
+            expired.State!.ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(-1);
+            await expired.SaveAsync(default);
+        }
+
+        handler.FailStart = false;
+        using var recoveryRequest = new DesktopRuntime(
+            new McpConnection(http, new FakeAgentUserTokenProvider(), TestSettings.Create()),
+            store,
+            TestSettings.Create(),
+            "recovery",
+            NullLogger.Instance);
+
+        await recoveryRequest.OpenAsync(default);
+
+        Assert.Equal(2, handler.StartCount);
+        Assert.Equal(handler.StartIdempotencyKeys[0], handler.StartIdempotencyKeys[1]);
+        await using (var recovered = await store.OpenAsync(default))
+        {
+            Assert.Equal(DesktopSessionPhase.Active, recovered.State!.Phase);
+            Assert.False(recovered.State.OperationInFlight);
+            Assert.True(recovered.State.ExpiresAt > DateTimeOffset.UtcNow);
+        }
+        await recoveryRequest.CloseAsync(default);
     }
 
     [Fact]
@@ -218,12 +309,14 @@ public sealed class DesktopRuntimeTests
     private static DesktopRuntime Runtime(
         HttpClient http,
         McpHandler handler,
-        FileSessionStore store) =>
+        FileSessionStore store,
+        DesktopRuntimeOptions? options = null) =>
         new(
             new McpConnection(http, new FakeAgentUserTokenProvider(), TestSettings.Create()),
             store,
             TestSettings.Create(),
             "one",
-            NullLogger.Instance);
+            NullLogger.Instance,
+            options);
 
 }
