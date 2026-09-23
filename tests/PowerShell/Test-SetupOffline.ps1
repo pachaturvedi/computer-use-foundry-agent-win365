@@ -464,6 +464,93 @@ try {
             throw 'deployment.local.json defaults were not applied to pool creation.'
         }
     }
+    $derivedEnvironmentName = 'offline-pool-derive'
+    $derivedEnvironmentDirectory = Join-Path $repoRoot ".azure\$derivedEnvironmentName"
+    $derivedEnvironmentFile = Join-Path $derivedEnvironmentDirectory '.env'
+    New-Item -ItemType Directory -Path $derivedEnvironmentDirectory -Force | Out-Null
+    Set-Content -LiteralPath $derivedEnvironmentFile -Value @'
+AZURE_ENV_NAME="offline-pool-derive"
+RESOURCE_PREFIX="offlinepool"
+'@
+    . "$scriptsRoot\W365Provisioning.ps1"
+    $expectedPoolName = Get-W365PoolDisplayName `
+        -ResourcePrefix 'offlinepool' `
+        -EnvironmentName $derivedEnvironmentName
+    try {
+        if (Test-Path -LiteralPath $localConfigPath) {
+            Remove-Item -LiteralPath $localConfigPath
+        }
+        if (Test-Path -LiteralPath $ownershipManifestPath) {
+            Remove-Item -LiteralPath $ownershipManifestPath
+        }
+        & $module {
+            $script:ledger.Pool = $null
+            $script:ledger.User = $null
+            $script:ledger.Assignments = @()
+        }
+        $derivedArgs = @{
+            TenantId = [guid]::Empty; BlueprintId = '11111111-1111-1111-1111-111111111111'
+            AgentIdentityId = '22222222-2222-2222-2222-222222222222'
+            AgentUserPrincipalName = 'derived-agent@example.com'
+            PoolBillingPlanId = '66666666-6666-6666-6666-666666666666'
+            PoolGeographicLocationType = 'usWest'; PoolRegionGroup = 'usWest'
+            PoolRegions = @('westus2', 'westus3')
+            PoolImageId = 'microsoftwindowsdesktop_windows-ent-cpc_win11-23h2-ent-cpc-m365'
+            PoolMinimumCount = 2; PoolMaximumCount = 4
+            BillingConfirmed = $true; Confirm = $false; SkipAzdEnvironmentSync = $true
+            EnvironmentName = $derivedEnvironmentName
+            OwnershipManifestPath = $ownershipManifestPath
+        }
+        $derivedOutput = & "$scriptsRoot\Setup-W365.ps1" @derivedArgs
+        if ("W365_POOL_NAME=$expectedPoolName" -notin $derivedOutput) {
+            throw 'A new pool without an explicit display name did not derive one from the environment.'
+        }
+        & $module {
+            param($ExpectedName)
+            if ($script:ledger.Pool.displayName -ne $ExpectedName) {
+                throw 'The derived pool display name did not reach the pool-create request.'
+            }
+        } $expectedPoolName
+        $derivedManifest = Get-Content -LiteralPath $ownershipManifestPath -Raw | ConvertFrom-Json -AsHashtable
+        if ($derivedManifest.w365.pool.disposition -ne 'created') {
+            throw 'A derived-name pool created by setup was not recorded as created.'
+        }
+
+        # A pool that already carries the derived name must be adopted, not duplicated, so a lost
+        # ownership manifest cannot strand a second identically named pool in the tenant.
+        Remove-Item -LiteralPath $ownershipManifestPath
+        $createdPool = & $module { $script:ledger.Pool }
+        $adoptedPool = $createdPool.Clone()
+        $adoptedPool.id = '99999999-9999-9999-9999-999999999999'
+        & $module {
+            param($AdoptedPool)
+            $script:ledger.Pool = $AdoptedPool
+            $script:ledger.User = $null
+            $script:ledger.Assignments = @()
+        } $adoptedPool
+        $createsBeforeReuse = & $module { $script:ledger.Creates }
+        $reuseOutput = & "$scriptsRoot\Setup-W365.ps1" @derivedArgs
+        if ('W365_POOL_ID=99999999-9999-9999-9999-999999999999' -notin $reuseOutput) {
+            throw 'Setup did not reuse the existing pool that already carried the derived display name.'
+        }
+        $reuseManifest = Get-Content -LiteralPath $ownershipManifestPath -Raw | ConvertFrom-Json -AsHashtable
+        if ($reuseManifest.w365.pool.disposition -ne 'reused') {
+            throw 'A pool adopted by display name was not recorded as reused, so teardown could delete it.'
+        }
+        $poolCreatesDuringReuse = (& $module { $script:ledger.Creates }) - $createsBeforeReuse
+        if ($poolCreatesDuringReuse -lt 0) {
+            throw 'Reuse accounting is inconsistent.'
+        }
+        $reusedPoolId = & $module { [string]$script:ledger.Pool.id }
+        if ($reusedPoolId -ne '99999999-9999-9999-9999-999999999999') {
+            throw 'Setup replaced the existing same-named pool instead of reusing it.'
+        }
+    }
+    finally {
+        if (Test-Path -LiteralPath $derivedEnvironmentDirectory) {
+            Remove-Item -LiteralPath $derivedEnvironmentDirectory -Recurse -Force
+        }
+    }
     Write-Output 'Offline setup: existing identity reuse, distinct client/object IDs, parent preflight, preserved configuration and optional idempotent hosted/viewer federation passed.'
 }
 finally {
