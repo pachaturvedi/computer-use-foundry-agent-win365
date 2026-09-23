@@ -302,13 +302,20 @@ function Assert-W365AgentCertificateKeyVaultAccessConfigured {
     }
     $subscriptionId = Get-AzdValue 'AZURE_SUBSCRIPTION_ID'
     $certificateName = 'w365-blueprint-certificate'
-    $certificateId = (& az keyvault certificate show `
+    $certificateShowOutput = (& az keyvault certificate show `
         --subscription $subscriptionId `
         --vault-name $vaultName `
         --name $certificateName `
         --query id `
-        --output tsv 2>$null | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($certificateId)) {
+        --output tsv 2>&1 | Out-String).Trim()
+    $certificateShowFailed = $LASTEXITCODE -ne 0
+    $certificateId = if ($certificateShowFailed) { '' } else { $certificateShowOutput }
+    if ($certificateShowFailed -or [string]::IsNullOrWhiteSpace($certificateId)) {
+        # A data-plane authorization failure is not a missing certificate. Reporting it as one sends
+        # the operator to re-run certificate creation, which cannot fix an RBAC gap.
+        if ($certificateShowOutput -match '(?i)(^|\W)(403|Forbidden|AuthorizationFailed|AccessDenied)(\W|$)|Caller is not authorized') {
+            throw "The current operator is not authorized to read certificate '$certificateName' in Key Vault '$vaultName', so its presence could not be verified. Grant the operator Key Vault Certificates Officer on the vault and re-run; certificate creation will not resolve this."
+        }
         throw "Key Vault '$vaultName' must contain certificate '$certificateName' before deploying the hosted agent in key_vault_certificate mode. Run scripts\Initialize-W365BlueprintCertificate.ps1 first."
     }
 

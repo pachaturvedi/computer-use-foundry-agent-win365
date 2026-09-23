@@ -32,7 +32,7 @@ param(
     [switch]$Rotate,
     [ValidateRange(1, 60)][int]$ValidityInMonths = 12,
     [switch]$ConfirmResourceChanges,
-    [psobject]$CertificateOfficerLease
+    [psobject]$CertificateOfficerAccess
 )
 
 $ErrorActionPreference = 'Stop'
@@ -80,25 +80,25 @@ $operatorObjectId = (& az ad signed-in-user show --query id --output tsv | Out-S
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($operatorObjectId)) {
     throw 'Unable to resolve the signed-in Azure user.'
 }
-$ownsCertificateOfficerLease = $null -eq $CertificateOfficerLease
-if ($ownsCertificateOfficerLease) {
-    $CertificateOfficerLease = Enter-W365CertificateOfficerLease `
+$ownsCertificateOfficerAccess = $null -eq $CertificateOfficerAccess
+if ($ownsCertificateOfficerAccess) {
+    $CertificateOfficerAccess = Grant-W365CertificateOfficerAccess `
         -SubscriptionId ([guid]$subscriptionId) `
         -VaultName $vaultName `
         -VaultId $vaultId `
         -OperatorObjectId ([guid]$operatorObjectId) `
         -ConfirmResourceChanges:$ConfirmResourceChanges
-    if ($CertificateOfficerLease.AcquisitionSkipped) {
+    if ($CertificateOfficerAccess.AcquisitionSkipped) {
         return
     }
 }
-elseif ($CertificateOfficerLease.AcquisitionSkipped) {
-    throw 'The supplied certificate officer lease was never acquired, so certificate provisioning cannot continue.'
+elseif ($CertificateOfficerAccess.AcquisitionSkipped) {
+    throw 'The supplied certificate officer access was never acquired, so certificate provisioning cannot continue.'
 }
-elseif ([string]$CertificateOfficerLease.SubscriptionId -ne $subscriptionId -or
-    [string]$CertificateOfficerLease.VaultName -ne $vaultName -or
-    [string]$CertificateOfficerLease.OperatorObjectId -ne $operatorObjectId) {
-    throw 'The supplied certificate officer lease does not match the selected subscription, vault, and operator.'
+elseif ([string]$CertificateOfficerAccess.SubscriptionId -ne $subscriptionId -or
+    [string]$CertificateOfficerAccess.VaultName -ne $vaultName -or
+    [string]$CertificateOfficerAccess.OperatorObjectId -ne $operatorObjectId) {
+    throw 'The supplied certificate officer access does not match the selected subscription, vault, and operator.'
 }
 
 $primaryError = $null
@@ -221,14 +221,7 @@ $certificateResult = [pscustomobject]@{
 catch {
     $primaryError = $_
 }
-finally {
-    if ($ownsCertificateOfficerLease) {
-        Complete-W365CertificateOfficerLease `
-            -Lease $CertificateOfficerLease `
-            -PrimaryError $primaryError
-    }
-}
-if (!$ownsCertificateOfficerLease -and $null -ne $primaryError) {
+if ($null -ne $primaryError) {
     throw $primaryError
 }
 

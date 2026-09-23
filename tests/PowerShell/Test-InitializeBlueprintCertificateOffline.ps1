@@ -166,9 +166,12 @@ try {
     }
 
     $global:testRoleGranted = $false
-    $temporaryRoleResult = & $scriptPath -ConfirmResourceChanges -Confirm:$false
-    if (!$global:testRoleDeleted -or $null -eq $temporaryRoleResult.PublicCertificateBase64) {
-        throw 'A temporary Key Vault Certificates Officer assignment was not revoked after certificate reuse.'
+    $grantedRoleResult = & $scriptPath -ConfirmResourceChanges -Confirm:$false
+    if ($null -eq $grantedRoleResult.PublicCertificateBase64) {
+        throw 'Certificate reuse did not return public certificate metadata after granting access.'
+    }
+    if ($global:testRoleDeleted) {
+        throw 'Key Vault Certificates Officer access is permanent but was revoked after certificate reuse.'
     }
     Assert-Throws {
         & $scriptPath -Confirm:$false
