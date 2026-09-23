@@ -267,8 +267,12 @@ That same shared-boundary concern drives teardown. Cleanup removes only manifest
 entries recorded as `created`. Reused permission grants are restored to their
 previous scope, reused inheritance entries are left in place, and environments
 bound to an existing Foundry project are blocked unless an explicit override is
-provided. The goal is minimal-touch rollback on Entra and W365 while still
-allowing a dedicated sample environment to be fully torn down in reverse order.
+provided. Inheritable permissions use the resource application ID as both the
+ownership and Graph deletion key; response `id` values are non-authoritative.
+All inheritance ownership and deletion keys are preflighted before the first
+remote mutation. The goal is minimal-touch rollback on Entra and W365 while
+still allowing a dedicated sample environment to be fully torn down in reverse
+order.
 
 ## Integration pain points
 

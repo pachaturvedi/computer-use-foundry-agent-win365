@@ -1124,6 +1124,7 @@ foreach ($resource in $resources) {
     }
     $inheritanceManifestEntries[$resource.Sp.appId] = [ordered]@{
         resourceAppId = $resource.Sp.appId
+        deletionKey = [string]$resource.Sp.appId
         entryId = [string](Get-OptionalObjectValue -Object $currentInheritance -Name 'id')
         disposition = $inheritanceDisposition
         previous = Copy-W365ManifestValue -Value $resource.ExistingInheritance

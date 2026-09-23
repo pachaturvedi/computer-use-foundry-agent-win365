@@ -574,6 +574,14 @@ blueprint with the Agent ID Developer role makes the creator an owner
 automatically. An administrator still has to consent to the delegated scopes
 above once per tenant.
 
+During cleanup, an already-valid delegated Graph context for the required
+tenant and scopes is reused without another prompt. Otherwise, the `azd down`
+predown hook uses a process-scoped device-code context and waits for the new
+authentication to complete. Inheritable permissions created by setup are
+preflighted and deleted by resource application ID; reused entries are
+preserved, and malformed or ambiguous inheritable-permission ownership data
+blocks before the first cleanup mutation.
+
 ## W365 runtime permissions
 
 | Resource app ID | Delegated scopes |
@@ -633,6 +641,7 @@ End active sessions and review
 ```powershell
 pwsh -NoProfile -File .\scripts\Invoke-AzdDown.ps1 `
     -EnvironmentName "<azd-environment-name>" `
+    -UseDeviceCode `
     -Purge `
     -Force
 ```
@@ -660,6 +669,7 @@ $env:ALLOW_EXISTING_FOUNDRY_CLEANUP = 'true'
 
 pwsh -NoProfile -File .\scripts\Invoke-AzdDown.ps1 `
     -EnvironmentName "<azd-environment-name>" `
+    -UseDeviceCode `
     -Purge `
     -Force
 ```

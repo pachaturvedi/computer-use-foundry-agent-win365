@@ -1068,7 +1068,7 @@ if ($cleanupErrors.Count -gt 0) {
     throw ($cleanupErrors -join ' ')
 }
 if ($processExitCode -ne 0) {
-    throw "azd up failed with exit code $processExitCode. Inspect the reported stage and ownership evidence before retrying the same environment. If abandoning it, run .\scripts\Invoke-AzdDown.ps1 -EnvironmentName '$Environment' -Purge -Force as documented under 'Operations and rollback' in docs\DEPLOYMENT.md."
+    throw "azd up failed with exit code $processExitCode. Inspect the reported stage and ownership evidence before retrying the same environment. If abandoning it, run .\scripts\Invoke-AzdDown.ps1 -EnvironmentName '$Environment' -UseDeviceCode -Purge -Force as documented under 'Operations and rollback' in docs\DEPLOYMENT.md."
 }
 
 if (!(Test-Path -LiteralPath $environmentPath -PathType Leaf)) {
@@ -1076,7 +1076,7 @@ if (!(Test-Path -LiteralPath $environmentPath -PathType Leaf)) {
 }
 $values = Read-AzdEnvironmentFile -Path $environmentPath
 if ([string]$values['W365_AZD_UP_POSTUP_RUN_ID'] -ne $runId) {
-    throw "azd returned success, but the current post-deployment workflow did not complete. Inspect the reported stage and ownership evidence before retrying the same environment. If abandoning it, run .\scripts\Invoke-AzdDown.ps1 -EnvironmentName '$Environment' -Purge -Force as documented under 'Operations and rollback' in docs\DEPLOYMENT.md."
+    throw "azd returned success, but the current post-deployment workflow did not complete. Inspect the reported stage and ownership evidence before retrying the same environment. If abandoning it, run .\scripts\Invoke-AzdDown.ps1 -EnvironmentName '$Environment' -UseDeviceCode -Purge -Force as documented under 'Operations and rollback' in docs\DEPLOYMENT.md."
 }
 $missing = [System.Collections.Generic.List[string]]::new()
 foreach ($name in @(
@@ -1109,7 +1109,7 @@ if ([string]$values['W365_AGENT_REDEPLOY_CHECK_PENDING'] -cne 'false') {
     $missing.Add('W365_AGENT_REDEPLOY_CHECK_PENDING=false')
 }
 if ($missing.Count -gt 0) {
-    throw "azd core deployment returned success, but the complete sample installation is unfinished. Missing completion state: $($missing -join ', '). Inspect the reported stage and ownership evidence before retrying the same environment. If abandoning it, run .\scripts\Invoke-AzdDown.ps1 -EnvironmentName '$Environment' -Purge -Force as documented under 'Operations and rollback' in docs\DEPLOYMENT.md."
+    throw "azd core deployment returned success, but the complete sample installation is unfinished. Missing completion state: $($missing -join ', '). Inspect the reported stage and ownership evidence before retrying the same environment. If abandoning it, run .\scripts\Invoke-AzdDown.ps1 -EnvironmentName '$Environment' -UseDeviceCode -Purge -Force as documented under 'Operations and rollback' in docs\DEPLOYMENT.md."
 }
 
 $elapsedText = if ($elapsed.Elapsed.TotalHours -ge 1) {

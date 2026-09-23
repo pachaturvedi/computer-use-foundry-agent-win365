@@ -147,7 +147,6 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
                     return $bodyObject
                 }
                 '*/inheritablePermissions' {
-                    $bodyObject.id = "inherit-$script:nextInheritanceIndex"
                     $script:nextInheritanceIndex++
                     $script:state.Inheritance += $bodyObject
                     return $bodyObject
@@ -235,8 +234,8 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
                     return
                 }
                 'v1.0/applications/microsoft.graph.agentIdentityBlueprint/*/inheritablePermissions/*' {
-                    $inheritanceId = $path.Split('/')[-1]
-                    $script:state.Inheritance = @($script:state.Inheritance | Where-Object { $_.id -ne $inheritanceId })
+                    $resourceAppId = $path.Split('/')[-1]
+                    $script:state.Inheritance = @($script:state.Inheritance | Where-Object { $_.resourceAppId -ne $resourceAppId })
                     return
                 }
                 'beta/deviceManagement/virtualEndpoint/cloudPcPools/*' {
@@ -373,6 +372,11 @@ try {
         $inheritanceKeys.Count -ne 3 -or
         $federationKeys.Count -ne 2) {
         throw "Setup manifest did not capture teardown-owned Graph state. Grants=[$($permissionGrantKeys -join ',')] Inheritance=[$($inheritanceKeys -join ',')] Federations=[$($federationKeys -join ',')]"
+    }
+    foreach ($resourceAppId in $inheritanceKeys) {
+        if ([string]$manifest.graph.inheritablePermissions[$resourceAppId].deletionKey -ne $resourceAppId) {
+            throw "Setup manifest did not preserve '$resourceAppId' as the inheritable-permission deletion key."
+        }
     }
     & $module {
         $script:state.Blueprint.requiredResourceAccess += @{

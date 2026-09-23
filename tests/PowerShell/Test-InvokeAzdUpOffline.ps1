@@ -834,6 +834,7 @@ Remove-Item -LiteralPath (Join-Path $RepositoryRoot ".azure\$Environment\.env") 
             $_.Exception.Message -match 'reported stage and ownership evidence' -and
             $_.Exception.Message -match 'retrying the same environment' -and
             $_.Exception.Message -match 'Invoke-AzdDown.ps1' -and
+            $_.Exception.Message -match 'UseDeviceCode' -and
             $_.Exception.Message -match 'Operations and rollback'
     }
     if (!$failed) {

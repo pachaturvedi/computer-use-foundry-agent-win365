@@ -581,6 +581,7 @@ recovery cannot complete, use the ownership-aware teardown:
 ```powershell
 pwsh -NoProfile -File .\scripts\Invoke-AzdDown.ps1 `
     -EnvironmentName $environment `
+    -UseDeviceCode `
     -Purge `
     -Force
 ```
@@ -684,6 +685,7 @@ ownership-aware teardown:
 ```powershell
 pwsh -NoProfile -File .\scripts\Invoke-AzdDown.ps1 `
     -EnvironmentName $environment `
+    -UseDeviceCode `
     -Purge `
     -Force
 ```
@@ -762,6 +764,7 @@ End known active sessions, review the ownership manifests, then run:
 ```powershell
 pwsh -NoProfile -File .\scripts\Invoke-AzdDown.ps1 `
     -EnvironmentName "<azd-environment-name>" `
+    -UseDeviceCode `
     -Purge `
     -Force
 ```
@@ -776,7 +779,15 @@ The wrapper:
 
 Cleanup is ownership-driven, not name-driven. If W365 state exists without its
 ownership manifest, teardown stops before mutation. Reused grants and
-inheritance are preserved or restored to their prior scope.
+inheritance are preserved or restored to their prior scope. The predown hook
+reuses an already-valid tenant-and-scope Graph context without printing sign-in
+guidance. Otherwise, when device-code authentication is requested, it creates a
+process-scoped context so the guidance is followed by a fresh prompt instead of
+silently reusing a persisted user token. Only created inheritable-permission
+entries are removed, using their resource application ID as the Microsoft Graph
+deletion key; reused and unrelated entries remain in place. Invalid ownership
+or deletion-key data for inheritable permissions stops teardown before the
+first remote mutation.
 
 Do not tear down an environment bound to a shared or pre-existing Foundry
 project until the owner has reviewed every target. The explicit
@@ -844,8 +855,8 @@ retained failed environment.
 | W365 setup is blocked | Follow the exact prerequisite or ownership error in [Windows 365 setup](W365-SETUP.md); do not bypass parent, consent, billing, or manifest checks. |
 | Agent deployment fails after W365 setup or viewer configuration changes | Fix the reported prerequisite, then rerun `azd up` for the same environment so the durable redeployment marker is reconciled. |
 | Invocation is disconnected or ambiguous | Do not replay. Inspect sanitized logs and follow [fail-closed recovery](ARCHITECTURE.md#fail-closed-recovery). |
-| Teardown is rerun after partial or completed deletion | Rerun `azd down`; completed ownership cleanup is skipped, and viewer RBAC beneath a confirmed-missing resource group or a confirmed-missing Key Vault scope (resource group still present) is treated as already absent. Use `Invoke-AzdDown.ps1` if a layer deployment is missing. |
-| `azd down` fails with `deleting infrastructure: error deleting Azure resources: deployment not found` for a layer | This is a known azd layered-infra limitation ([Azure/azure-dev#8064](https://github.com/Azure/azure-dev/issues/8064)): native `azd down` throws this error whenever a layer's ARM deployment record is already missing, even after that layer's Azure resources (and the whole resource group) have been deleted; it stops instead of skipping the layer. Rerun teardown with `.\scripts\Invoke-AzdDown.ps1 -EnvironmentName <azd-environment-name> -Purge -Force`, which treats each already-missing layer deployment as complete, continues through the remaining layers, and, if the environment's resource group still remains once every layer has been attempted, falls back to deleting that resource group directly so nothing is left behind. |
+| Teardown is rerun after partial or completed deletion | Rerun `.\scripts\Invoke-AzdDown.ps1 -EnvironmentName <azd-environment-name> -UseDeviceCode -Purge -Force`; completed ownership cleanup is skipped, and viewer RBAC beneath a confirmed-missing resource group or a confirmed-missing Key Vault scope (resource group still present) is treated as already absent. |
+| `azd down` fails with `deleting infrastructure: error deleting Azure resources: deployment not found` for a layer | This is a known azd layered-infra limitation ([Azure/azure-dev#8064](https://github.com/Azure/azure-dev/issues/8064)): native `azd down` throws this error whenever a layer's ARM deployment record is already missing, even after that layer's Azure resources (and the whole resource group) have been deleted; it stops instead of skipping the layer. Rerun teardown with `.\scripts\Invoke-AzdDown.ps1 -EnvironmentName <azd-environment-name> -UseDeviceCode -Purge -Force`, which treats each already-missing layer deployment as complete, continues through the remaining layers, and, if the environment's resource group still remains once every layer has been attempted, falls back to deleting that resource group directly so nothing is left behind. |
 | Teardown reports any other error | Stop and resolve the exact authentication, authorization, ownership, provider, or residual-resource failure. |
 
 ## Next steps
