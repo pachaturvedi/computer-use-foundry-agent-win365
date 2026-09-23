@@ -512,6 +512,8 @@ if ($enableW365) {
                 $setupArguments.PoolBillingPlanId = $billingPlanId
             }
             foreach ($mapping in @(
+                @{ Environment = 'W365_POOL_NAME'; Parameter = 'PoolDisplayName' },
+                @{ Environment = 'W365_POOL_DESCRIPTION'; Parameter = 'PoolDescription' },
                 @{ Environment = 'W365_POOL_BILLING_TYPE'; Parameter = 'PoolBillingType' },
                 @{ Environment = 'W365_POOL_GEOGRAPHIC_LOCATION_TYPE'; Parameter = 'PoolGeographicLocationType' },
                 @{ Environment = 'W365_POOL_REGION_GROUP'; Parameter = 'PoolRegionGroup' },

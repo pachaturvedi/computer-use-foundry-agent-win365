@@ -367,6 +367,20 @@ The helpers are read-only against Graph/W365 and write only non-secret local
 configuration. Review `config\deployment.local.example.json` for the supported
 shape. Display names are operator notes; IDs are authoritative.
 
+### Pool naming when setup creates a pool
+
+A pool display name is required only when setup creates a new pool. Supply it
+explicitly with `W365_POOL_NAME` (or `poolDisplayName` in
+`config\deployment.local.json`). When it is not supplied, setup derives a
+deterministic, environment-owned name from `RESOURCE_PREFIX` and the azd
+environment name, so `azd up` creates its own pool without a manual step.
+
+If a pool already carries that derived name, setup reuses it and records it as
+`reused` in the ownership manifest, so teardown never deletes it. An
+operator-supplied name is never adopted automatically: if a pool of that name
+already exists without ownership evidence, setup fails closed and asks for an
+explicit pool ID, which keeps an unrelated tenant pool from being absorbed.
+
 ### Setup behavior and outputs
 
 Before mutation, setup verifies:

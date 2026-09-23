@@ -789,6 +789,22 @@ function Resolve-OrCreatePool {
             throw "The outcome of pending Cloud PC pool creation '$pendingDisplayName' is still unknown. No create request was replayed."
         }
     }
+    if ($resolvedPoolId -eq [guid]::Empty -and
+        !$pendingPoolCreate -and
+        $script:poolDisplayNameWasDerived -and
+        ![string]::IsNullOrWhiteSpace($PoolDisplayName)) {
+        # Only a derived name is adopted automatically. It is deterministic and environment-owned,
+        # so a match is this environment's own pool from a run whose ownership manifest was lost.
+        # An operator-supplied name keeps the fail-closed same-name guard below, which requires an
+        # explicit pool ID before an unrelated tenant pool can be reused.
+        $poolsMatchingName = @(List 'beta/deviceManagement/virtualEndpoint/cloudPcPools' |
+            Where-Object { [string]$_.displayName -eq [string]$PoolDisplayName })
+        $poolMatchedByName = SingleOrNone $poolsMatchingName "existing Cloud PC pool '$PoolDisplayName'"
+        if ($poolMatchedByName) {
+            Write-Host "Reusing existing Cloud PC pool '$PoolDisplayName'; no new pool was created."
+            $resolvedPoolId = [guid]$poolMatchedByName.id
+        }
+    }
     if ($resolvedPoolId -ne [guid]::Empty) {
         $existingPool = Graph GET "beta/deviceManagement/virtualEndpoint/cloudPcPools/$resolvedPoolId"
         if ($existingPool['@odata.type'] -ne '#microsoft.graph.cloudPcAgentPool') {
@@ -1016,11 +1032,17 @@ $AgentUserPrincipalName = Resolve-W365OwnedAgentUserPrincipalName `
     -EnvironmentName $(if ($manifestTarget) { $manifestTarget.EnvironmentName } else { '' })
 $agentUser = SingleOrNone (List "beta/users/microsoft.graph.agentUser?`$filter=userPrincipalName eq '$AgentUserPrincipalName'") 'agent user'
 if ($agentUser -and $agentUser.identityParentId -ne $agent.id) { throw 'Existing agent user belongs to a different agent identity. Use a new UPN; never reparent implicitly.' }
-if ($null -eq $existingManifest -and
-    $PoolId -eq [guid]::Empty -and
-    [string]::IsNullOrWhiteSpace($PoolIdOrUrl) -and
-    [string]::IsNullOrWhiteSpace($PoolDisplayName)) {
-    if ($null -eq $azd -or $null -eq $manifestTarget -or [string]::IsNullOrWhiteSpace($manifestTarget.EnvironmentName)) {
+# A new pool is created only when no pool is resolvable from any source. $existingManifest is
+# reassigned to the working manifest above and is therefore never null here, so pool presence must
+# be tested directly; testing the manifest reference made this derivation unreachable and left
+# PoolDisplayName empty on every environment that creates its own pool.
+$script:poolDisplayNameWasDerived = $false
+$poolAlreadyResolvable = $PoolId -ne [guid]::Empty -or
+    ![string]::IsNullOrWhiteSpace($PoolIdOrUrl) -or
+    ![string]::IsNullOrWhiteSpace([string]$environmentValues['W365_POOL_ID']) -or
+    ($null -ne $existingManifest -and $existingManifest.w365.Contains('pool'))
+if (!$poolAlreadyResolvable -and [string]::IsNullOrWhiteSpace($PoolDisplayName)) {
+    if ($null -eq $manifestTarget -or [string]::IsNullOrWhiteSpace($manifestTarget.EnvironmentName)) {
         throw 'PoolDisplayName is required when a new pool is created outside a selected azd environment.'
     }
 
@@ -1031,6 +1053,8 @@ if ($null -eq $existingManifest -and
     $PoolDisplayName = Get-W365PoolDisplayName `
         -ResourcePrefix $resourcePrefix `
         -EnvironmentName $manifestTarget.EnvironmentName
+    $script:poolDisplayNameWasDerived = $true
+    Write-Host "Derived W365 pool display name '$PoolDisplayName' for environment '$($manifestTarget.EnvironmentName)'."
 }
 $poolState = Resolve-OrCreatePool `
     -OwnershipManifest $existingManifest `
