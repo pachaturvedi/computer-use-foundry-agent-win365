@@ -144,9 +144,11 @@ The reviewed model defaults are `gpt-6-astra`, version `2026-09-03`,
 `GlobalStandard`, and capacity `200` (200K TPM). If approved screen-share
 values are already present in the selected azd environment or ignored local
 deployment profile, `azd up` uses them to activate the viewer. Otherwise it
-leaves the viewer in healthy bootstrap mode and identifies the missing
-tenant-specific inputs. Screen-share values are not required for agent-only
-desktop execution.
+collects them during the same interactive provisioning-profile flow. A
+non-interactive run fails with the exact missing names unless the operator
+explicitly chooses `VIEWER_BOOTSTRAP_ONLY=true`. These approved W365 values are
+tenant onboarding inputs, not secrets and not derivable by this repository.
+Screen-share values are not required for agent-only desktop execution.
 
 See the [deployment guide](docs/DEPLOYMENT.md) for quota, cost, shared-project
 deployment, staged previews, opt-out settings, rollback, and teardown. See the

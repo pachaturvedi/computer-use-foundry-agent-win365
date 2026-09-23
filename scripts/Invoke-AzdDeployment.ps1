@@ -187,7 +187,9 @@ function Assert-LiveViewerConfiguration {
         -OwnershipManifestPath (Join-Path $root ".azure\$environmentName\w365-ownership.json")
 
     $vaultName = Get-W365KeyVaultName
-    $requiredSecrets = @('w365-viewer-client-secret')
+    $requiredSecrets = if ((Get-AzdValue 'VIEWER_OIDC_CREDENTIAL_MODE' -AllowMissing) -eq 'client_secret') {
+        @('w365-viewer-client-secret')
+    } else { @() }
     if ($credentialMode -eq 'client_secret') {
         $requiredSecrets += 'w365-blueprint-client-secret'
     }

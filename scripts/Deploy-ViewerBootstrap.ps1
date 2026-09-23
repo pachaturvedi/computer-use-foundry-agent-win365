@@ -130,6 +130,7 @@ if ($env:VIEWER_LIVE_ENABLED -eq 'true') {
         'SCREENSHARE_APP_URL',
         'W365_KEY_VAULT_NAME',
         'W365_BLUEPRINT_CREDENTIAL_MODE'
+        'VIEWER_OIDC_CREDENTIAL_MODE'
     )
     foreach ($name in $liveRequired) {
         if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
@@ -145,7 +146,9 @@ if ($env:VIEWER_LIVE_ENABLED -eq 'true') {
         -ViewerPrincipalId $env:VIEWER_IDENTITY_PRINCIPAL_ID `
         -OwnershipManifestPath (Join-Path (Split-Path $PSScriptRoot) ".azure\$($env:AZURE_ENV_NAME)\w365-ownership.json")
 
-    $requiredSecrets = @('w365-viewer-client-secret')
+    $requiredSecrets = if ($env:VIEWER_OIDC_CREDENTIAL_MODE -eq 'client_secret') {
+        @('w365-viewer-client-secret')
+    } else { @() }
     if ($env:W365_BLUEPRINT_CREDENTIAL_MODE -eq 'client_secret') {
         $requiredSecrets += 'w365-blueprint-client-secret'
     }

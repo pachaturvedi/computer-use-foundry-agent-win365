@@ -12,7 +12,6 @@ param managedEnvironmentResourceId string
 param registryName string
 param imageName string
 param keyVaultName string
-param oidcSecretName string = 'w365-viewer-client-secret'
 param blueprintSecretName string = 'w365-blueprint-client-secret'
 param w365Enabled bool = false
 param viewerLiveEnabled bool = false
@@ -27,6 +26,12 @@ param certificateRbacReady bool = false
 param sessionBlobUri string
 param viewerPublicUrl string = ''
 param viewerClientId string = ''
+@allowed([
+  'managed_identity'
+  'client_secret'
+])
+param viewerOidcCredentialMode string = 'managed_identity'
+param oidcSecretName string = 'w365-viewer-client-secret'
 param operatorTenantId string = ''
 param operatorObjectId string = ''
 param w365TenantId string = ''
@@ -44,6 +49,7 @@ var containerImage = useRegistry
   ? '${registry.properties.loginServer}/${imageName}'
   : imageName
 var clientSecretEnabled = w365Enabled && blueprintCredentialMode == 'client_secret'
+var viewerOidcSecretEnabled = w365Enabled && viewerOidcCredentialMode == 'client_secret'
 var certificateConfigurationReady = w365Enabled && blueprintCredentialMode == 'key_vault_certificate' && !(certificateProvisioningActive || certificateRbacReady)
   ? fail('key_vault_certificate viewer provisioning requires the orchestration-owned certificate readiness gate.')
   : true
@@ -120,7 +126,7 @@ resource viewer 'Microsoft.App/containerApps@2024-03-01' = {
       ingress: { external: true, targetPort: 8080, allowInsecure: false }
       registries: useRegistry ? [{ server: registry.properties.loginServer, identity: identity.id }] : []
       secrets: concat(
-        w365Enabled ? [{
+        viewerOidcSecretEnabled ? [{
           name: 'oidc-secret'
           keyVaultUrl: '${vault.properties.vaultUri}secrets/${oidcSecretName}'
           identity: identity.id
@@ -157,11 +163,12 @@ resource viewer 'Microsoft.App/containerApps@2024-03-01' = {
           { name: 'OPERATOR_OBJECT_ID', value: operatorObjectId }
           { name: 'VIEWER_PUBLIC_URL', value: viewerPublicUrl }
           { name: 'VIEWER_CLIENT_ID', value: viewerClientId }
+          { name: 'VIEWER_OIDC_CREDENTIAL_MODE', value: viewerOidcCredentialMode }
           { name: 'SCREENSHARE_SDK_URL', value: screenShareSdkUrl }
           { name: 'SCREENSHARE_FRAME_ORIGINS', value: screenShareFrameOrigins }
           { name: 'SCREENSHARE_APP_URL', value: screenShareAppUrl }
         ],
-        w365Enabled ? [{ name: 'VIEWER_CLIENT_SECRET', secretRef: 'oidc-secret' }] : [],
+        viewerOidcSecretEnabled ? [{ name: 'VIEWER_CLIENT_SECRET', secretRef: 'oidc-secret' }] : [],
         clientSecretEnabled ? [{ name: 'W365_CLIENT_SECRET', secretRef: 'blueprint-secret' }] : [])
         probes: [{
           type: 'Liveness'

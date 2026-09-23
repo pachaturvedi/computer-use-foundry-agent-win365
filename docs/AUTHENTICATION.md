@@ -60,9 +60,24 @@ the shared vault and retrieves `w365-blueprint-client-secret` directly at
 startup. The value is cached only in process memory; rotation requires a
 redeploy so a new process retrieves the new version.
 
-The viewer uses its own UAMI and native Key Vault secret reference. It does not
-share the agent's Azure identity. The shared vault exists even when the viewer
-is disabled.
+The viewer uses its own UAMI for Blob access and, in certificate mode, scoped
+certificate/key access. It does not share the agent's Azure identity. The
+shared vault exists even when the viewer is disabled.
+
+The viewer OIDC web app is secretless. Its federated identity credential trusts
+only the deployed viewer UAMI object ID, with issuer
+`https://login.microsoftonline.com/<tenant>/v2.0`, subject equal to that object
+ID, and audience `api://AzureADTokenExchange`. At authorization-code redemption,
+the viewer uses its exact UAMI-bound `ManagedIdentityCredential` to obtain the
+client assertion. No OIDC client secret, `DefaultAzureCredential`, Azure CLI
+credential, or developer credential is accepted.
+
+The explicit `VIEWER_OIDC_CREDENTIAL_MODE=client_secret` mode is the supported
+operator-selected fallback when managed-identity assertion redemption is not
+reliable in a tenant. `azd up` provisions `w365-viewer-client-secret` in
+Key Vault and the viewer uses it for code redemption. This mode is never
+selected automatically and has the normal client-secret rotation and
+exfiltration risks; it does not change W365 T1/T2/T3 behavior.
 
 Never place the secret in source, JSON, azd state, logs, documentation, or a
 plain hosted-agent environment variable.

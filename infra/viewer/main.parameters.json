@@ -18,6 +18,7 @@
     "viewerLiveEnabled": { "value": "${VIEWER_LIVE_ENABLED=false}" },
     "viewerPublicUrl": { "value": "${VIEWER_PUBLIC_URL=}" },
     "viewerClientId": { "value": "${VIEWER_CLIENT_ID=}" },
+    "viewerOidcCredentialMode": { "value": "${VIEWER_OIDC_CREDENTIAL_MODE=managed_identity}" },
     "operatorTenantId": { "value": "${OPERATOR_TENANT_ID=}" },
     "operatorObjectId": { "value": "${OPERATOR_OBJECT_ID=}" },
     "stateStorageAccountName": { "value": "${STATE_STORAGE_ACCOUNT_NAME=}" },

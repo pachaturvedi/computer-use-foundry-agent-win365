@@ -494,7 +494,7 @@ Set non-secret values using `azd env set KEY VALUE`:
 | `W365_TENANT_ID`, `W365_BLUEPRINT_ID` | Setup output; Foundry/W365/viewer Azure tenant and blueprint app ID. |
 | `W365_AGENT_ID`, `W365_AGENT_OBJECT_ID`, `W365_AGENT_USER_ID` | Setup output; agent app ID, agent object ID, agent-user object ID. |
 | `SESSION_BLOB_URI` | `https://<storage>.blob.core.windows.net/desktop-state/slot.json` |
-| `W365_KEY_VAULT_NAME` | State-layer output naming the shared vault that holds the blueprint credential and the optional viewer OIDC secret. The agent reads it with its own identity; raw secret or private-key material is never passed as an environment variable. |
+| `W365_KEY_VAULT_NAME` | State-layer output naming the shared vault that holds W365 blueprint material. The agent reads it with its own identity; raw secret or private-key material is never passed as an environment variable. |
 | `OPERATOR_TENANT_ID`, `OPERATOR_OBJECT_ID` | Exact human operator's tenant/object IDs. |
 | `HOSTED_ALLOWED_USER_ID` | **Foundry agent only:** platform user partition or `sha256:` fingerprint; see binding below. Not a viewer parameter. |
 | `VIEWER_PUBLIC_URL` | Optional for an agent-only deployment. When omitted, desktop execution remains available but live-view/take-control links are returned as unavailable. Required for the viewer itself. |
@@ -502,7 +502,9 @@ Set non-secret values using `azd env set KEY VALUE`:
 | `SCREENSHARE_SDK_URL`, `SCREENSHARE_FRAME_ORIGINS` | **Viewer only:** approved W365 SDK URL and exact space-separated frame origins. |
 | `VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID` | Optional full ID of the approved existing ACA managed environment. Empty means create one. Once `azd up` records a selection, later runs reuse it instead of asking again, and recover it from the deployed viewer if the environment file is regenerated. |
 | `W365_BLUEPRINT_CREDENTIAL_MODE` | Fresh/unset default: `key_vault_certificate`. Explicit alternatives are legacy `client_secret` and separately approved `managed_identity_federation`. Existing explicit values are preserved and there is no fallback. |
-| `VIEWER_LIVE_ENABLED` | Explicit viewer phase switch. Leave `false` for bootstrap; set `true` only after OIDC, state, W365, SDK/frame-origin values, and the Key Vault secret are ready. |
+| `VIEWER_LIVE_ENABLED` | Explicit viewer phase switch. Leave `false` for bootstrap; set `true` only after secretless OIDC federation, state, W365, and SDK/frame-origin values are ready. |
+| `VIEWER_BOOTSTRAP_ONLY` | Explicit `true` choice to intentionally keep the viewer bootstrap-only when approved screen-share onboarding values are unavailable. |
+| `VIEWER_OIDC_CREDENTIAL_MODE` | Defaults to `managed_identity` and uses the viewer UAMI federation. Explicit `client_secret` is an operator-selected, automated fallback that stores `w365-viewer-client-secret` in Key Vault; there is no automatic downgrade. |
 | `VIEWER_LOG_ANALYTICS_ENABLED` | Optional for a newly created ACA environment; defaults to `false`. Ignored when an existing environment resource ID is supplied. |
 | `W365_ENABLED` | Internal phase switch. Bootstrap sets it to `false`; `Setup-W365.ps1` persists `true` only after phase-2 prerequisites are ready. |
 
@@ -517,8 +519,8 @@ from the corresponding setup output, not the agent's app ID. The viewer has no
 `hostedAllowedUserId` Bicep parameter; its authorization uses the human OIDC claims.
 
 Finish [OIDC/SDK configuration](VIEWER.md#enable-the-hosted-viewer). In
-certificate mode this creates only the viewer's own OIDC secret and never
-prompts for a blueprint credential:
+certificate mode this preserves the viewer UAMI certificate/key roles and never
+creates an OIDC client secret:
 
 ```powershell
 $environment = "<azd-environment-name>"
@@ -527,9 +529,10 @@ pwsh -NoProfile -File .\scripts\Enable-ViewerLive.ps1 -Environment $environment
 
 `Configure-ViewerOidc.ps1` creates or reconciles the single-tenant web app, the
 exact `https://<viewer-host>/signin-oidc` callback, its service principal, the
-operator binding, and `w365-viewer-client-secret`. Live activation always
-references that OIDC secret; it references a blueprint secret only in legacy
-`client_secret` mode, collected through `Set-ViewerSecrets.ps1 -BlueprintOnly`.
+operator binding, and a federated identity credential for the exact deployed
+viewer UAMI. It does not create or store an OIDC client secret. Live activation
+references a blueprint secret only in legacy `client_secret` mode, collected
+through `Set-ViewerSecrets.ps1`.
 `managed_identity_federation` omits the blueprint secret but fails unless the
 exact viewer UAMI federation is recorded in the W365 ownership manifest.
 No secret is stored in `.azure`, JSON, Bicep parameters, `azure.yaml`, or the

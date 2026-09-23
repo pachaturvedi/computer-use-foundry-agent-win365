@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using Azure.Core;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.Configuration;
@@ -80,7 +81,6 @@ public sealed class ViewerEndpointsTests
                     ["OPERATOR_TENANT_ID"] = "11111111-1111-1111-1111-111111111111",
                     ["OPERATOR_OBJECT_ID"] = "22222222-2222-2222-2222-222222222222",
                     ["VIEWER_CLIENT_ID"] = "33333333-3333-3333-3333-333333333333",
-                    ["VIEWER_CLIENT_SECRET"] = "test-only",
                     ["VIEWER_PUBLIC_URL"] = "https://viewer.example.com"
                 })
                 .Build());
@@ -93,5 +93,53 @@ public sealed class ViewerEndpointsTests
         Assert.Equal(1, options.ForwardLimit);
         Assert.Empty(options.KnownIPNetworks);
         Assert.Empty(options.KnownProxies);
+    }
+
+    [Fact]
+    public async Task OidcClientAssertionUsesTheBoundViewerCredentialAndExactScopeAsync()
+    {
+        var credential = new RecordingCredential();
+
+        var assertion = await ViewerOidcClientAssertion.GetAsync(
+            credential,
+            CancellationToken.None);
+
+        Assert.Equal("viewer-assertion", assertion);
+        Assert.Equal(["api://AzureADTokenExchange/.default"], credential.Scopes);
+    }
+
+    [Fact]
+    public async Task OidcClientAssertionPropagatesCancellationAsync()
+    {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var credential = new RecordingCredential();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            ViewerOidcClientAssertion.GetAsync(credential, cancellation.Token).AsTask());
+    }
+
+    private sealed class RecordingCredential : TokenCredential
+    {
+        public string[] Scopes { get; private set; } = [];
+
+        public override AccessToken GetToken(
+            TokenRequestContext requestContext,
+            CancellationToken cancellationToken)
+        {
+            Scopes = requestContext.Scopes;
+            return new AccessToken("viewer-assertion", DateTimeOffset.UtcNow.AddMinutes(5));
+        }
+
+        public override ValueTask<AccessToken> GetTokenAsync(
+            TokenRequestContext requestContext,
+            CancellationToken cancellationToken)
+        {
+            Scopes = requestContext.Scopes;
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult(new AccessToken(
+                "viewer-assertion",
+                DateTimeOffset.UtcNow.AddMinutes(5)));
+        }
     }
 }

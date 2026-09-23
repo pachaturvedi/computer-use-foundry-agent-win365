@@ -336,13 +336,13 @@ function Remove-ViewerArtifacts {
         $viewerAppObjectId = [string](Get-OptionalObjectValue -Object $viewerApplication -Name 'objectId')
         $viewerAppId = [string](Get-OptionalObjectValue -Object $viewerApplication -Name 'appId')
         $viewerApplicationDisposition = [string](Get-OptionalObjectValue -Object $viewerApplication -Name 'disposition')
-        $viewerCredential = Get-OptionalObjectValue -Object $viewerApplication -Name 'credential'
         $viewerServicePrincipal = Get-OptionalObjectValue -Object $viewerApplication -Name 'servicePrincipal'
+        $viewerFederations = Get-OptionalObjectValue -Object (Get-OptionalObjectValue -Object $Manifest -Name 'graph') -Name 'federatedIdentityCredentials'
 
         $currentApplication = $null
         if (![string]::IsNullOrWhiteSpace($viewerAppObjectId)) {
             try {
-                $currentApplication = Graph GET "v1.0/applications/${viewerAppObjectId}?`$select=id,appId,passwordCredentials"
+                $currentApplication = Graph GET "v1.0/applications/${viewerAppObjectId}?`$select=id,appId"
             }
             catch {
                 if (Test-GraphResourceNotFound -ErrorRecord $_) {
@@ -354,19 +354,27 @@ function Remove-ViewerArtifacts {
             }
         }
 
-        if (($viewerCredential -is [System.Collections.IDictionary]) -and
-            [string](Get-OptionalObjectValue -Object $viewerCredential -Name 'disposition') -eq 'created' -and
-            $currentApplication -and
-            $viewerApplicationDisposition -ne 'created') {
-            $credentialKeyId = [string](Get-OptionalObjectValue -Object $viewerCredential -Name 'keyId')
-            $currentCredential = SingleOrNone @(@($currentApplication.passwordCredentials) | Where-Object { [string]$_.keyId -eq $credentialKeyId }) 'viewer application credential'
-            if ($currentCredential) {
-                Write-Output "Deleting viewer application credential '$credentialKeyId' from application '$viewerAppObjectId'."
-                Graph POST "v1.0/applications/$viewerAppObjectId/removePassword" @{ keyId = $credentialKeyId } | Out-Null
-                Write-Output "Removed viewer application credential $credentialKeyId."
-            }
-            else {
-                Write-Output 'Viewer application credential was already absent.'
+        if ($viewerFederations -is [System.Collections.IDictionary] -and $currentApplication) {
+            $currentFederations = @(List "v1.0/applications/$viewerAppObjectId/federatedIdentityCredentials")
+            foreach ($entry in @(List-MapValues $viewerFederations)) {
+                if ([string](Get-OptionalObjectValue -Object $entry -Name 'disposition') -ne 'created') {
+                    continue
+                }
+                $ficId = [string](Get-OptionalObjectValue -Object $entry -Name 'id')
+                $ficName = [string](Get-OptionalObjectValue -Object $entry -Name 'name')
+                $matches = @($currentFederations | Where-Object {
+                    (![string]::IsNullOrWhiteSpace($ficId) -and [string]$_.id -eq $ficId) -or
+                    (![string]::IsNullOrWhiteSpace($ficName) -and [string]$_.name -eq $ficName)
+                })
+                if ($matches.Count -gt 1) {
+                    throw "Viewer federation '$ficName' is ambiguous; cleanup is blocked."
+                }
+                if ($matches.Count -eq 1) {
+                    if (![string]::IsNullOrWhiteSpace($ficId) -and [string]$matches[0].id -ne $ficId) {
+                        throw "Viewer federation '$ficName' does not match the ownership manifest."
+                    }
+                    Graph DELETE "v1.0/applications/$viewerAppObjectId/federatedIdentityCredentials/$([string]$matches[0].id)" | Out-Null
+                }
             }
         }
 
