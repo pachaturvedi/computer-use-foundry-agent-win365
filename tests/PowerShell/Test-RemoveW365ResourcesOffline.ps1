@@ -100,7 +100,7 @@ try {
             -Confirm:$false
     )
     $expectedNoStateOutput = "Pre-teardown cleanup completed for 'no-state-test': no configured W365 state remains. Azure resource deletion can continue."
-    $expectedNoStateTip = "If 'azd down' now reports 'deployment not found' for a layer whose Azure resources were already removed (a known azd layered-infra limitation), rerun teardown with '.\scripts\Invoke-AzdDown.ps1 -EnvironmentName <azd-environment-name> -Purge -Force' instead, which treats an already-missing deployment as complete."
+    $expectedNoStateTip = "If 'azd down' now reports 'deployment not found' for a layer (a known azd layered-infra limitation), rerun teardown with '.\scripts\Invoke-AzdDown.ps1 -EnvironmentName <azd-environment-name> -Purge -Force' instead. It treats an already-missing deployment as complete for that layer and, if the environment's resource group still remains afterward, deletes it directly so no resources are left behind."
     if ($noStateOutput.Count -ne 2 -or $noStateOutput[0] -ne $expectedNoStateOutput -or $noStateOutput[1] -ne $expectedNoStateTip) {
         throw "No-state cleanup emitted unexpected output: [$($noStateOutput -join ' | ')]"
     }

@@ -4,10 +4,9 @@
 Removes a sample-owned environment with missing-layer recovery.
 
 .DESCRIPTION
-Runs ownership-driven W365/Entra cleanup once, deletes viewer, state, and foundry layers separately, continues only when an ARM deployment is already absent, and verifies that no tagged resource group remains.
+Runs ownership-driven W365/Entra cleanup once, deletes viewer, state, and foundry layers separately, continues only when an ARM deployment is already absent, and verifies that no tagged resource group remains. If a tagged resource group still remains after every layer has been attempted (the known azd layered-infra 'deployment not found' limitation can leave resources behind even when it is tolerated per layer), it falls back to deleting that resource group directly and polls for completion before failing.
 
-
-Key inputs: EnvironmentName plus optional environment/manifest paths, executable overrides, UseDeviceCode, the default-enabled Purge option, and Force.
+Key inputs: EnvironmentName plus optional environment/manifest paths, executable overrides, UseDeviceCode, the default-enabled Purge option, Force, and the residual-resource-group poll attempts/delay used only by the fallback deletion.
 
 .OUTPUTS
 Layer-by-layer teardown progress and a final residual-resource verification result.
@@ -26,7 +25,11 @@ param(
     [string]$AzureCliPath,
     [switch]$UseDeviceCode,
     [switch]$Purge = $true,
-    [switch]$Force
+    [switch]$Force,
+    [ValidateRange(0, [int]::MaxValue)]
+    [int]$ResidualGroupPollAttempts = 20,
+    [ValidateRange(0, [int]::MaxValue)]
+    [int]$ResidualGroupPollDelaySeconds = 15
 )
 
 Set-StrictMode -Version Latest
@@ -147,6 +150,31 @@ function Invoke-AzureCliCommand {
     return ($output | Out-String).Trim()
 }
 
+function Get-RemainingResourceGroups {
+    param(
+        [Parameter(Mandatory)][string]$AzureCliExecutable,
+        [Parameter(Mandatory)][string]$SubscriptionId,
+        [Parameter(Mandatory)][string]$EnvironmentName
+    )
+
+    $output = Invoke-AzureCliCommand `
+        -ExecutablePath $AzureCliExecutable `
+        -Arguments @(
+            'group'
+            'list'
+            '--subscription'
+            $SubscriptionId
+            '--tag'
+            "azd-env-name=$EnvironmentName"
+            '--query'
+            '[].name'
+            '--output'
+            'tsv'
+            '--only-show-errors'
+        )
+    return @($output -split '\r?\n' | Where-Object { ![string]::IsNullOrWhiteSpace($_) })
+}
+
 $repositoryRoot = Split-Path $PSScriptRoot -Parent
 if ([string]::IsNullOrWhiteSpace($EnvironmentFilePath)) {
     $EnvironmentFilePath = Join-Path (Join-Path $repositoryRoot ".azure\$EnvironmentName") '.env'
@@ -238,27 +266,45 @@ finally {
     [Environment]::SetEnvironmentVariable('W365_PREDOWN_ALREADY_COMPLETED', $previousPredownState, 'Process')
 }
 
-$remainingResourceGroupsOutput = Invoke-AzureCliCommand `
-    -ExecutablePath $azureCliExecutable `
-    -Arguments @(
-        'group'
-        'list'
-        '--subscription'
-        $subscriptionId
-        '--tag'
-        "azd-env-name=$EnvironmentName"
-        '--query'
-        '[].name'
-        '--output'
-        'tsv'
-        '--only-show-errors'
-    )
-$remainingResourceGroups = @(
-    $remainingResourceGroupsOutput -split '\r?\n' |
-        Where-Object { ![string]::IsNullOrWhiteSpace($_) }
-)
+$remainingResourceGroups = @(Get-RemainingResourceGroups `
+    -AzureCliExecutable $azureCliExecutable `
+    -SubscriptionId $subscriptionId `
+    -EnvironmentName $EnvironmentName)
+
 if ($remainingResourceGroups.Count -gt 0) {
-    throw "Azure teardown is incomplete. Resource group(s) tagged for '$EnvironmentName' remain: $($remainingResourceGroups -join ', ')."
+    Write-Warning "azd down did not remove resource group(s) tagged for '$EnvironmentName' (a known azd layered-infra limitation: 'deployment not found' is thrown for layers whose ARM deployment record is already missing, even when the resource group itself still holds resources): $($remainingResourceGroups -join ', '). Falling back to direct resource group deletion."
+    foreach ($resourceGroupName in $remainingResourceGroups) {
+        Invoke-AzureCliCommand `
+            -ExecutablePath $azureCliExecutable `
+            -Arguments @(
+                'group'
+                'delete'
+                '--name'
+                $resourceGroupName
+                '--subscription'
+                $subscriptionId
+                '--yes'
+                '--only-show-errors'
+            ) | Out-Null
+        Write-Host "Requested direct deletion of resource group '$resourceGroupName'."
+    }
+
+    for ($attempt = 1; $attempt -le $ResidualGroupPollAttempts; $attempt++) {
+        $remainingResourceGroups = @(Get-RemainingResourceGroups `
+            -AzureCliExecutable $azureCliExecutable `
+            -SubscriptionId $subscriptionId `
+            -EnvironmentName $EnvironmentName)
+        if ($remainingResourceGroups.Count -eq 0) {
+            break
+        }
+        if ($attempt -lt $ResidualGroupPollAttempts) {
+            Start-Sleep -Seconds $ResidualGroupPollDelaySeconds
+        }
+    }
+}
+
+if ($remainingResourceGroups.Count -gt 0) {
+    throw "Azure teardown is incomplete. Resource group(s) tagged for '$EnvironmentName' remain after fallback deletion: $($remainingResourceGroups -join ', ')."
 }
 
 Write-Output "Teardown completed for '$EnvironmentName'. No Azure resource group tagged for this environment remains."
