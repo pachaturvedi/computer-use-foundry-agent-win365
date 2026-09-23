@@ -4,7 +4,7 @@
 Provides shared Microsoft Graph delegated sign-in helpers.
 
 .DESCRIPTION
-Microsoft Graph enforces its own device-code inactivity window and it cannot be extended from Connect-MgGraph, so the only useful lever is reissuing the code. This module centralizes context validation, the device-code retry, and the optional device-code fallback so every interactive sign-in behaves the same way.
+Microsoft Graph enforces its own device-code inactivity window and it cannot be extended from Connect-MgGraph, so the only useful lever is reissuing the code. This module centralizes context validation, device-code retry, optional device-code fallback, origin-safe requests, pagination, and exact-cardinality selection.
 
 Key inputs: Connect-MgGraph parameters, required tenant and scopes, an interactive device-code switch, and a bounded attempt count.
 
@@ -38,6 +38,91 @@ function Test-GraphContext {
 
     $missingScopes = @($RequiredScopes | Where-Object { $_ -notin $Context.Scopes })
     return @($missingScopes).Count -eq 0
+}
+
+function Invoke-W365GraphRequest {
+    param(
+        [Parameter(Mandatory)]
+        [ValidateSet('GET', 'POST', 'PATCH', 'DELETE')]
+        [string]$Method,
+
+        [Parameter(Mandatory)]
+        [string]$Path,
+
+        $Body = $null,
+
+        [string]$OriginErrorMessage = 'Graph request resolved to an unexpected origin.'
+    )
+
+    $uri = if ($Path.StartsWith('https://', [StringComparison]::OrdinalIgnoreCase)) {
+        $Path
+    }
+    else {
+        "https://graph.microsoft.com/$Path"
+    }
+
+    $parsedUri = [uri]$uri
+    if ($parsedUri.Scheme -ne 'https' -or
+        !$parsedUri.Host.Equals('graph.microsoft.com', [StringComparison]::OrdinalIgnoreCase)) {
+        throw $OriginErrorMessage
+    }
+
+    $requestParameters = @{
+        Method = $Method
+        Uri = $uri
+        OutputType = 'Hashtable'
+        Headers = @{ 'OData-Version' = '4.0' }
+    }
+    if ($null -ne $Body) {
+        $requestParameters.Body = ConvertTo-Json $Body -Depth 40 -Compress
+        $requestParameters.ContentType = 'application/json'
+    }
+
+    Invoke-MgGraphRequest @requestParameters
+}
+
+function Get-W365GraphCollection {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [string]$OriginErrorMessage = 'Graph request resolved to an unexpected origin.'
+    )
+
+    $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    while ($Path) {
+        if ([string]::IsNullOrWhiteSpace($Path)) {
+            throw 'Graph pagination returned a whitespace-only continuation cursor.'
+        }
+        if (!$seen.Add($Path)) {
+            throw 'Repeated Graph pagination cursor.'
+        }
+
+        $page = Invoke-W365GraphRequest `
+            -Method GET `
+            -Path $Path `
+            -OriginErrorMessage $OriginErrorMessage
+        foreach ($item in @($page.value)) {
+            $item
+        }
+        $Path = [string]$page['@odata.nextLink']
+    }
+}
+
+function Select-W365GraphSingleResult {
+    param(
+        $Items,
+        [Parameter(Mandatory)][string]$Label,
+        [string]$AmbiguousMessage = 'Resolve manually; no arbitrary object will be selected.'
+    )
+
+    $all = @($Items)
+    if ($all.Count -gt 1) {
+        throw "Ambiguous $Label; multiple matches. $AmbiguousMessage"
+    }
+    if ($all.Count -eq 1) {
+        return $all[0]
+    }
+
+    return $null
 }
 
 function Test-IsDeviceCodeTimeoutError {
@@ -114,4 +199,3 @@ function Connect-W365GraphContext {
             -DeviceCodeMaxAttempts $DeviceCodeMaxAttempts
     }
 }
-

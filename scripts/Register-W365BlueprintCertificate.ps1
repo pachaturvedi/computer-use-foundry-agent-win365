@@ -86,29 +86,22 @@ $missing = @($scopes | Where-Object { $_ -notin $context.Scopes })
 if ($missing.Count) { throw "Missing Graph scopes: $($missing -join ', ')." }
 
 function Graph([string]$Method, [string]$Path, $Body = $null) {
-    $uri = if ($Path.StartsWith('https://')) { $Path } else { "https://graph.microsoft.com/$Path" }
-    if (!([uri]$uri).Host.Equals('graph.microsoft.com')) { throw 'Graph request resolved to an unexpected origin.' }
-    $requestParameters = @{ Method = $Method; Uri = $uri; OutputType = 'Hashtable'; Headers = @{ 'OData-Version' = '4.0' } }
-    if ($null -ne $Body) {
-        $requestParameters.Body = ConvertTo-Json $Body -Depth 30 -Compress
-        $requestParameters.ContentType = 'application/json'
-    }
-    Invoke-MgGraphRequest @requestParameters
+    Invoke-W365GraphRequest `
+        -Method $Method `
+        -Path $Path `
+        -Body $Body `
+        -OriginErrorMessage 'Graph request resolved to an unexpected origin.'
 }
 function List([string]$Path) {
-    $seen = [Collections.Generic.HashSet[string]]::new()
-    while ($Path) {
-        if (!$seen.Add($Path)) { throw 'Repeated Graph pagination cursor.' }
-        $page = Graph GET $Path
-        foreach ($item in $page.value) { $item }
-        $Path = $page['@odata.nextLink']
-    }
+    Get-W365GraphCollection `
+        -Path $Path `
+        -OriginErrorMessage 'Graph request resolved to an unexpected origin.'
 }
 function SingleOrNone($Items, [string]$Label) {
-    $all = @($Items)
-    if ($all.Count -gt 1) { throw "Ambiguous $Label; multiple matches. Resolve manually; no arbitrary object will be reused." }
-    if ($all.Count -eq 1) { return $all[0] }
-    return $null
+    Select-W365GraphSingleResult `
+        -Items $Items `
+        -Label $Label `
+        -AmbiguousMessage 'Resolve manually; no arbitrary object will be reused.'
 }
 
 $blueprint = SingleOrNone (List "v1.0/applications/microsoft.graph.agentIdentityBlueprint?`$filter=appId eq '$BlueprintId'") 'Foundry blueprint app ID'

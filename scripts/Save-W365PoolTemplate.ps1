@@ -65,12 +65,7 @@ function Resolve-PoolId {
 }
 
 function Graph([string]$Method, [string]$Path) {
-    $uri = if ($Path.StartsWith('https://')) { $Path } else { "https://graph.microsoft.com/$Path" }
-    if (!([uri]$uri).Host.Equals('graph.microsoft.com')) {
-        throw 'Graph request resolved to an unexpected origin.'
-    }
-
-    Invoke-MgGraphRequest -Method $Method -Uri $uri -OutputType Hashtable -Headers @{ 'OData-Version' = '4.0' }
+    Invoke-W365GraphRequest -Method $Method -Path $Path
 }
 
 $scopes = @('CloudPC.Read.All')

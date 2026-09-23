@@ -23,6 +23,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'Logging.ps1')
+. (Join-Path $PSScriptRoot 'DotNetExecution.ps1')
 Initialize-SampleScriptLogging -ScriptName $MyInvocation.MyCommand.Name -Parameters $PSBoundParameters
 
 if (!$IsWindows) {
@@ -34,15 +35,6 @@ $solution = Join-Path $root 'Win365FoundrySample.slnx'
 $envExample = Join-Path $root '.env.example'
 $envFile = Join-Path $root '.env'
 $prePrValidationScript = Join-Path $PSScriptRoot 'Validate-PrePr.ps1'
-
-function Invoke-DotNet {
-    param([Parameter(Mandatory)][string[]]$Arguments)
-
-    & dotnet @Arguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "dotnet $($Arguments -join ' ') failed with exit code $LASTEXITCODE."
-    }
-}
 
 if (!(Get-Command dotnet -ErrorAction SilentlyContinue)) {
     throw 'The .NET SDK is not installed or dotnet is not on PATH. Install the .NET 10 SDK, reopen PowerShell, and retry.'

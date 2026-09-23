@@ -36,6 +36,35 @@ function Get-MgContext {
     return $script:contextToReturn
 }
 
+$script:graphRequests = @()
+$script:graphResponses = [Collections.Generic.Queue[object]]::new()
+
+function Invoke-MgGraphRequest {
+    param(
+        [string]$Method,
+        [string]$Uri,
+        [string]$OutputType,
+        [hashtable]$Headers,
+        [string]$Body,
+        [string]$ContentType
+    )
+
+    $script:graphRequests += , @{
+        Method = $Method
+        Uri = $Uri
+        OutputType = $OutputType
+        Headers = $Headers
+        Body = $Body
+        ContentType = $ContentType
+    }
+
+    if ($script:graphResponses.Count -eq 0) {
+        throw "No mocked Graph response is available for $Method $Uri."
+    }
+
+    return $script:graphResponses.Dequeue()
+}
+
 function Reset-GraphMocks {
     param([string[]]$Failures = @())
 
@@ -46,9 +75,126 @@ function Reset-GraphMocks {
         AuthType = 'Delegated'
         Scopes   = @('CloudPC.Read.All')
     }
+    $script:graphRequests = @()
+    $script:graphResponses = [Collections.Generic.Queue[object]]::new()
 }
 
 . (Join-Path $root 'scripts\GraphSignIn.ps1')
+
+# Shared Graph requests reject non-Graph origins, serialize mutation bodies,
+# paginate exactly once per cursor, and fail closed on ambiguous results.
+Reset-GraphMocks
+$script:graphResponses.Enqueue(@{ id = 'created' })
+$created = Invoke-W365GraphRequest -Method POST -Path 'v1.0/example' -Body @{ displayName = 'sample' }
+if ($created.id -ne 'created') {
+    throw 'The shared Graph request did not return the mocked response.'
+}
+$request = $script:graphRequests[0]
+if ($request.Uri -ne 'https://graph.microsoft.com/v1.0/example' -or
+    $request.Headers['OData-Version'] -ne '4.0' -or
+    $request.ContentType -ne 'application/json' -or
+    $request.Body -notmatch '"displayName":"sample"') {
+    throw 'The shared Graph request did not preserve the expected request contract.'
+}
+
+$threw = $false
+try {
+    Invoke-W365GraphRequest -Method GET -Path 'https://example.test/v1.0/users' | Out-Null
+}
+catch {
+    $threw = $_.Exception.Message -match 'unexpected origin'
+}
+if (!$threw) {
+    throw 'The shared Graph request accepted a non-Graph origin.'
+}
+
+Reset-GraphMocks
+$script:graphResponses.Enqueue(@{
+        value = @(@{ id = 'first' })
+        '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/example?page=2'
+    })
+$script:graphResponses.Enqueue(@{
+        value = @(@{ id = 'second' })
+    })
+$items = @(Get-W365GraphCollection -Path 'v1.0/example')
+if ($items.Count -ne 2 -or $items[0].id -ne 'first' -or $items[1].id -ne 'second') {
+    throw 'The shared Graph collection helper did not return every page.'
+}
+
+Reset-GraphMocks
+$repeatedCursor = 'https://graph.microsoft.com/v1.0/example?page=1'
+$script:graphResponses.Enqueue(@{
+        value = @()
+        '@odata.nextLink' = $repeatedCursor
+    })
+$threw = $false
+try {
+    Get-W365GraphCollection -Path $repeatedCursor | Out-Null
+}
+catch {
+    $threw = $_.Exception.Message -match 'Repeated Graph pagination cursor'
+}
+if (!$threw) {
+    throw 'The shared Graph collection helper accepted a repeated pagination cursor.'
+}
+
+Reset-GraphMocks
+$script:graphResponses.Enqueue(@{
+        value = @(@{ id = 'partial' })
+        '@odata.nextLink' = '   '
+    })
+$threw = $false
+try {
+    Get-W365GraphCollection -Path 'v1.0/example' | Out-Null
+}
+catch {
+    $threw = $_.Exception.Message -match 'whitespace-only continuation cursor'
+}
+if (!$threw) {
+    throw 'The shared Graph collection helper treated a whitespace continuation cursor as successful completion.'
+}
+
+if ($null -ne (Select-W365GraphSingleResult -Items @() -Label 'empty result')) {
+    throw 'The shared single-result helper did not return null for an empty result.'
+}
+if ((Select-W365GraphSingleResult -Items @(@{ id = 'only' }) -Label 'single result').id -ne 'only') {
+    throw 'The shared single-result helper did not return the only match.'
+}
+$threw = $false
+try {
+    Select-W365GraphSingleResult `
+        -Items @(@{ id = 'one' }, @{ id = 'two' }) `
+        -Label 'duplicate result' | Out-Null
+}
+catch {
+    $threw = $_.Exception.Message -match 'Ambiguous duplicate result'
+}
+if (!$threw) {
+    throw 'The shared single-result helper accepted ambiguous matches.'
+}
+
+$diagnosticContracts = @{
+    'Setup-W365.ps1' = @(
+        'Graph pagination returned an unexpected origin.',
+        'Resolve manually; no arbitrary object will be reused.'
+    )
+    'Remove-W365Resources.ps1' = @(
+        'Graph request resolved to an unexpected origin.',
+        'Resolve manually before rerunning cleanup.'
+    )
+    'Register-W365BlueprintCertificate.ps1' = @(
+        'Graph request resolved to an unexpected origin.',
+        'Resolve manually; no arbitrary object will be reused.'
+    )
+}
+foreach ($entry in $diagnosticContracts.GetEnumerator()) {
+    $scriptText = Get-Content -LiteralPath (Join-Path $root "scripts\$($entry.Key)") -Raw
+    foreach ($message in $entry.Value) {
+        if ($scriptText -notmatch [regex]::Escape($message)) {
+            throw "$($entry.Key) no longer preserves Graph diagnostic '$message'."
+        }
+    }
+}
 
 $timeout = 'Authentication timed out after 120 seconds due to inactivity. Please try again.'
 $timeoutAlternateWindow = 'Authentication timed out after 60 seconds due to inactivity.'
@@ -269,4 +415,3 @@ finally {
 }
 
 Write-Host 'Test-GraphSignInOffline passed.'
-

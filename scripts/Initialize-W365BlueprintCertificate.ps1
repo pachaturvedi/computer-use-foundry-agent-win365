@@ -38,6 +38,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'Logging.ps1')
+. (Join-Path $PSScriptRoot 'AzdCommand.ps1')
 . (Join-Path $PSScriptRoot 'W365CertificateProvisioning.ps1')
 Initialize-SampleScriptLogging -ScriptName $MyInvocation.MyCommand.Name -Parameters $PSBoundParameters
 
@@ -52,16 +53,6 @@ if (![string]::IsNullOrWhiteSpace($Environment)) {
     if ($LASTEXITCODE -ne 0) {
         throw "Unable to select azd environment '$Environment'."
     }
-}
-
-function Get-AzdRequiredValue {
-    param([Parameter(Mandatory)][string]$Name)
-
-    $value = (& azd env get-value $Name 2>$null | Out-String).Trim().Trim('"')
-    if ([string]::IsNullOrWhiteSpace($value)) {
-        throw "The selected azd environment does not contain $Name."
-    }
-    return $value
 }
 
 $subscriptionId = Get-AzdRequiredValue 'AZURE_SUBSCRIPTION_ID'
