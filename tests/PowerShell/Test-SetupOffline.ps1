@@ -259,6 +259,11 @@ try {
         $manifest.graph.blueprint.appId -ne '11111111-1111-1111-1111-111111111111') {
         throw 'Ownership manifest contents were incomplete.'
     }
+    & $module {
+        if ($script:ledger.User.displayName -ne 'W365 agent user - agent') {
+            throw 'New agent-user creation did not use the readable UPN-based fallback display name.'
+        }
+    }
     $restoreBaselineBeforeRerun = [ordered]@{
         previousScope = $manifest.graph.permissionGrants['90ecec28-f5a6-42b3-9bde-dae1ca98f8b5'].previousScope
         requiredResourceAccessBefore = $manifest.graph.blueprint.requiredResourceAccessBefore
@@ -509,6 +514,9 @@ RESOURCE_PREFIX="offlinepool"
             param($ExpectedName)
             if ($script:ledger.Pool.displayName -ne $ExpectedName) {
                 throw 'The derived pool display name did not reach the pool-create request.'
+            }
+            if ($script:ledger.User.displayName -ne 'W365 agent user - offline-pool-derive') {
+                throw 'New agent-user creation did not use the readable environment-based display name.'
             }
         } $expectedPoolName
         $derivedManifest = Get-Content -LiteralPath $ownershipManifestPath -Raw | ConvertFrom-Json -AsHashtable
