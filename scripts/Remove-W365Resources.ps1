@@ -45,7 +45,7 @@ function Write-AzdDownRecoveryTip {
         return
     }
 
-    Write-Output "If 'azd down' now reports 'deployment not found' for a layer whose Azure resources were already removed (a known azd layered-infra limitation), rerun teardown with '.\scripts\Invoke-AzdDown.ps1 -EnvironmentName <azd-environment-name> -Purge -Force' instead, which treats an already-missing deployment as complete."
+    Write-Output "If 'azd down' now reports 'deployment not found' for a layer (a known azd layered-infra limitation), rerun teardown with '.\scripts\Invoke-AzdDown.ps1 -EnvironmentName <azd-environment-name> -Purge -Force' instead. It treats an already-missing deployment as complete for that layer and, if the environment's resource group still remains afterward, deletes it directly so no resources are left behind."
 }
 function Test-OwnershipCleanupCompleted {
     param($Manifest)
