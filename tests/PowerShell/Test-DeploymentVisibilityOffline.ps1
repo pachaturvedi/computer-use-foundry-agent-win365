@@ -231,8 +231,10 @@ try {
         $setupMutationIndex -lt 0 -or
         $statePreflightIndex -gt $setupMutationIndex -or
         $secretPreflightIndex -gt $setupMutationIndex -or
+        $w365SetupFlow -notmatch 'EnvironmentName\s*=\s*\$environmentName' -or
+        $w365SetupFlow -notmatch '\$environmentName\s*=\s*if\s*\(!\[string\]::IsNullOrWhiteSpace\(\$Environment\)\)' -or
         $w365SetupFlow -notmatch 'AuthorizeHostedRuntimeFederation:\$AuthorizeHostedRuntimeFederation') {
-        throw 'W365 setup flow does not complete state and federation preflight before setup mutation.'
+        throw 'W365 setup flow does not preserve selected-environment context or complete state and federation preflight before setup mutation.'
     }
 
     $tokens = $null

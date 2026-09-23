@@ -78,7 +78,18 @@ try {
         throw 'azd prerequisite validation failed.'
     }
 
-    $environmentName = Get-W365AzdValue -Azd $azd -Name 'AZURE_ENV_NAME'
+    $environmentName = if (![string]::IsNullOrWhiteSpace($Environment)) {
+        $Environment.Trim()
+    }
+    elseif (![string]::IsNullOrWhiteSpace($env:AZURE_ENV_NAME)) {
+        $env:AZURE_ENV_NAME.Trim()
+    }
+    else {
+        Get-W365AzdValue -Azd $azd -Name 'AZURE_ENV_NAME'
+    }
+    if ([string]::IsNullOrWhiteSpace($environmentName)) {
+        throw 'A selected azd environment is required before W365 setup.'
+    }
     $projectEndpoint = Get-W365AzdValue -Azd $azd -Name 'FOUNDRY_PROJECT_ENDPOINT'
     if ([string]::IsNullOrWhiteSpace($projectEndpoint)) {
         throw 'FOUNDRY_PROJECT_ENDPOINT is empty. Deploy the Foundry bootstrap before running W365 setup.'
@@ -175,6 +186,7 @@ try {
         TenantId = $discoveredTenantId
         BlueprintId = $discoveredBlueprintId
         AgentIdentityId = $discoveredAgentIdentityId
+        EnvironmentName = $environmentName
         BillingConfirmed = $BillingConfirmed
         GraphClientTimeoutSeconds = $GraphClientTimeoutSeconds
         Confirm = $false

@@ -7,7 +7,7 @@ Reconciles W365 and Entra setup for existing Foundry identities.
 Validates blueprint/agent parentage and policy, reconciles resource declarations, grants and inheritance, creates or reuses the correctly parented agent user, creates or updates the approved pool, assigns the user, and writes ownership evidence.
 
 
-Key inputs: Tenant, blueprint, agent identity, agent-user and pool settings, credential-federation approvals, billing confirmation, Graph options, azd-sync option, and manifest path.
+Key inputs: Tenant, blueprint, agent identity, selected azd environment, agent-user and pool settings, credential-federation approvals, billing confirmation, Graph options, azd-sync option, and manifest path.
 
 .OUTPUTS
 Non-secret W365 identifiers, azd environment values, and an ownership manifest.
@@ -20,6 +20,7 @@ param(
     [Parameter(Mandatory)][guid]$TenantId,
     [Parameter(Mandatory)][guid]$BlueprintId,
     [Parameter(Mandatory)][guid]$AgentIdentityId,
+    [string]$EnvironmentName,
     [ValidatePattern('^[a-zA-Z0-9._+-]+@[a-zA-Z0-9.-]+$')][string]$AgentUserPrincipalName,
     [ValidatePattern('^[a-zA-Z0-9.-]+$')][string]$AgentUserDomain,
     [guid]$PoolId = [guid]::Empty,
@@ -451,18 +452,35 @@ function Get-RequiredPoolValue {
 function Resolve-OwnershipManifestTarget {
     param(
         $Azd,
-        [string]$OverridePath
+        [string]$OverridePath,
+        [string]$ExplicitEnvironmentName
     )
+
+    $resolvedEnvironmentName = if ([string]::IsNullOrWhiteSpace($ExplicitEnvironmentName)) {
+        ''
+    }
+    else {
+        $ExplicitEnvironmentName.Trim()
+    }
 
     if (![string]::IsNullOrWhiteSpace($OverridePath)) {
         return [pscustomobject]@{
-            EnvironmentName = ''
+            EnvironmentName = $resolvedEnvironmentName
             Path = $OverridePath
         }
     }
 
     if ($null -eq $Azd) {
         return $null
+    }
+
+    if (![string]::IsNullOrWhiteSpace($resolvedEnvironmentName)) {
+        return [pscustomobject]@{
+            EnvironmentName = $resolvedEnvironmentName
+            Path = Get-W365OwnershipManifestPath `
+                -RepositoryRoot $script:repositoryRoot `
+                -EnvironmentName $resolvedEnvironmentName
+        }
     }
 
     try {
@@ -984,7 +1002,10 @@ $resources = @(
     ) }
 )
 $azd = if ($SkipAzdEnvironmentSync) { $null } else { Get-AzdCommand }
-$manifestTarget = Resolve-OwnershipManifestTarget -Azd $azd -OverridePath $OwnershipManifestPath
+$manifestTarget = Resolve-OwnershipManifestTarget `
+    -Azd $azd `
+    -OverridePath $OwnershipManifestPath `
+    -ExplicitEnvironmentName $EnvironmentName
 $existingManifest = if ($manifestTarget) {
     Read-W365OwnershipManifest -Path $manifestTarget.Path -AllowMissing
 }
@@ -1439,13 +1460,17 @@ elseif (!$SkipAzdEnvironmentSync) {
 
 if ($azd) {
     try {
-        $environmentName = Invoke-Azd -Azd $azd -Arguments @('env', 'get-value', 'AZURE_ENV_NAME') -CaptureOutput
+        $environmentName = [string]$manifestTarget.EnvironmentName
+        if ([string]::IsNullOrWhiteSpace($environmentName)) {
+            $environmentName = Invoke-Azd -Azd $azd -Arguments @('env', 'get-value', 'AZURE_ENV_NAME') -CaptureOutput
+        }
         if ([string]::IsNullOrWhiteSpace($environmentName)) {
             throw 'No azd environment is currently selected.'
         }
 
         foreach ($entry in $phaseTwoValues.GetEnumerator()) {
-            Invoke-Azd -Azd $azd -Arguments @('env', 'set', $entry.Key, $entry.Value) | Out-Null
+            Invoke-Azd -Azd $azd -Arguments @(
+                'env', 'set', $entry.Key, $entry.Value, '--environment', $environmentName) | Out-Null
         }
 
         Write-Output "`nPersisted phase-2 azd environment values for '$environmentName':"
