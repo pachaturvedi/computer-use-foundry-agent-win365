@@ -7,7 +7,7 @@ Removes a sample-owned environment with missing-layer recovery.
 Runs ownership-driven W365/Entra cleanup once, deletes viewer, state, and foundry layers separately, continues only when an ARM deployment is already absent, and verifies that no tagged resource group remains.
 
 
-Key inputs: EnvironmentName plus optional environment/manifest paths, executable overrides, UseDeviceCode, Purge, and Force.
+Key inputs: EnvironmentName plus optional environment/manifest paths, executable overrides, UseDeviceCode, the default-enabled Purge option, and Force.
 
 .OUTPUTS
 Layer-by-layer teardown progress and a final residual-resource verification result.
@@ -25,7 +25,7 @@ param(
     [string]$AzdPath,
     [string]$AzureCliPath,
     [switch]$UseDeviceCode,
-    [switch]$Purge,
+    [switch]$Purge = $true,
     [switch]$Force
 )
 

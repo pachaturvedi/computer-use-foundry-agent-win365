@@ -84,7 +84,6 @@ exit 0
             -OwnershipManifestPath $ownershipManifestPath `
             -AzdPath $fakeAzdPath `
             -AzureCliPath $fakeAzPath `
-            -Purge `
             -Force *>&1
     )
     $outputText = ($output | Out-String)

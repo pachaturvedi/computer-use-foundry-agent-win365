@@ -158,8 +158,10 @@ try {
         $azdDownCommand.Parameters.Keys -contains 'ConfirmResourceChanges' -or
         $deploymentGuide -match 'Invoke-AzdDown\.ps1\s+`\r?\n\s+-Environment\s' -or
         $deploymentGuide -notmatch 'Invoke-AzdDown\.ps1\s+`\r?\n\s+-EnvironmentName\s' -or
-        $deploymentGuide -notmatch '(?ms)Invoke-AzdDown\.ps1\s+`.*?-Purge\s+`.*?-Force') {
-        throw 'Deployment teardown guidance does not use the exact EnvironmentName, Purge, and Force parameters.'
+        $deploymentGuide -notmatch '(?ms)Invoke-AzdDown\.ps1\s+`.*?-Force' -or
+        $deploymentGuide -notmatch 'enables `azd down --purge` by default' -or
+        $deploymentGuide -notmatch 'Use `-Purge:\$false`') {
+        throw 'Deployment teardown guidance does not document the exact EnvironmentName, Force, and default purge behavior.'
     }
     if ($foundryBicep -notmatch "resource environmentResourceGroup 'Microsoft.Resources/resourceGroups@" -or
         $stateBicep -notmatch "resource environmentResourceGroup 'Microsoft.Resources/resourceGroups@[^']+' existing" -or
@@ -178,7 +180,7 @@ try {
         $viewerAppBicep -notmatch "name: 'VIEWER_LIVE_ENABLED', value: viewerLiveEnabled \? 'true' : 'false'" -or
         $azureYaml -notmatch 'VIEWER_LIVE_ENABLED: \$\{VIEWER_LIVE_ENABLED:-false\}' -or
         $azureYaml -notmatch '(?ms)^\s{2}preup:\s+windows:.*Show-AzdUpContext\.ps1' -or
-        $azureYaml -notmatch '(?ms)^\s{2}predown:\s+windows:.*Remove-W365Resources\.ps1 -UseDeviceCode -ConfirmViewerOnlyCleanup' -or
+        $azureYaml -notmatch '(?ms)^\s{2}predown:\s+windows:.*Remove-W365Resources\.ps1 -UseDeviceCode -ConfirmViewerOnlyCleanup -Confirm:\$false' -or
         $azureYaml -notmatch '(?ms)^\s{2}postup:\s+windows:.*Complete-AzdUp\.ps1' -or
         $upContextScript -notmatch 'Resolved deployment defaults' -or
         $upContextScript -notmatch 'Model capacity' -or
