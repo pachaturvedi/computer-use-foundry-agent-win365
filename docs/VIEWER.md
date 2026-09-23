@@ -40,7 +40,10 @@ After Foundry bootstrap, `azd up` asks how to host the viewer:
 
 The existing-environment path lists candidates in the selected Azure
 subscription and persists the chosen full resource ID only in the selected azd
-environment. It never silently selects shared infrastructure. If creation of a
+environment. It never silently selects shared infrastructure. A reused
+environment can live in a different region than the rest of the deployment; the
+viewer Container App is then created in that environment's region, while the
+viewer managed identity stays in the deployment region. If creation of a
 new managed environment fails specifically because of ACA environment quota or
 capacity, the hook offers the same existing-environment selection and retries
 only viewer provisioning. The retry changes only the ACA selection; the
