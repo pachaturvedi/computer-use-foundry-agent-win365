@@ -36,7 +36,9 @@ if (!settings.Enabled)
 }
 
 builder.Services.AddSingleton(settings);
-builder.Services.AddSingleton<TokenCredential>(new DefaultAzureCredential());
+var viewerManagedIdentityClientId = settings.Required("AZURE_CLIENT_ID");
+builder.Services.AddSingleton<TokenCredential>(new ManagedIdentityCredential(
+    ManagedIdentityId.FromUserAssignedClientId(viewerManagedIdentityClientId)));
 builder.Services.AddSingleton(new HttpClient(new SocketsHttpHandler
 {
     AllowAutoRedirect = false,
@@ -45,12 +47,21 @@ builder.Services.AddSingleton(new HttpClient(new SocketsHttpHandler
 {
     Timeout = TimeSpan.FromMinutes(3)
 });
+if (settings.BlueprintCredentialMode == "key_vault_certificate")
+{
+    builder.Services.AddSingleton<IBlueprintCertificateAssertionProvider>(services =>
+        new KeyVaultBlueprintCertificateAssertionProvider(
+            settings,
+            services.GetRequiredService<TokenCredential>(),
+            services.GetRequiredService<HttpClient>()));
+}
 builder.Services.AddSingleton<IBlueprintTokenProvider>(services =>
     new BlueprintTokenProvider(
         services.GetRequiredService<HttpClient>(),
         settings,
         viewerMode: true,
-        services.GetRequiredService<ILogger<BlueprintTokenProvider>>()));
+        services.GetRequiredService<ILogger<BlueprintTokenProvider>>(),
+        certificateAssertionProvider: services.GetService<IBlueprintCertificateAssertionProvider>()));
 builder.Services.AddSingleton<IAgentUserTokenProvider, AgentUserTokenProvider>();
 builder.Services.AddSingleton<ISessionStore>(services =>
     new BlobSessionStore(

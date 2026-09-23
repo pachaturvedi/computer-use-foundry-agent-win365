@@ -35,7 +35,7 @@
     "screenShareAppUrl": ""
   },
   "w365": {
-    "blueprintCredentialMode": "client_secret",
+    "blueprintCredentialMode": "key_vault_certificate",
     "poolBillingType": "payAsYouGo",
     "poolImageType": "gallery",
     "poolOsLocale": "en-US",

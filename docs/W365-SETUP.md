@@ -62,11 +62,13 @@ azd env set W365_POOL_BILLING_PLAN_ID "<billing-plan-guid>" `
 The interactive hook then:
 
 - obtains explicit W365/Entra resource approval;
-- completes delegated Graph sign-in;
-- securely collects the blueprint credential when the selected mode requires
-  one;
+- completes delegated Graph device-code sign-in;
+- creates or reuses the default non-exportable Key Vault certificate and
+  registers only its public bytes, with no blueprint secret prompt;
 - creates or reuses the correctly parented agent user and approved pool;
-- records ownership and non-secret IDs; and
+- records ownership and non-secret IDs;
+- approves viewer OIDC activation when screen-share prerequisites are present;
+  and
 - redeploys the same Foundry agent name.
 
 It never creates a replacement Foundry blueprint or agent identity.
@@ -120,7 +122,12 @@ Run this only after
 [deployment phase two](DEPLOYMENT.md#phase-2-bind-and-enable) has provisioned
 state, configured the operator, and prepared the selected credential.
 
-#### Default `client_secret` mode
+Fresh/unset environments use `key_vault_certificate`; `azd up` creates or
+reuses the certificate, registers only its public bytes on the discovered
+blueprint, and verifies registration before W365 mutation. Existing explicit
+modes are preserved.
+
+#### Legacy `client_secret` opt-in
 
 ```powershell
 $environment = "<azd-environment-name>"
@@ -167,7 +174,12 @@ pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
 
 #### `key_vault_certificate` mode
 
-This agent-only mode uses a self-signed, non-exportable Key Vault certificate:
+This mode uses a self-signed, non-exportable certificate whose private key
+never leaves Key Vault. Create the certificate, then register only its public
+bytes on the blueprint. Prefer `azd up`, which also grants and revokes the
+temporary Key Vault Certificates Officer role the operator needs across these
+steps. Running the staged sequence manually requires you to hold that role
+through the final `Invoke-W365SetupFlow.ps1` readiness check.
 
 ```powershell
 azd env set W365_BLUEPRINT_CREDENTIAL_MODE key_vault_certificate `
@@ -184,6 +196,8 @@ pwsh -NoProfile -File .\scripts\Register-W365BlueprintCertificate.ps1 `
     -ConfirmResourceChanges `
     -UseDeviceCode
 
+# Required if state was last provisioned in another credential mode: it grants
+# the agent the certificate-scoped Key Vault roles before the redeploy below.
 azd provision state --environment $environment --no-prompt
 
 pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
@@ -195,19 +209,47 @@ pwsh -NoProfile -File .\scripts\Invoke-W365SetupFlow.ps1 `
     -UseDeviceCode
 ```
 
-Reprovisioning state is required when switching from another mode so the agent
-receives certificate/key-scoped RBAC. Registration adds only the public
-certificate and preserves existing blueprint credentials. Re-running without
-`-Rotate` reuses the certificate; after rotation, register the new public
-certificate before deployment.
+`Register-W365BlueprintCertificate.ps1` needs a delegated Graph sign-in with
+`AgentIdentityBlueprint.AddRemoveCreds.All` and touches only the blueprint's
+`keyCredentials`. It preserves existing credentials and is idempotent by
+certificate thumbprint. Re-running `Initialize-W365BlueprintCertificate.ps1`
+without `-Rotate` reuses the existing certificate; `-Rotate` issues a new one,
+after which you must re-run the registration step. Reuse fails closed unless
+the existing policy is non-exportable RSA 2048 with digital-signature usage.
 
-The wrapper validates the exact certificate registration before any W365
-mutation. Certificate mode is implemented and offline-validated but still
-requires live tenant acceptance.
+Before mutating W365 resources, `Invoke-W365SetupFlow.ps1` re-verifies through
+a read-only Graph call that the exact certificate is registered on the
+blueprint. Key Vault presence alone does not satisfy this check. Certificate
+mode is implemented and offline-validated but still requires live tenant
+acceptance.
 
 `PoolIdOrUrl` accepts a raw pool GUID or an Intune URL containing
 `poolId/<guid>`. `-BillingConfirmed` acknowledges an already approved billing
 plan; it does not activate billing.
+
+During `azd up`, a temporary Key Vault Certificates Officer role is held across
+certificate creation, Graph registration, readiness verification, and the
+agent deployment preflight, because those steps read the certificate through
+the Key Vault data plane as the same operator. RBAC-propagation failures are
+retried with bounded backoff; terminal errors stop immediately. The role is
+revoked once, whether or not the remaining steps succeed, and a failure in
+those steps stays the reported error. If revocation also fails, both errors are
+reported. A revocation-only failure marks the deployment incomplete.
+
+Rerun `azd up` after correcting the reported cause; certificate creation and
+registration are idempotent. If the output reports residual temporary RBAC,
+remove only the reported role assignment before retrying. Do not delete the
+certificate or unrelated role assignments.
+
+If setup fails after the certificate is registered but before `W365_ENABLED`
+becomes `true`, do not run `azd provision state` on its own: that pass would
+revoke the certificate-scoped agent roles just granted. Deployment detects this
+window and fails closed. Complete setup so `W365_ENABLED=true` is persisted,
+then reprovision state and redeploy.
+
+For repeatable creates without `-PoolId`, store reusable pool settings in the
+`w365` section of `config\deployment.local.json`. `Setup-W365.ps1` reads it
+when the corresponding argument is omitted.
 
 Use `-UseDeviceCode` in terminals where WAM cannot obtain a parent window. The
 scripts display the Microsoft device-login URL and retry a timed-out prompt
@@ -338,9 +380,11 @@ live compatibility.
 
 ## Optional viewer federation
 
-This section applies only to
+This section applies only when
 `W365_BLUEPRINT_CREDENTIAL_MODE=managed_identity_federation`. The default
-client-secret viewer path does not require a viewer FIC.
+certificate mode does not require a viewer FIC: the viewer UAMI signs with the
+same non-exportable Key Vault certificate under object-scoped RBAC. Credential
+modes are explicit and never fall back to each other.
 
 After viewer bootstrap produces `viewerIdentityPrincipalId`, explicitly
 authorize that exact UAMI object/principal ID:
@@ -494,20 +538,49 @@ untracked Entra objects or cancel W365 billing.
 
 ### `key_vault_certificate` mode cleanup
 
-Certificate registration and an operator role granted by
-`Initialize-W365BlueprintCertificate.ps1` are outside the W365 ownership
-manifest. When retiring certificate mode:
+`scripts/Register-W365BlueprintCertificate.ps1` and
+`scripts/Initialize-W365BlueprintCertificate.ps1` mutate the tenant (a
+blueprint `keyCredential`; any self-granted operator certificate role is
+revoked in a `finally` block) outside
+the ownership manifest that `Remove-W365Resources.ps1` tracks. These are not
+removed automatically by `azd down` or the cleanup script above. When retiring
+an environment that used `key_vault_certificate` mode, an administrator with
+`AgentIdentityBlueprint.AddRemoveCreds.All` must also:
 
-1. Remove only the blueprint `keyCredential` entries that match the retired
-   certificate versions. Match by recorded `keyId` or
-   `customKeyIdentifier`—the base64 SHA-1 certificate hash—not by display name.
-2. Preserve every unrelated blueprint credential. Rotation can leave multiple
-   credentials with the same `w365-blueprint-certificate` display name.
-3. If setup granted the operator **Key Vault Certificates Officer**, remove
-   that exact assignment after certificate administration is complete. Preserve
-   a role that predated this sample.
-4. Delete the Key Vault through the normal environment teardown; that removes
-   the certificate object and backing key.
+1. Remove the registered certificate `keyCredential`(s) from the blueprint.
+   List the blueprint's current `keyCredentials` (`GET
+   /applications/{applicationObjectId}/microsoft.graph.agentIdentityBlueprint?$select=keyCredentials`)
+   — `{applicationObjectId}` is the Entra **application object ID** of the
+   blueprint (for example `blueprint.id` as resolved by
+   `scripts/Register-W365BlueprintCertificate.ps1`, via `GET
+   /applications/microsoft.graph.agentIdentityBlueprint?$filter=appId eq
+   '<BlueprintId>'`), not the blueprint's client/app ID you passed as
+   `-BlueprintId` when registering.
+   `displayName` alone is not a safe identifier: every credential this sample
+   registers uses the same `w365-blueprint-certificate` display name, and
+   `-Rotate` intentionally adds a new one alongside the prior entry rather than
+   replacing it, so more than one entry can share that name. Instead, identify
+   entries this sample added by their `customKeyIdentifier` (base64 of the
+   certificate's SHA-1 hash — compare against
+   `[Convert]::ToBase64String($cert.GetCertHash())` for each
+   `w365-blueprint-certificate` certificate version you intend to retire, for
+   example via `az keyvault certificate list-versions --vault-name <vault>
+   --name w365-blueprint-certificate`) or `keyId` if you recorded it when
+   registering. `PATCH` the blueprint with only the confirmed entry (or
+   entries) removed from the `keyCredentials` array (a full read-modify-write,
+   matching how `Register-W365BlueprintCertificate.ps1` added it). Do not
+   remove `keyCredentials` belonging to any other integration, and do not
+   remove an entry you cannot uniquely match to a retired certificate.
+2. Verify no temporary "Key Vault Certificates Officer" assignment remains.
+   Fresh orchestration holds its assignment through exact readiness
+   verification and revokes it in an outer `finally`; standalone initialization
+   also revokes an assignment it owns. If cleanup reported a failure or an
+   older release left one behind, remove it with `az role
+   assignment delete --assignee-object-id <operator-object-id> --role "Key
+   Vault Certificates Officer" --scope <vault-resource-id>`. Skip this step if the
+   operator already held the role before setup for another reason.
+3. Deleting the Key Vault (via `azd down`) removes the certificate object and
+   its backing key; no separate Key Vault cleanup is required for those.
 
 Blueprint credential removal requires
 `AgentIdentityBlueprint.AddRemoveCreds.All` and a full read-modify-write of the

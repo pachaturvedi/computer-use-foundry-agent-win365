@@ -168,7 +168,19 @@ no environment-tagged resource group remains.
 The runtime selects the credential mode; the model and request cannot. The
 platform-injected blueprint client ID must match `W365_BLUEPRINT_ID`.
 
-All modes obtain blueprint T1 and then share the T1 → T2 → agent-user T3 flow.
+The process selects `AgentUserTokenProvider`, not the model.
+`W365_BLUEPRINT_CREDENTIAL_MODE` explicitly selects blueprint T1 acquisition;
+there is no request-driven selection or automatic fallback. Client-secret mode
+is an explicit legacy option for bounded validation, managed-identity federation remains
+selectable but is blocked in the tested Foundry host by Entra `AADSTS700231`,
+and Key Vault certificate mode is the fresh-deployment default. The agent and
+viewer each use their own managed identity to read the public certificate and
+sign remotely with certificate/key-scoped Key Vault RBAC; the private key never
+leaves Key Vault. A viewer FIC is required only for the explicitly selected
+managed-identity-federation mode. Every implemented path
+uses `fmi_path=W365_AGENT_ID` to obtain blueprint T1, then the shared T1 -> T2 ->
+user-FIC T3 flow for ATG/ARI. The hosted FIC subject must be the discovered
+agent object ID; the viewer FIC subject must be the viewer UAMI object ID.
 Only T3 is sent to Agent 365/W365. No W365 path falls back to Azure CLI,
 developer credentials, or an interactive user.
 
@@ -176,6 +188,81 @@ Hosted-runtime and viewer FICs are explicit blueprint trusts and can affect
 sibling agents. Their subjects must be the discovered agent object ID and the
 viewer UAMI object ID respectively. See [Authentication](AUTHENTICATION.md) for
 credential delivery, scopes, and trust boundaries.
+
+For fresh certificate-mode deployment, phase two first provisions only the
+credential vault, Blob state, and container-scoped state access. Certificate
+and key role assignments are disabled at that point because the certificate
+objects do not yet exist. After certificate creation and exact-blueprint public
+registration pass the existing certificate preflight, orchestration transiently
+sets `W365_CERTIFICATE_PROVISIONING_ACTIVE=true`, reprovisions state to add the
+hosted-agent object-scoped roles, and only then provisions the viewer and its
+object-scoped roles. The gate is process-local and rejected if persisted.
+
+### Runtime token and desktop flow
+
+```mermaid
+sequenceDiagram
+   autonumber
+   actor User as Human caller
+   participant Ingress as Foundry Responses ingress
+   participant Host as Hosted agent application
+   participant MI as Managed identity endpoint
+   participant Entra as Microsoft Entra token endpoint
+   participant MCP as Agent 365 W365 MCP
+   participant Pool as W365 agent pool
+   participant PC as Cloud PC session
+
+   User->>Ingress: Submit Responses request
+   Ingress->>Host: Forward request plus opaque x-agent-user-id
+   Host->>Host: Hash and compare caller partition
+   Host->>MI: Request exchange assertion as W365_AGENT_ID
+   MI-->>Host: Runtime managed-identity assertion
+   Host->>Entra: Blueprint client ID + assertion + fmi_path=agent ID
+   Entra-->>Host: T1 blueprint assertion
+   Host->>Entra: Agent client ID + T1, client_credentials
+   Entra-->>Host: T2 user federated identity credential
+   Host->>Entra: user_fic OBO + T1 + T2 + agent-user ID
+   Entra-->>Host: T3 scoped ATG token
+   Host->>MCP: Initialize, list tools, StartSession with T3
+   MCP->>Pool: Allocate for assigned agent user
+   Pool-->>PC: Start Cloud PC session
+   PC-->>MCP: Session ID, status, and screen-share link
+   MCP-->>Host: Bounded MCP observations
+   Host-->>Ingress: Tool result for model loop
+   Ingress-->>User: Response and optional opaque viewer links
+```
+
+Only T3 leaves the identity layer for W365. T1 and T2 remain in process memory.
+[`BlueprintTokenProvider.cs`](../src/Win365Shared/Identity/BlueprintTokenProvider.cs)
+implements the managed-identity/FIC step;
+[`AgentUserTokenProvider.cs`](../src/Win365Shared/Identity/AgentUserTokenProvider.cs)
+implements T2/T3, scope selection, and caching; and
+[`McpConnection.cs`](../src/Win365Agent/Mcp/McpConnection.cs) sends T3 to the
+W365 MCP endpoint.
+
+Blueprint inherited grants and optional viewer federation may affect sibling
+agents. The FIC grants blueprint impersonation, not ARI-only access. Shared
+blueprints need explicit administrator approval; the viewer can stay disabled.
+
+That same shared-boundary concern drives teardown. Cleanup removes only manifest
+entries recorded as `created`. Reused permission grants are restored to their
+previous scope, reused inheritance entries are left in place, and environments
+bound to an existing Foundry project are blocked unless an explicit override is
+provided. The goal is minimal-touch rollback on Entra and W365 while still
+allowing a dedicated sample environment to be fully torn down in reverse order.
+
+## Integration pain points
+
+| Pain point | Why it exists | Where it is handled |
+| --- | --- | --- |
+| Foundry does not supply a ready W365 agent-user token | The hosting SDK covers Responses/model execution, while W365 requires the Entra agent-user OAuth chain. | Custom exchanges in [`BlueprintTokenProvider.cs`](../src/Win365Shared/Identity/BlueprintTokenProvider.cs) and [`AgentUserTokenProvider.cs`](../src/Win365Shared/Identity/AgentUserTokenProvider.cs). |
+| Phase-1 identity is needed before phase-2 configuration | The blueprint and agent identity do not exist until Foundry deploys an agent version. | Two-phase gate in [`Program.cs`](../src/Win365Agent/Program.cs), deployment declaration in [`azure.yaml`](../azure.yaml), and exact-version discovery in [`Get-FoundryIdentity.ps1`](../scripts/Get-FoundryIdentity.ps1). |
+| App IDs, object IDs, users, callers, and sessions are easy to confuse | Entra and Foundry expose several GUIDs with different authority and API roles. Substitution can bind the wrong principal or pool user. | Parent/type checks in [`Setup-W365.ps1`](../scripts/Setup-W365.ps1), startup checks in [`Settings.cs`](../src/Win365Shared/Configuration/Settings.cs), and the terminology table above. |
+| Hosted identity cannot automatically impersonate the blueprint | Current Responses hosting exposed the agent instance identity but live validation could not obtain a blueprint assertion directly. | Optional, explicit hosted-runtime FIC in [`Setup-W365.ps1`](../scripts/Setup-W365.ps1); current evidence in [`VALIDATION-REPORT.md`](VALIDATION-REPORT.md). This is broad blueprint trust and needs administrator approval. |
+| The final OAuth protocol is preview-sensitive | `client_credentials`, `fmi_path`, and `user_fic` must use exact subjects, scopes, and token roles; the hosting SDK does not abstract this complete path here. | Narrow form construction and allowlisted audiences in [`AgentUserTokenProvider.cs`](../src/Win365Shared/Identity/AgentUserTokenProvider.cs); regression coverage in [`AgentUserTokenProviderTests.cs`](../tests/Win365Shared.Tests/Identity/AgentUserTokenProviderTests.cs). |
+| Foundry caller identity is not the W365 agent user | `x-agent-user-id` is an opaque ingress partition; `W365_AGENT_USER_ID` is an Entra agent-user object assigned to a pool. | Caller gate in [`DesktopRequestMiddleware.cs`](../src/Win365Agent/Hosting/DesktopRequestMiddleware.cs); agent-user creation and assignment in [`Setup-W365.ps1`](../scripts/Setup-W365.ps1). |
+| W365 setup crosses Entra and Intune control planes | Consent/inheritance and agent-user parentage live in Entra/Graph, while capacity and assignment live in the W365 pool. Pool creation, image, geography, and billing remain manual. | Reconciliation in [`Setup-W365.ps1`](../scripts/Setup-W365.ps1) and administrator prerequisites in [`W365-SETUP.md`](W365-SETUP.md). |
+| A remote desktop action cannot be safely replayed after an unknown result | HTTP failure does not prove that StartSession, a click, or EndSession did not occur. | In-flight durable state in [`DesktopRuntime.cs`](../src/Win365Agent/Desktop/DesktopRuntime.cs), exclusive Blob lease in [`BlobSessionStore.cs`](../src/Win365Shared/State/BlobSessionStore.cs), and fail-closed recovery below. |
 
 Setup records which Entra and W365 objects were created or reused plus the
 blueprint's prior state. Cleanup removes only recorded sample-owned entries,

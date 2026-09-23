@@ -7,13 +7,23 @@ param location string
   'false'
 ])
 param deployState string = 'false'
+@allowed([
+  'true'
+  'false'
+])
+param w365Enabled string = 'false'
 @maxLength(24)
 param resourcePrefix string = ''
 param resourceGroupName string = ''
 @minLength(36)
 @maxLength(36)
 param agentPrincipalId string = '00000000-0000-0000-0000-000000000000'
-param blueprintCredentialMode string = 'client_secret'
+param blueprintCredentialMode string = 'key_vault_certificate'
+@allowed([
+  'true'
+  'false'
+])
+param certificateProvisioningActive string = 'false'
 
 var stateEnabled = toLower(deployState) == 'true'
 var resolvedResourcePrefix = !empty(resourcePrefix) ? resourcePrefix : environmentName
@@ -38,6 +48,8 @@ module keyVault './keyvault.bicep' = {
     tags: union(tags, { component: 'credentials' })
     agentPrincipalId: agentPrincipalId
     blueprintCredentialMode: blueprintCredentialMode
+    certificateProvisioningActive: toLower(certificateProvisioningActive) == 'true'
+    certificateRbacReady: toLower(w365Enabled) == 'true'
   }
 }
 

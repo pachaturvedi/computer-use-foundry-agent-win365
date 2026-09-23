@@ -22,9 +22,14 @@ Assert-ViewerManagedEnvironmentResourceId -ResourceId `
     '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/shared-rg/providers/Microsoft.App/managedEnvironments/shared-cae'
 Assert-ViewerCredentialMode -CredentialMode 'client_secret'
 Assert-ViewerCredentialMode -CredentialMode 'managed_identity_federation'
+Assert-ViewerCredentialMode -CredentialMode 'key_vault_certificate'
 Assert-ViewerIdentityModeConfiguration `
     -CredentialMode 'client_secret' `
     -ViewerPrincipalId '' `
+    -OwnershipManifestPath (Join-Path ([IO.Path]::GetTempPath()) 'absent-viewer-manifest.json')
+Assert-ViewerIdentityModeConfiguration `
+    -CredentialMode 'key_vault_certificate' `
+    -ViewerPrincipalId '22222222-2222-2222-2222-222222222222' `
     -OwnershipManifestPath (Join-Path ([IO.Path]::GetTempPath()) 'absent-viewer-manifest.json')
 if ((Get-ViewerOidcRedirectUri -ViewerPublicUrl 'https://viewer.example.com') -ne
     'https://viewer.example.com/signin-oidc') {

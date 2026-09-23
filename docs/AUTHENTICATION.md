@@ -21,6 +21,13 @@ and optional viewer. Setup commands belong in
 App/client IDs and object/principal IDs are different types even when a service
 currently returns the same GUID for both. Never substitute one for the other.
 
+When enabled, all W365 IDs must be valid. `W365_AGENT_OBJECT_ID` is required in
+both agent and viewer configuration, separately from the app/client ID in
+`W365_AGENT_ID`. The credential mode is selected only by
+`W365_BLUEPRINT_CREDENTIAL_MODE`, never by a model or request. An existing azd
+environment keeps the mode it already has; the fresh-deployment default does
+not migrate it.
+
 `W365_ENABLED=false` is the bootstrap default. Bootstrap starts without W365,
 state, model, or viewer credentials; health is available and Responses requests
 return a phase-two-required 503. Live W365 requires:
@@ -38,9 +45,9 @@ local W365 is refused.
 
 | `W365_BLUEPRINT_CREDENTIAL_MODE` | Current boundary |
 | --- | --- |
-| `client_secret` | Checked-in default and validated for the bounded W365 lifecycle. The agent and viewer read the approved secret from Key Vault through separate managed identities. |
-| `managed_identity_federation` | Selectable only with explicit FIC approval. The tested Responses host is blocked by Entra `AADSTS700231` when chaining the federated assertion. |
-| `key_vault_certificate` | Agent-only. Uses a self-signed, non-exportable Key Vault certificate and remote signing. Implemented and offline-validated; live tenant acceptance is still required. |
+| `client_secret` | Explicit legacy opt-in, validated end to end. The shared state-layer Key Vault stores the blueprint secret independently of whether the ACA viewer is enabled. |
+| `managed_identity_federation` | Optional hardening path. The tested Foundry-hosted identity could not chain its federated token into the blueprint exchange (`AADSTS700231`). |
+| `key_vault_certificate` | Default for fresh/unset deployments. A self-signed, non-exportable Key Vault certificate is shared by the agent and optional viewer; each runtime signs remotely with its own managed identity. The private key never leaves Key Vault. Implemented and offline-validated; live tenant acceptance is still required. |
 
 Modes are explicit and mutually exclusive. A failure never falls back to
 another mode, Azure CLI, developer credentials, or an interactive user.
@@ -62,24 +69,28 @@ plain hosted-agent environment variable.
 
 ## Blueprint certificate delivery
 
-In `key_vault_certificate` mode, the agent builds a JWT client assertion and
-asks Key Vault to sign it. The runtime principal receives:
+In `key_vault_certificate` mode, the hosted agent receives only
+`W365_KEY_VAULT_NAME`. It reads the public bytes of
+`w365-blueprint-certificate`, builds a JWT client assertion, and asks Key Vault
+to sign it. The private key is non-exportable and is never returned to the
+agent process. Certificate metadata is cached only in process memory; rotation
+requires a redeploy.
 
-- **Key Vault Certificate User** on the named certificate; and
-- **Key Vault Crypto User** on its backing key.
+The agent and the viewer each use their own identity and receive **Key Vault
+Certificate User** and **Key Vault Crypto User** scoped to that certificate and
+its backing key, not to the vault. Neither identity can read unrelated secrets
+in the shared vault, including the viewer OIDC secret.
 
-These assignments are object-scoped, not vault-wide. The private key is
-non-exportable and is never returned to the agent process.
-
-Provisioning has two explicit steps:
+Provisioning has two explicit steps, which `azd up` runs for you:
 
 1. `Initialize-W365BlueprintCertificate.ps1` creates or rotates
    `w365-blueprint-certificate` in Key Vault.
 2. `Register-W365BlueprintCertificate.ps1` registers only its public bytes as a
-   blueprint `keyCredential`.
+   blueprint `keyCredential` and preserves existing credentials.
 
-Setup verifies that the exact certificate is registered before W365 mutation.
-Key Vault presence alone is insufficient. The viewer rejects this mode.
+Setup verifies that the exact certificate is registered on the discovered
+blueprint before any W365 mutation. Key Vault presence alone is insufficient.
+Neither script reads, exports, or transmits private key material.
 
 ## Three-stage agent-user tokens
 

@@ -50,7 +50,12 @@ param blueprintId string = ''
 param agentId string = ''
 param agentObjectId string = ''
 param agentUserId string = ''
-param blueprintCredentialMode string = 'client_secret'
+param blueprintCredentialMode string = 'key_vault_certificate'
+@allowed([
+  'true'
+  'false'
+])
+param certificateProvisioningActive string = 'false'
 param screenShareSdkUrl string = ''
 param screenShareFrameOrigins string = ''
 param screenShareAppUrl string = ''
@@ -119,6 +124,8 @@ module viewer '../viewer.bicep' = if (viewerEnabled) {
     agentObjectId: agentObjectId
     agentUserId: agentUserId
     blueprintCredentialMode: blueprintCredentialMode
+    certificateProvisioningActive: toLower(certificateProvisioningActive) == 'true'
+    certificateRbacReady: toLower(w365Enabled) == 'true'
     screenShareSdkUrl: screenShareSdkUrl
     screenShareFrameOrigins: screenShareFrameOrigins
     screenShareAppUrl: screenShareAppUrl
