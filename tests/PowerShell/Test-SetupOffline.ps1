@@ -8,7 +8,9 @@ Set-StrictMode -Version Latest
 
 $repoRoot = Split-Path (Split-Path $PSScriptRoot)
 $setupScriptPath = Join-Path $repoRoot 'scripts\Setup-W365.ps1'
+$azdCommandScriptPath = Join-Path $repoRoot 'scripts\AzdCommand.ps1'
 $setupScriptText = Get-Content -LiteralPath $setupScriptPath -Raw
+$azdCommandScriptText = Get-Content -LiteralPath $azdCommandScriptPath -Raw
 $tokens = $null
 $parseErrors = $null
 $setupAst = [System.Management.Automation.Language.Parser]::ParseInput(
@@ -19,13 +21,21 @@ if ($parseErrors.Count -gt 0) {
     throw "Setup-W365.ps1 failed to parse: $($parseErrors[0].Message)"
 }
 
-$getAzdCommandAst = $setupAst.FindAll({
+$azdCommandAst = [System.Management.Automation.Language.Parser]::ParseInput(
+    $azdCommandScriptText,
+    [ref]$tokens,
+    [ref]$parseErrors)
+if ($parseErrors.Count -gt 0) {
+    throw "AzdCommand.ps1 failed to parse: $($parseErrors[0].Message)"
+}
+
+$getAzdCommandAst = $azdCommandAst.FindAll({
     param($node)
     $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
         $node.Name -eq 'Get-AzdCommand'
 }, $true) | Select-Object -First 1
 if (!$getAzdCommandAst) {
-    throw "Unable to locate function 'Get-AzdCommand' in Setup-W365.ps1 for isolated testing."
+    throw "Unable to locate function 'Get-AzdCommand' in AzdCommand.ps1 for isolated testing."
 }
 
 $commandDiscoveryTempRoot = Join-Path ([IO.Path]::GetTempPath()) ("w365-setup-azd-discovery-{0}" -f ([guid]::NewGuid()))

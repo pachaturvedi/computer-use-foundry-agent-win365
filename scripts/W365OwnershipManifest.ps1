@@ -58,6 +58,32 @@ function Copy-W365ManifestValue {
     return $Value
 }
 
+function Get-OptionalObjectValue {
+    param(
+        $Object,
+        [Parameter(Mandatory)][string]$Name
+    )
+
+    if ($null -eq $Object) {
+        return $null
+    }
+
+    if ($Object -is [System.Collections.IDictionary]) {
+        if ($Object.Contains($Name)) {
+            return $Object[$Name]
+        }
+
+        return $null
+    }
+
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -ne $property) {
+        return $property.Value
+    }
+
+    return $null
+}
+
 function Get-W365OwnershipManifestPath {
     param(
         [Parameter(Mandatory)][string]$RepositoryRoot,

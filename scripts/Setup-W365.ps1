@@ -54,6 +54,7 @@ $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'W365Provisioning.ps1')
 . (Join-Path $PSScriptRoot 'GraphSignIn.ps1')
+. (Join-Path $PSScriptRoot 'AzdCommand.ps1')
 Initialize-SampleScriptLogging -ScriptName $MyInvocation.MyCommand.Name -Parameters $PSBoundParameters
 
 $repositoryRoot = Split-Path $PSScriptRoot
@@ -284,97 +285,22 @@ $missing = @($scopes | Where-Object { $_ -notin $context.Scopes })
 if ($missing.Count) { throw "Missing Graph scopes: $($missing -join ', ')." }
 
 function Graph([string]$Method, [string]$Path, $Body = $null) {
-    $uri = if ($Path.StartsWith('https://')) { $Path } else { "https://graph.microsoft.com/$Path" }
-    if (!([uri]$uri).Host.Equals('graph.microsoft.com')) { throw 'Graph pagination returned an unexpected origin.' }
-    $requestParameters = @{ Method = $Method; Uri = $uri; OutputType = 'Hashtable'; Headers = @{ 'OData-Version' = '4.0' } }
-    if ($null -ne $Body) {
-        $requestParameters.Body = ConvertTo-Json $Body -Depth 30 -Compress
-        $requestParameters.ContentType = 'application/json'
-    }
-    Invoke-MgGraphRequest @requestParameters
+    Invoke-W365GraphRequest `
+        -Method $Method `
+        -Path $Path `
+        -Body $Body `
+        -OriginErrorMessage 'Graph pagination returned an unexpected origin.'
 }
 function List([string]$Path) {
-    $seen = [Collections.Generic.HashSet[string]]::new()
-    while ($Path) {
-        if (!$seen.Add($Path)) { throw 'Repeated Graph pagination cursor.' }
-        $page = Graph GET $Path
-        foreach ($item in $page.value) { $item }
-        $Path = $page['@odata.nextLink']
-    }
+    Get-W365GraphCollection `
+        -Path $Path `
+        -OriginErrorMessage 'Graph pagination returned an unexpected origin.'
 }
 function SingleOrNone($Items, [string]$Label) {
-    $all = @($Items)
-    if ($all.Count -gt 1) { throw "Ambiguous $Label; multiple matches. Resolve manually; no arbitrary object will be reused." }
-    if ($all.Count -eq 1) { return $all[0] }
-    return $null
-}
-function Get-AzdCommand {
-    $azdPaths = [System.Collections.Generic.List[string]]::new()
-    foreach ($command in @(Get-Command azd -All -CommandType Application -ErrorAction SilentlyContinue)) {
-        if ($null -eq $command) {
-            continue
-        }
-
-        $source = $command.Source
-        if ([string]::IsNullOrWhiteSpace($source) -or !(Test-Path -LiteralPath $source -PathType Leaf)) {
-            continue
-        }
-
-        if (!$azdPaths.Contains($source)) {
-            $azdPaths.Add($source)
-        }
-    }
-    $knownAzdPaths = @()
-    if (![string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
-        $knownAzdPaths += Join-Path $env:LOCALAPPDATA 'Programs\Azure Dev CLI\azd.exe'
-    }
-    if (![string]::IsNullOrWhiteSpace($env:ProgramFiles)) {
-        $knownAzdPaths += Join-Path $env:ProgramFiles 'Azure Dev CLI\azd.exe'
-    }
-
-    foreach ($path in $knownAzdPaths) {
-        if (![string]::IsNullOrWhiteSpace($path) -and
-            (Test-Path -LiteralPath $path -PathType Leaf) -and
-            !$azdPaths.Contains($path)) {
-            $azdPaths.Add($path)
-        }
-    }
-
-    $azdCandidates = $azdPaths |
-        ForEach-Object {
-            $candidatePath = $_
-            $versionOutput = $null
-            try {
-                $versionOutput = & $candidatePath version 2>$null
-                if ($LASTEXITCODE -eq 0 -and ($versionOutput | Out-String) -match 'azd version\s+(\d+\.\d+\.\d+)') {
-                    [pscustomobject]@{ Path = $candidatePath; Version = [version]$Matches[1] }
-                }
-            }
-            catch {
-                return
-            }
-        } |
-        Sort-Object Version -Descending
-
-    return $azdCandidates | Where-Object Version -ge ([version]'1.32.0') | Select-Object -First 1
-}
-function Invoke-Azd {
-    param(
-        [Parameter(Mandatory)]$Azd,
-        [Parameter(Mandatory)][string[]]$Arguments,
-        [switch]$CaptureOutput
-    )
-
-    $output = & $Azd.Path @Arguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "azd $($Arguments -join ' ') failed with exit code $LASTEXITCODE."
-    }
-
-    if ($CaptureOutput) {
-        return ($output | Out-String).Trim()
-    }
-
-    return $output
+    Select-W365GraphSingleResult `
+        -Items $Items `
+        -Label $Label `
+        -AmbiguousMessage 'Resolve manually; no arbitrary object will be reused.'
 }
 function Get-RequiredPoolValue {
     param(
@@ -592,31 +518,6 @@ function Complete-OwnershipOperation {
 
     $script:ownershipManifest.operations.Remove($Key)
     Save-OwnershipManifest
-}
-function Get-OptionalObjectValue {
-    param(
-        $Object,
-        [Parameter(Mandatory)][string]$Name
-    )
-
-    if ($null -eq $Object) {
-        return $null
-    }
-
-    if ($Object -is [System.Collections.IDictionary]) {
-        if ($Object.Contains($Name)) {
-            return $Object[$Name]
-        }
-
-        return $null
-    }
-
-    $property = $Object.PSObject.Properties[$Name]
-    if ($null -ne $property) {
-        return $property.Value
-    }
-
-    return $null
 }
 function New-PoolCreateRequest {
     $regions = @(
