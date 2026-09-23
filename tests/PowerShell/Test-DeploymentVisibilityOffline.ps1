@@ -158,10 +158,8 @@ try {
         $azdDownCommand.Parameters.Keys -contains 'ConfirmResourceChanges' -or
         $deploymentGuide -match 'Invoke-AzdDown\.ps1\s+`\r?\n\s+-Environment\s' -or
         $deploymentGuide -notmatch 'Invoke-AzdDown\.ps1\s+`\r?\n\s+-EnvironmentName\s' -or
-        $deploymentGuide -notmatch '(?ms)Invoke-AzdDown\.ps1\s+`.*?-Force' -or
-        $deploymentGuide -notmatch 'enables `azd down --purge` by default' -or
-        $deploymentGuide -notmatch 'Use `-Purge:\$false`') {
-        throw 'Deployment teardown guidance does not document the exact EnvironmentName, Force, and default purge behavior.'
+        $deploymentGuide -notmatch '(?ms)Invoke-AzdDown\.ps1\s+`.*?-Purge\s+`.*?-Force') {
+        throw 'Deployment teardown guidance does not use the exact EnvironmentName, Purge, and Force parameters.'
     }
     if ($foundryBicep -notmatch "resource environmentResourceGroup 'Microsoft.Resources/resourceGroups@" -or
         $stateBicep -notmatch "resource environmentResourceGroup 'Microsoft.Resources/resourceGroups@[^']+' existing" -or

@@ -759,6 +759,7 @@ End known active sessions, review the ownership manifests, then run:
 ```powershell
 pwsh -NoProfile -File .\scripts\Invoke-AzdDown.ps1 `
     -EnvironmentName "<azd-environment-name>" `
+    -Purge `
     -Force
 ```
 
@@ -769,17 +770,6 @@ The wrapper:
 3. treats only an exact missing ARM deployment as already absent;
 4. propagates every other azd failure; and
 5. fails if a resource group tagged for the environment remains.
-
-The wrapper enables `azd down --purge` by default, so supported soft-deleted
-resources such as the environment Key Vault are purged and their names can be
-reused without waiting for the retention period. Use `-Purge:$false` only when
-the deleted resources must remain recoverable. For a direct CLI teardown, use
-`azd down --purge`; an azd hook cannot add an option to its parent command.
-
-When `azd down` is run directly, its interactive confirmation is the single
-resource-deletion prompt. The predown hook waits until delegated Microsoft
-Graph authentication completes and validates the tenant and scopes before any
-cleanup mutation, but it does not display a second PowerShell confirmation.
 
 Cleanup is ownership-driven, not name-driven. If W365 state exists without its
 ownership manifest, teardown stops before mutation. Reused grants and
