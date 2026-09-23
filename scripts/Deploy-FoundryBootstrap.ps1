@@ -103,7 +103,7 @@ function Invoke-OptionalW365Setup {
         'HostedRuntimeIdentityObjectId', 'AuthorizeHostedRuntimeFederation', 'ViewerManagedIdentityObjectId',
         'AuthorizeViewerFederation', 'BillingConfirmed', 'UseDeviceCode', 'GraphClientTimeoutSeconds'
     )
-    $setupRequested = ($w365ArgumentNames | Where-Object { $scriptBoundParameters.ContainsKey($_) }).Count -gt 0
+    $setupRequested = @($w365ArgumentNames | Where-Object { $scriptBoundParameters.ContainsKey($_) }).Count -gt 0
     if (!$setupRequested) {
         return
     }
