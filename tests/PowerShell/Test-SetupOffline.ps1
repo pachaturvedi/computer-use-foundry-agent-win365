@@ -5,6 +5,74 @@
 param()
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+
+$repoRoot = Split-Path (Split-Path $PSScriptRoot)
+$setupScriptPath = Join-Path $repoRoot 'scripts\Setup-W365.ps1'
+$setupScriptText = Get-Content -LiteralPath $setupScriptPath -Raw
+$tokens = $null
+$parseErrors = $null
+$setupAst = [System.Management.Automation.Language.Parser]::ParseInput(
+    $setupScriptText,
+    [ref]$tokens,
+    [ref]$parseErrors)
+if ($parseErrors.Count -gt 0) {
+    throw "Setup-W365.ps1 failed to parse: $($parseErrors[0].Message)"
+}
+
+$getAzdCommandAst = $setupAst.FindAll({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'Get-AzdCommand'
+}, $true) | Select-Object -First 1
+if (!$getAzdCommandAst) {
+    throw "Unable to locate function 'Get-AzdCommand' in Setup-W365.ps1 for isolated testing."
+}
+
+$commandDiscoveryTempRoot = Join-Path ([IO.Path]::GetTempPath()) ("w365-setup-azd-discovery-{0}" -f ([guid]::NewGuid()))
+$malformedAzdRoot = Join-Path $commandDiscoveryTempRoot 'malformed'
+$validAzdRoot = Join-Path $commandDiscoveryTempRoot 'valid'
+$fakeAzdFileName = if ($IsWindows) { 'azd.cmd' } else { 'azd' }
+$malformedAzdPath = Join-Path $malformedAzdRoot $fakeAzdFileName
+$fakeAzdPath = Join-Path $validAzdRoot $fakeAzdFileName
+$previousPath = $env:PATH
+$commandDiscoveryModule = $null
+try {
+    New-Item -ItemType Directory -Path $malformedAzdRoot -Force | Out-Null
+    New-Item -ItemType Directory -Path $validAzdRoot -Force | Out-Null
+    if ($IsWindows) {
+        Set-Content -LiteralPath $malformedAzdPath -Value '@echo azd version 999999999999.1.1 (commit malformed-test)'
+        Set-Content -LiteralPath $fakeAzdPath -Value '@echo azd version 9.99.9 (commit offline-test)'
+    }
+    else {
+        Set-Content -LiteralPath $malformedAzdPath -Value "#!/bin/sh`necho 'azd version 999999999999.1.1 (commit malformed-test)'"
+        Set-Content -LiteralPath $fakeAzdPath -Value "#!/bin/sh`necho 'azd version 9.99.9 (commit offline-test)'"
+        $executableMode = [IO.UnixFileMode]::UserRead -bor
+            [IO.UnixFileMode]::UserWrite -bor
+            [IO.UnixFileMode]::UserExecute
+        [IO.File]::SetUnixFileMode($malformedAzdPath, $executableMode)
+        [IO.File]::SetUnixFileMode($fakeAzdPath, $executableMode)
+    }
+    $env:PATH = @($malformedAzdRoot, $validAzdRoot, $previousPath) -join [IO.Path]::PathSeparator
+
+    $commandDiscoveryModule = New-Module -Name W365SetupAzdCommandDiscovery -ScriptBlock ([scriptblock]::Create(@"
+$($getAzdCommandAst.Extent.Text)
+function azd { 'profile shadow' }
+"@))
+    $azd = & $commandDiscoveryModule { Get-AzdCommand }
+    if ($null -eq $azd -or $azd.Path -ne $fakeAzdPath -or $azd.Version -ne ([version]'9.99.9')) {
+        throw 'Setup azd discovery did not ignore invalid candidates or select the highest supported executable.'
+    }
+}
+finally {
+    $env:PATH = $previousPath
+    if ($commandDiscoveryModule) {
+        Remove-Module $commandDiscoveryModule
+    }
+    if (Test-Path -LiteralPath $commandDiscoveryTempRoot) {
+        Remove-Item -LiteralPath $commandDiscoveryTempRoot -Recurse -Force
+    }
+}
+
 $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
     $script:blueprintId = '11111111-1111-1111-1111-111111111111'
     $script:agentId = '22222222-2222-2222-2222-222222222222'
