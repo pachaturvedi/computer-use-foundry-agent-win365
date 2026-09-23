@@ -269,6 +269,15 @@ try {
         $manifest.graph.blueprint.appId -ne '11111111-1111-1111-1111-111111111111') {
         throw 'Ownership manifest contents were incomplete.'
     }
+    foreach ($resourceAppId in @(
+        '90ecec28-f5a6-42b3-9bde-dae1ca98f8b5',
+        'da81128c-e5b5-4f9e-8d89-50d906f107c5',
+        'ea9ffc3e-8a23-4a7d-836d-234d7c7565c1'
+    )) {
+        if ([string]$manifest.graph.inheritablePermissions[$resourceAppId].deletionKey -ne $resourceAppId) {
+            throw "Ownership manifest did not record resource application ID '$resourceAppId' as the inheritable-permission deletion key."
+        }
+    }
     & $module {
         if ($script:ledger.User.displayName -ne 'W365 agent user - agent') {
             throw 'New agent-user creation did not use the readable UPN-based fallback display name.'

@@ -45,7 +45,7 @@ function Write-AzdDownRecoveryTip {
         return
     }
 
-    Write-Output "If 'azd down' now reports 'deployment not found' for a layer (a known azd layered-infra limitation), rerun teardown with '.\scripts\Invoke-AzdDown.ps1 -EnvironmentName <azd-environment-name> -Purge -Force' instead. It treats an already-missing deployment as complete for that layer and, if the environment's resource group still remains afterward, deletes it directly so no resources are left behind."
+    Write-Output "If 'azd down' now reports 'deployment not found' for a layer (a known azd layered-infra limitation), rerun teardown with '.\scripts\Invoke-AzdDown.ps1 -EnvironmentName <azd-environment-name> -UseDeviceCode -Purge -Force' instead. It treats an already-missing deployment as complete for that layer and, if the environment's resource group still remains afterward, deletes it directly so no resources are left behind."
 }
 function Test-OwnershipCleanupCompleted {
     param($Manifest)
@@ -132,7 +132,7 @@ function Connect-GraphForCleanup {
         TenantId = $TenantId
         Scopes = $requiredScopes
         ClientTimeout = $GraphClientTimeoutSeconds
-        ContextScope = 'CurrentUser'
+        ContextScope = 'Process'
         NoWelcome = $true
     }
     if ($UseDeviceCode) {
@@ -401,6 +401,19 @@ function Assert-ReusedManifestDependenciesPresent {
         [Parameter(Mandatory)][object[]]$CurrentInheritances
     )
 
+    $seenInheritanceResourceAppIds = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($inheritance in @($InheritablePermissions)) {
+        $disposition = [string](Get-OptionalObjectValue -Object $inheritance -Name 'disposition')
+        if ($disposition -notin @('created', 'reused')) {
+            throw "Inheritance entry for $([string](Get-OptionalObjectValue -Object $inheritance -Name 'resourceAppId')) has unsupported disposition '$disposition'."
+        }
+
+        $resourceAppId = Get-InheritablePermissionDeletionKey -ManifestEntry $inheritance
+        if (!$seenInheritanceResourceAppIds.Add($resourceAppId)) {
+            throw "The ownership manifest contains duplicate inheritance entries for resource application '$resourceAppId'."
+        }
+    }
+
     foreach ($grant in @($PermissionGrants | Where-Object { [string]$_.disposition -eq 'reused' })) {
         $currentGrant = SingleOrNone @($CurrentGrants | Where-Object { $_.resourceId -eq $grant.resourceId }) "permission grant $($grant.resourceAppId)"
         if (!$currentGrant) {
@@ -413,15 +426,89 @@ function Assert-ReusedManifestDependenciesPresent {
     }
 
     foreach ($inheritance in @($InheritablePermissions | Where-Object { [string]$_.disposition -eq 'reused' })) {
-        $currentInheritance = SingleOrNone @($CurrentInheritances | Where-Object { $_.resourceAppId -eq $inheritance.resourceAppId }) "inheritance $($inheritance.resourceAppId)"
+        $resourceAppId = Get-InheritablePermissionDeletionKey -ManifestEntry $inheritance
+        $currentInheritance = SingleOrNone @($CurrentInheritances | Where-Object {
+                (Get-NormalizedGuidValue `
+                    -Value ([string](Get-OptionalObjectValue -Object $_ -Name 'resourceAppId')) `
+                    -Label 'Current inheritance resource application ID') -eq $resourceAppId
+            }) "inheritance $resourceAppId"
         if (!$currentInheritance) {
-            throw "A reused inheritance entry for $($inheritance.resourceAppId) is missing, so cleanup cannot safely preserve shared blueprint state."
+            throw "A reused inheritance entry for $resourceAppId is missing, so cleanup cannot safely preserve shared blueprint state."
         }
-        $recordedInheritanceId = [string](Get-OptionalObjectValue -Object $inheritance -Name 'entryId')
-        if (![string]::IsNullOrWhiteSpace($recordedInheritanceId) -and [string]$currentInheritance.id -ne $recordedInheritanceId) {
-            throw "A reused inheritance entry for $($inheritance.resourceAppId) does not match the ownership manifest ID."
+        Get-InheritablePermissionDeletionKey -ManifestEntry $inheritance -CurrentEntry $currentInheritance | Out-Null
+    }
+
+    foreach ($inheritance in @($InheritablePermissions | Where-Object { [string]$_.disposition -eq 'created' })) {
+        $resourceAppId = Get-InheritablePermissionDeletionKey -ManifestEntry $inheritance
+        $currentInheritance = SingleOrNone @($CurrentInheritances | Where-Object {
+                (Get-NormalizedGuidValue `
+                    -Value ([string](Get-OptionalObjectValue -Object $_ -Name 'resourceAppId')) `
+                    -Label 'Current inheritance resource application ID') -eq $resourceAppId
+            }) "inheritance $resourceAppId"
+        if ($currentInheritance) {
+            Get-InheritablePermissionDeletionKey -ManifestEntry $inheritance -CurrentEntry $currentInheritance | Out-Null
         }
     }
+}
+function Test-ObjectPropertyPresent {
+    param(
+        $Object,
+        [Parameter(Mandatory)][string]$Name
+    )
+
+    if ($null -eq $Object) {
+        return $false
+    }
+    if ($Object -is [System.Collections.IDictionary]) {
+        return $Object.Contains($Name)
+    }
+
+    return $null -ne $Object.PSObject.Properties[$Name]
+}
+function Get-NormalizedGuidValue {
+    param(
+        [string]$Value,
+        [Parameter(Mandatory)][string]$Label
+    )
+
+    $parsed = [guid]::Empty
+    if (![guid]::TryParse($Value, [ref]$parsed) -or $parsed -eq [guid]::Empty) {
+        throw "$Label '$Value' is invalid."
+    }
+
+    return $parsed.ToString()
+}
+function Get-InheritablePermissionDeletionKey {
+    param(
+        [Parameter(Mandatory)]$ManifestEntry,
+        $CurrentEntry
+    )
+
+    $resourceAppId = Get-NormalizedGuidValue `
+        -Value ([string](Get-OptionalObjectValue -Object $ManifestEntry -Name 'resourceAppId')) `
+        -Label 'Inheritance entry resource application ID'
+
+    if ($null -ne $CurrentEntry) {
+        $currentResourceAppId = Get-NormalizedGuidValue `
+            -Value ([string](Get-OptionalObjectValue -Object $CurrentEntry -Name 'resourceAppId')) `
+            -Label 'Current inheritance resource application ID'
+        if (
+            $currentResourceAppId -ne $resourceAppId) {
+            throw "Inheritance entry for $resourceAppId does not match the ownership manifest resource application ID."
+        }
+    }
+
+    if (Test-ObjectPropertyPresent -Object $ManifestEntry -Name 'deletionKey') {
+        $recordedDeletionKey = Get-NormalizedGuidValue `
+            -Value ([string](Get-OptionalObjectValue -Object $ManifestEntry -Name 'deletionKey')) `
+            -Label "Inheritance entry deletion key for $resourceAppId"
+        if (
+            $recordedDeletionKey -ne $resourceAppId) {
+            throw "Inheritance entry for $resourceAppId does not match the ownership manifest deletion key."
+        }
+    }
+
+    return $resourceAppId
 }
 function Resolve-EnvironmentContext {
     $repositoryRoot = Split-Path $PSScriptRoot
@@ -714,23 +801,21 @@ foreach ($grant in $permissionGrants) {
 }
 
 foreach ($inheritance in $inheritablePermissions | Where-Object { [string]$_.disposition -eq 'created' }) {
-    $currentInheritance = SingleOrNone @($currentInheritances | Where-Object { $_.resourceAppId -eq $inheritance.resourceAppId }) "inheritance $($inheritance.resourceAppId)"
+    $resourceAppId = Get-InheritablePermissionDeletionKey -ManifestEntry $inheritance
+    $currentInheritance = SingleOrNone @($currentInheritances | Where-Object {
+            (Get-NormalizedGuidValue `
+                -Value ([string](Get-OptionalObjectValue -Object $_ -Name 'resourceAppId')) `
+                -Label 'Current inheritance resource application ID') -eq $resourceAppId
+        }) "inheritance $resourceAppId"
     if ($currentInheritance) {
-        $inheritanceId = [string](Get-OptionalObjectValue -Object $currentInheritance -Name 'id')
-        if ([string]::IsNullOrWhiteSpace($inheritanceId)) {
-            throw "Inheritance entry for $($inheritance.resourceAppId) exists but does not expose an ID for deletion."
-        }
-        $recordedInheritanceId = [string](Get-OptionalObjectValue -Object $inheritance -Name 'entryId')
-        if (![string]::IsNullOrWhiteSpace($recordedInheritanceId) -and $inheritanceId -ne $recordedInheritanceId) {
-            throw "Inheritance entry for $($inheritance.resourceAppId) does not match the ownership manifest ID."
-        }
+        $deletionKey = Get-InheritablePermissionDeletionKey -ManifestEntry $inheritance -CurrentEntry $currentInheritance
 
-        Write-Output "Deleting inheritable-permission entry '$inheritanceId' for resource application '$($inheritance.resourceAppId)'."
-        Graph DELETE "$inheritPath/$inheritanceId" | Out-Null
-        Write-Output "Removed inheritance entry for $($inheritance.resourceAppId)."
+        Write-Output "Deleting inheritable-permission entry for resource application '$deletionKey'."
+        Graph DELETE "$inheritPath/$deletionKey" | Out-Null
+        Write-Output "Removed inheritance entry for $resourceAppId."
     }
     else {
-        Write-Output "Inheritance entry for $($inheritance.resourceAppId) was already absent."
+        Write-Output "Inheritance entry for $resourceAppId was already absent."
     }
 }
 

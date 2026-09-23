@@ -100,7 +100,7 @@ try {
             -Confirm:$false
     )
     $expectedNoStateOutput = "Pre-teardown cleanup completed for 'no-state-test': no configured W365 state remains. Azure resource deletion can continue."
-    $expectedNoStateTip = "If 'azd down' now reports 'deployment not found' for a layer (a known azd layered-infra limitation), rerun teardown with '.\scripts\Invoke-AzdDown.ps1 -EnvironmentName <azd-environment-name> -Purge -Force' instead. It treats an already-missing deployment as complete for that layer and, if the environment's resource group still remains afterward, deletes it directly so no resources are left behind."
+    $expectedNoStateTip = "If 'azd down' now reports 'deployment not found' for a layer (a known azd layered-infra limitation), rerun teardown with '.\scripts\Invoke-AzdDown.ps1 -EnvironmentName <azd-environment-name> -UseDeviceCode -Purge -Force' instead. It treats an already-missing deployment as complete for that layer and, if the environment's resource group still remains afterward, deletes it directly so no resources are left behind."
     if ($noStateOutput.Count -ne 2 -or $noStateOutput[0] -ne $expectedNoStateOutput -or $noStateOutput[1] -ne $expectedNoStateTip) {
         throw "No-state cleanup emitted unexpected output: [$($noStateOutput -join ' | ')]"
     }
@@ -136,6 +136,7 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
     $script:scopes = @()
     $script:baseState = $null
     $script:state = $null
+    $script:lastContextScope = $null
 
     function New-BaseState {
         return @{
@@ -173,10 +174,10 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
                 @{ id = 'grant-unrelated'; resourceId = 'sp-unrelated'; consentType = 'AllPrincipals'; scope = 'Keep.Scope' }
             )
             Inheritances = @(
-                @{ id = 'inherit-created-tools'; resourceAppId = 'da81128c-e5b5-4f9e-8d89-50d906f107c5'; inheritableScopes = @{ kind = 'allAllowed' }; inheritableRoles = @{ kind = 'none' } },
-                @{ id = 'inherit-created-meta'; resourceAppId = 'ea9ffc3e-8a23-4a7d-836d-234d7c7565c1'; inheritableScopes = @{ kind = 'allAllowed' }; inheritableRoles = @{ kind = 'none' } },
-                @{ id = 'inherit-reused-computer'; resourceAppId = '90ecec28-f5a6-42b3-9bde-dae1ca98f8b5'; inheritableScopes = @{ kind = 'allAllowed' }; inheritableRoles = @{ kind = 'none' } },
-                @{ id = 'inherit-unrelated'; resourceAppId = 'unrelated-resource'; inheritableScopes = @{ kind = 'allAllowed' }; inheritableRoles = @{ kind = 'none' } }
+                @{ resourceAppId = 'da81128c-e5b5-4f9e-8d89-50d906f107c5'; inheritableScopes = @{ kind = 'allAllowed' }; inheritableRoles = @{ kind = 'none' } },
+                @{ resourceAppId = 'ea9ffc3e-8a23-4a7d-836d-234d7c7565c1'; inheritableScopes = @{ kind = 'allAllowed' }; inheritableRoles = @{ kind = 'none' } },
+                @{ resourceAppId = '90ecec28-f5a6-42b3-9bde-dae1ca98f8b5'; inheritableScopes = @{ kind = 'allAllowed' }; inheritableRoles = @{ kind = 'none' } },
+                @{ resourceAppId = '00000003-0000-0000-c000-000000000000'; inheritableScopes = @{ kind = 'allAllowed' }; inheritableRoles = @{ kind = 'none' } }
             )
             Operations = @()
             FailReusedGrantLookup = $false
@@ -197,17 +198,35 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
         param($TenantId, $Scopes, $ContextScope, [switch]$NoWelcome, [switch]$UseDeviceCode, $InformationAction)
         $script:tenant = $TenantId.ToString()
         $script:scopes = $Scopes
-        $script:lastUsedDeviceCode = [bool]$UseDeviceCode
+        $script:lastContextScope = $ContextScope
+        $script:lastUsedDeviceCode = [bool]$UseDeviceCode -and $ContextScope -eq 'Process'
     }
 
     function Get-MockGraphSignInUsedDeviceCode {
         return $script:lastUsedDeviceCode
     }
 
+    function Get-MockGraphSignInContextScope {
+        return $script:lastContextScope
+    }
+
+    function Set-MockGraphContext {
+        param(
+            [Parameter(Mandatory)][string]$TenantId,
+            [Parameter(Mandatory)][string[]]$Scopes
+        )
+
+        $script:tenant = $TenantId
+        $script:scopes = $Scopes
+        $script:lastUsedDeviceCode = $null
+        $script:lastContextScope = $null
+    }
+
     function Reset-MockGraphSignIn {
         $script:tenant = $null
         $script:scopes = $null
         $script:lastUsedDeviceCode = $null
+        $script:lastContextScope = $null
     }
 
     function Get-MgContext {
@@ -239,7 +258,7 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
                 'v1.0/applications/blueprint-object/microsoft.graph.agentIdentityBlueprint/federatedIdentityCredentials' { return @{ value = @($script:state.Fics) } }
                 'v1.0/applications/microsoft.graph.agentIdentityBlueprint/11111111-1111-1111-1111-111111111111/inheritablePermissions' {
                     if ($script:state.FailReusedInheritanceLookup) {
-                        return @{ value = @($script:state.Inheritances | Where-Object { $_.id -ne 'inherit-reused-computer' }) }
+                        return @{ value = @($script:state.Inheritances | Where-Object { $_.resourceAppId -ne '90ecec28-f5a6-42b3-9bde-dae1ca98f8b5' }) }
                     }
                     return @{ value = @($script:state.Inheritances) }
                 }
@@ -271,8 +290,8 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
                     return
                 }
                 'v1.0/applications/microsoft.graph.agentIdentityBlueprint/*/inheritablePermissions/*' {
-                    $id = $path.Split('/')[-1]
-                    $script:state.Inheritances = @($script:state.Inheritances | Where-Object { $_.id -ne $id })
+                    $resourceAppId = $path.Split('/')[-1]
+                    $script:state.Inheritances = @($script:state.Inheritances | Where-Object { $_.resourceAppId -ne $resourceAppId })
                     return
                 }
                 'beta/deviceManagement/virtualEndpoint/cloudPcPools/*' {
@@ -303,7 +322,7 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
     }
 
     Reset-MockGraphState
-    Export-ModuleMember -Function Connect-MgGraph, Get-MgContext, Invoke-MgGraphRequest, Reset-MockGraphState, Get-MockGraphState, Get-MockGraphSignInUsedDeviceCode, Reset-MockGraphSignIn
+    Export-ModuleMember -Function Connect-MgGraph, Get-MgContext, Invoke-MgGraphRequest, Reset-MockGraphState, Get-MockGraphState, Get-MockGraphSignInUsedDeviceCode, Get-MockGraphSignInContextScope, Set-MockGraphContext, Reset-MockGraphSignIn
 }
 
 $module | Import-Module -Global
@@ -387,9 +406,9 @@ function Write-TestManifest {
                 reusedComputer = [ordered]@{ resourceAppId = '90ecec28-f5a6-42b3-9bde-dae1ca98f8b5'; resourceId = 'sp-computer'; grantId = 'grant-reused-computer'; disposition = 'reused'; previousScope = 'Computer.Control Computer.See'; scope = 'Computer.Control Computer.Do Computer.Get Computer.See' }
             }
             inheritablePermissions = [ordered]@{
-                createdTools = [ordered]@{ resourceAppId = 'da81128c-e5b5-4f9e-8d89-50d906f107c5'; entryId = 'inherit-created-tools'; disposition = 'created' }
-                createdMeta = [ordered]@{ resourceAppId = 'ea9ffc3e-8a23-4a7d-836d-234d7c7565c1'; entryId = 'inherit-created-meta'; disposition = 'created' }
-                reusedComputer = [ordered]@{ resourceAppId = '90ecec28-f5a6-42b3-9bde-dae1ca98f8b5'; entryId = 'inherit-reused-computer'; disposition = 'reused' }
+                createdTools = [ordered]@{ resourceAppId = 'da81128c-e5b5-4f9e-8d89-50d906f107c5'; disposition = 'created' }
+                createdMeta = [ordered]@{ resourceAppId = 'ea9ffc3e-8a23-4a7d-836d-234d7c7565c1'; disposition = 'created' }
+                reusedComputer = [ordered]@{ resourceAppId = '90ecec28-f5a6-42b3-9bde-dae1ca98f8b5'; disposition = 'reused' }
             }
             federatedIdentityCredentials = if ($EmptyFederatedIdentityCredentials) { [ordered]@{} } else {
                 [ordered]@{
@@ -424,7 +443,40 @@ try {
         throw 'Cleanup with -UseDeviceCode never signed in to Microsoft Graph.'
     }
     if (!$usedDeviceCode) {
-        throw 'Cleanup with -UseDeviceCode attempted interactive sign-in instead of device code.'
+        throw 'Cleanup with -UseDeviceCode reused a persisted CurrentUser token instead of waiting for device-code authentication.'
+    }
+    if ((Get-MockGraphSignInContextScope) -ne 'Process') {
+        throw 'Cleanup with -UseDeviceCode did not isolate authentication to the current teardown process.'
+    }
+
+    Reset-MockGraphState
+    Reset-MockGraphSignIn
+    Write-TestEnvironment
+    Write-TestManifest
+    Set-MockGraphContext `
+        -TenantId '01eed126-9f96-4d2d-a127-dc2e786a898b' `
+        -Scopes @(
+            'Application.Read.All',
+            'AgentIdentityBlueprint.ReadWrite.All',
+            'AgentIdentityBlueprint.UpdateAuthProperties.All',
+            'AgentIdUser.ReadWrite.All',
+            'DelegatedPermissionGrant.ReadWrite.All',
+            'CloudPC.ReadWrite.All',
+            'AgentIdentityBlueprint.AddRemoveCreds.All'
+        )
+    $env:W365_CLEANUP_CONFIRMED = 'true'
+    $reusedContextOutput = @(
+        & "$scriptsRoot\Remove-W365Resources.ps1" `
+            -EnvironmentName $envName `
+            -EnvironmentFilePath $envFilePath `
+            -OwnershipManifestPath $manifestPath `
+            -UseDeviceCode
+    )
+    $env:W365_CLEANUP_CONFIRMED = ''
+    if ($null -ne (Get-MockGraphSignInUsedDeviceCode) -or
+        $reusedContextOutput -notcontains 'Reusing the validated delegated Microsoft Graph context for teardown.' -or
+        $reusedContextOutput -match 'Microsoft Graph sign-in is required') {
+        throw 'Cleanup did not reuse the already-valid Graph context before printing device-code guidance.'
     }
 
     Reset-MockGraphState
@@ -487,11 +539,19 @@ try {
     if (@($state.Grants | Where-Object { $_.id -eq 'grant-unrelated' }).Count -ne 1) {
         throw 'Unrelated permission grant should have been preserved.'
     }
-    if (@($state.Inheritances | Where-Object { $_.id -eq 'inherit-created-tools' -or $_.id -eq 'inherit-created-meta' }).Count -ne 0) {
+    if (@($state.Inheritances | Where-Object {
+            $_.resourceAppId -eq 'da81128c-e5b5-4f9e-8d89-50d906f107c5' -or
+            $_.resourceAppId -eq 'ea9ffc3e-8a23-4a7d-836d-234d7c7565c1'
+        }).Count -ne 0) {
         throw 'Created inheritance entries were not deleted.'
     }
-    if (@($state.Inheritances | Where-Object { $_.id -eq 'inherit-reused-computer' }).Count -ne 1 -or @($state.Inheritances | Where-Object { $_.id -eq 'inherit-unrelated' }).Count -ne 1) {
+    if (@($state.Inheritances | Where-Object { $_.resourceAppId -eq '90ecec28-f5a6-42b3-9bde-dae1ca98f8b5' }).Count -ne 1 -or
+        @($state.Inheritances | Where-Object { $_.resourceAppId -eq '00000003-0000-0000-c000-000000000000' }).Count -ne 1) {
         throw 'Cleanup did not preserve reused or unrelated inheritance entries.'
+    }
+    if ($state.Operations -notcontains 'DELETE v1.0/applications/microsoft.graph.agentIdentityBlueprint/11111111-1111-1111-1111-111111111111/inheritablePermissions/da81128c-e5b5-4f9e-8d89-50d906f107c5' -or
+        $state.Operations -notcontains 'DELETE v1.0/applications/microsoft.graph.agentIdentityBlueprint/11111111-1111-1111-1111-111111111111/inheritablePermissions/ea9ffc3e-8a23-4a7d-836d-234d7c7565c1') {
+        throw 'Cleanup did not delete inheritable permissions by resource application ID.'
     }
     $requiredEntries = @($state.Blueprint.requiredResourceAccess)
     $unrelatedEntry = @($requiredEntries | Where-Object { $_.resourceAppId -eq 'unrelated-resource' })
@@ -636,6 +696,129 @@ try {
     $state = Get-MockGraphState
     if ($state.Operations.Count -ne 0) {
         throw 'Reused-inheritance preflight should block cleanup before any deletions run.'
+    }
+
+    foreach ($invalidManifest in @(
+        @{
+            Label = 'invalid resource application ID'
+            Update = {
+                param($manifest)
+                $manifest.graph.inheritablePermissions.createdTools.resourceAppId = 'not-a-guid'
+            }
+        },
+        @{
+            Label = 'mismatched deletion key'
+            Update = {
+                param($manifest)
+                $manifest.graph.inheritablePermissions.createdTools.resourceAppId = '11111111-2222-3333-4444-555555555555'
+                $manifest.graph.inheritablePermissions.createdTools.deletionKey = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+            }
+        },
+        @{
+            Label = 'malformed deletion key'
+            Update = {
+                param($manifest)
+                $manifest.graph.inheritablePermissions.createdTools.deletionKey = 'not-a-guid'
+            }
+        },
+        @{
+            Label = 'empty deletion key'
+            Update = {
+                param($manifest)
+                $manifest.graph.inheritablePermissions.createdTools.deletionKey = ''
+            }
+        },
+        @{
+            Label = 'whitespace deletion key'
+            Update = {
+                param($manifest)
+                $manifest.graph.inheritablePermissions.createdTools.deletionKey = '   '
+            }
+        },
+        @{
+            Label = 'unsupported disposition'
+            Update = {
+                param($manifest)
+                $manifest.graph.inheritablePermissions.createdTools.disposition = 'unknown'
+            }
+        },
+        @{
+            Label = 'duplicate conflicting ownership'
+            Update = {
+                param($manifest)
+                $manifest.graph.inheritablePermissions.duplicateTools = [ordered]@{
+                    resourceAppId = 'da81128ce5b54f9e8d8950d906f107c5'
+                    disposition = 'reused'
+                }
+            }
+        }
+    )) {
+        Reset-MockGraphState
+        Write-TestEnvironment
+        Write-TestManifest
+        $invalidOwnership = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json -AsHashtable
+        & $invalidManifest.Update $invalidOwnership
+        Set-Content -LiteralPath $manifestPath -Value (ConvertTo-Json $invalidOwnership -Depth 60)
+        $blocked = $false
+        try {
+            & "$scriptsRoot\Remove-W365Resources.ps1" `
+                -EnvironmentName $envName `
+                -EnvironmentFilePath $envFilePath `
+                -OwnershipManifestPath $manifestPath `
+                -Confirm:$false | Out-Null
+        }
+        catch {
+            $blocked = $true
+        }
+        if (!$blocked) {
+            throw "Cleanup accepted inheritance ownership with $($invalidManifest.Label)."
+        }
+        $state = Get-MockGraphState
+        if ($state.Operations.Count -ne 0) {
+            throw "Inheritance ownership with $($invalidManifest.Label) was not rejected before mutation."
+        }
+    }
+
+    Reset-MockGraphState
+    Write-TestEnvironment
+    Write-TestManifest
+    $legacyManifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json -AsHashtable
+    $legacyManifest.graph.inheritablePermissions.createdTools.entryId = 'legacy-noncontractual-id'
+    Set-Content -LiteralPath $manifestPath -Value (ConvertTo-Json $legacyManifest -Depth 60)
+    & $module {
+        $toolsInheritance = @($script:state.Inheritances | Where-Object {
+                $_.resourceAppId -eq 'da81128c-e5b5-4f9e-8d89-50d906f107c5'
+            })[0]
+        $toolsInheritance.id = 'different-current-noncontractual-id'
+    }
+    & "$scriptsRoot\Remove-W365Resources.ps1" `
+        -EnvironmentName $envName `
+        -EnvironmentFilePath $envFilePath `
+        -OwnershipManifestPath $manifestPath `
+        -Confirm:$false | Out-Null
+    $state = Get-MockGraphState
+    if (@($state.Inheritances | Where-Object {
+            $_.resourceAppId -eq 'da81128c-e5b5-4f9e-8d89-50d906f107c5'
+        }).Count -ne 0) {
+        throw 'Legacy inheritance entryId incorrectly overrode the resource application deletion key.'
+    }
+
+    Reset-MockGraphState
+    Write-TestEnvironment
+    Write-TestManifest
+    $equivalentGuidManifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json -AsHashtable
+    $equivalentGuidManifest.graph.inheritablePermissions.createdTools.resourceAppId = 'da81128ce5b54f9e8d8950d906f107c5'
+    Set-Content -LiteralPath $manifestPath -Value (ConvertTo-Json $equivalentGuidManifest -Depth 60)
+    & "$scriptsRoot\Remove-W365Resources.ps1" `
+        -EnvironmentName $envName `
+        -EnvironmentFilePath $envFilePath `
+        -OwnershipManifestPath $manifestPath `
+        -Confirm:$false | Out-Null
+    $state = Get-MockGraphState
+    if (@($state.Inheritances | Where-Object {
+            $_.resourceAppId -eq 'da81128c-e5b5-4f9e-8d89-50d906f107c5'
+        }).Count -ne 0) {
+        throw 'Equivalent GUID formatting prevented cleanup of the owned inheritance entry.'
     }
 
     # Regression: an empty (but present) graph.federatedIdentityCredentials manifest map must not
