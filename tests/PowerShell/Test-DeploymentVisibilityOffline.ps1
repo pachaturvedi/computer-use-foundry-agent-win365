@@ -178,7 +178,7 @@ try {
         $viewerAppBicep -notmatch "name: 'VIEWER_LIVE_ENABLED', value: viewerLiveEnabled \? 'true' : 'false'" -or
         $azureYaml -notmatch 'VIEWER_LIVE_ENABLED: \$\{VIEWER_LIVE_ENABLED:-false\}' -or
         $azureYaml -notmatch '(?ms)^\s{2}preup:\s+windows:.*Show-AzdUpContext\.ps1' -or
-        $azureYaml -notmatch '(?ms)^\s{2}predown:\s+windows:.*Remove-W365Resources\.ps1 -UseDeviceCode -ConfirmViewerOnlyCleanup' -or
+        $azureYaml -notmatch '(?ms)^\s{2}predown:\s+windows:.*Remove-W365Resources\.ps1 -UseDeviceCode -ConfirmViewerOnlyCleanup -Confirm:\$false' -or
         $azureYaml -notmatch '(?ms)^\s{2}postup:\s+windows:.*Complete-AzdUp\.ps1' -or
         $upContextScript -notmatch 'Resolved deployment defaults' -or
         $upContextScript -notmatch 'Model capacity' -or

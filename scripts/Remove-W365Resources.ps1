@@ -202,6 +202,7 @@ function Connect-GraphForCleanup {
     $requiredScopes = @($Scopes | Select-Object -Unique)
     $graphContext = Get-MgContext
     if (Test-GraphContext -Context $graphContext -RequiredTenantId $TenantId -RequiredScopes $requiredScopes) {
+        Write-Output 'Reusing the validated delegated Microsoft Graph context for teardown.'
         return
     }
 
@@ -231,6 +232,8 @@ function Connect-GraphForCleanup {
     if (!(Test-GraphContext -Context $graphContext -RequiredTenantId $TenantId -RequiredScopes $requiredScopes)) {
         throw 'A delegated Graph connection in the requested tenant is required for cleanup.'
     }
+
+    Write-Output 'Microsoft Graph sign-in completed and the delegated teardown context was validated.'
 }
 function Assert-CleanupApproved {
     param(
