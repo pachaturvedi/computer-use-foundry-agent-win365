@@ -206,6 +206,47 @@ throw 'ACA managed-environment discovery ran even though a selection was already
         throw 'A recorded ACA managed-environment selection was not reused for the same azd environment.'
     }
 
+    # A regenerated environment file loses the recorded selection. The deployed viewer must
+    # supply it instead of re-prompting.
+    $deployedResourceId = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/deployed-rg/providers/Microsoft.App/managedEnvironments/deployed-aca'
+    $azProbePath = Join-Path $tempRoot 'az-calls.txt'
+    $env:TEST_AZ_DEPLOYED_ENVIRONMENT_ID = $deployedResourceId
+    $env:TEST_AZ_CALLS_PATH = $azProbePath
+    Remove-Item -LiteralPath $azProbePath -ErrorAction SilentlyContinue
+    function az {
+        $arguments = @($args)
+        $global:LASTEXITCODE = 0
+        Add-Content -LiteralPath $env:TEST_AZ_CALLS_PATH -Value ($arguments -join ' ')
+        if ($arguments[0] -eq 'resource' -and $arguments[1] -eq 'show') {
+            return $env:TEST_AZ_DEPLOYED_ENVIRONMENT_ID
+        }
+        return ''
+    }
+    Write-EnvironmentFile -AdditionalValues @(
+        'W365_POOL_ID="22222222-2222-2222-2222-222222222222"',
+        'RESOURCE_PREFIX="sample-dev"',
+        'AZURE_RESOURCE_GROUP="deployed-rg"',
+        'VIEWER_HOSTING_MODE="existing"',
+        'VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID=""'
+    )
+    & $scriptPath `
+        -Environment $environmentName `
+        -RepositoryRoot $tempRoot `
+        -ConfigPath (Join-Path $root 'config\deployment.defaults.json') `
+        -W365DiscoveryScriptPath $w365DiscoveryPath `
+        -ViewerDiscoveryScriptPath $failingViewerDiscoveryPath
+    $recoveredValues = Read-AzdEnvironmentFile -Path $environmentPath
+    if ($recoveredValues['VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID'] -ne $deployedResourceId) {
+        throw 'A lost ACA managed-environment selection was not recovered from the deployed viewer.'
+    }
+    if (!(Test-Path -LiteralPath $azProbePath) -or
+        (Get-Content -LiteralPath $azProbePath -Raw) -notmatch 'sample-dev-viewer') {
+        throw 'The deployed viewer was not queried to recover the managed-environment selection.'
+    }
+    Remove-Item -LiteralPath function:az
+    $env:TEST_AZ_DEPLOYED_ENVIRONMENT_ID = $null
+    $env:TEST_AZ_CALLS_PATH = $null
+
     Write-EnvironmentFile
     & $scriptPath `
         -Environment $environmentName `
