@@ -540,6 +540,7 @@ Each script states its own minimum before prompting for a device code:
 | Blueprint certificate registration (`Register-W365BlueprintCertificate.ps1`) | Owner of the agent identity blueprint |
 | W365 setup (`Setup-W365.ps1`) | Agent ID Administrator (or blueprint owner) plus Cloud PC Administrator; Privileged Role Administrator for delegated permission grants |
 | Viewer sign-in (`Configure-ViewerOidc.ps1`, optional) | Application Administrator or Cloud Application Administrator |
+| Cleanup (`Remove-W365Resources.ps1`, run by `azd down`) | The roles that created the objects being removed: Agent ID Administrator (or blueprint owner) plus Cloud PC Administrator, and Application Administrator when viewer artifacts are present |
 
 Global Administrator is not required for any step. Blueprint owners can manage
 their own blueprint and its agents without an Agent ID role; creating a

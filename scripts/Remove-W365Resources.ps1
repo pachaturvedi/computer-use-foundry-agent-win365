@@ -212,9 +212,20 @@ function Connect-GraphForCleanup {
         ContextScope = 'CurrentUser'
         NoWelcome = $true
     }
+    if ($UseDeviceCode) {
+        Write-W365DeviceCodeGuidance `
+            -Purpose 'to remove the Entra and Windows 365 objects this environment owns' `
+            -RequiredAccess 'the roles that created these objects (for example Agent ID Administrator and Cloud Device Administrator)' `
+            -DeviceCodeMaxAttempts $DeviceCodeMaxAttempts
+    }
+
+    # Device code must be the primary method when the caller asked for it, never a catch-based
+    # fallback. Interactive sign-in brokers through native MSAL/WAM, and a native access violation
+    # there terminates the process outright, so no catch can ever reach a fallback. Every other
+    # Graph sign-in in this repository passes -UseDeviceCode the same way.
     $graphContext = Connect-W365GraphContext `
         -ConnectParameters $connectParameters `
-        -FallbackToDeviceCode:$UseDeviceCode `
+        -UseDeviceCode:$UseDeviceCode `
         -DeviceCodeMaxAttempts $DeviceCodeMaxAttempts
 
     if (!(Test-GraphContext -Context $graphContext -RequiredTenantId $TenantId -RequiredScopes $requiredScopes)) {

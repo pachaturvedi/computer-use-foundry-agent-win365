@@ -186,6 +186,17 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
         param($TenantId, $Scopes, $ContextScope, [switch]$NoWelcome, [switch]$UseDeviceCode, $InformationAction)
         $script:tenant = $TenantId.ToString()
         $script:scopes = $Scopes
+        $script:lastUsedDeviceCode = [bool]$UseDeviceCode
+    }
+
+    function Get-MockGraphSignInUsedDeviceCode {
+        return $script:lastUsedDeviceCode
+    }
+
+    function Reset-MockGraphSignIn {
+        $script:tenant = $null
+        $script:scopes = $null
+        $script:lastUsedDeviceCode = $null
     }
 
     function Get-MgContext {
@@ -281,7 +292,7 @@ $module = New-Module -Name Microsoft.Graph.Authentication -ScriptBlock {
     }
 
     Reset-MockGraphState
-    Export-ModuleMember -Function Connect-MgGraph, Get-MgContext, Invoke-MgGraphRequest, Reset-MockGraphState, Get-MockGraphState
+    Export-ModuleMember -Function Connect-MgGraph, Get-MgContext, Invoke-MgGraphRequest, Reset-MockGraphState, Get-MockGraphState, Get-MockGraphSignInUsedDeviceCode, Reset-MockGraphSignIn
 }
 
 $module | Import-Module -Global
@@ -376,9 +387,48 @@ function Write-TestManifest {
 }
 
 try {
+    # Regression: -UseDeviceCode must reach Connect-MgGraph as the primary sign-in method. It was
+    # previously demoted to Connect-W365GraphContext's -FallbackToDeviceCode, so cleanup always
+    # attempted interactive sign-in first. Interactive sign-in brokers through native MSAL/WAM, and
+    # a native access violation there terminated pwsh with 0xC0000005 before any catch-based
+    # fallback could run, so azd down failed with exit code 3221225477.
+    Reset-MockGraphState
+    Reset-MockGraphSignIn
     Write-TestEnvironment
     Write-TestManifest
+    $env:W365_CLEANUP_CONFIRMED = 'true'
+    & "$scriptsRoot\Remove-W365Resources.ps1" `
+        -EnvironmentName $envName `
+        -EnvironmentFilePath $envFilePath `
+        -OwnershipManifestPath $manifestPath `
+        -UseDeviceCode | Out-Null
+    $env:W365_CLEANUP_CONFIRMED = ''
+    $usedDeviceCode = Get-MockGraphSignInUsedDeviceCode
+    if ($null -eq $usedDeviceCode) {
+        throw 'Cleanup with -UseDeviceCode never signed in to Microsoft Graph.'
+    }
+    if (!$usedDeviceCode) {
+        throw 'Cleanup with -UseDeviceCode attempted interactive sign-in instead of device code.'
+    }
 
+    Reset-MockGraphState
+    Reset-MockGraphSignIn
+    Write-TestEnvironment
+    Write-TestManifest
+    $env:W365_CLEANUP_CONFIRMED = 'true'
+    & "$scriptsRoot\Remove-W365Resources.ps1" `
+        -EnvironmentName $envName `
+        -EnvironmentFilePath $envFilePath `
+        -OwnershipManifestPath $manifestPath | Out-Null
+    $env:W365_CLEANUP_CONFIRMED = ''
+    if ((Get-MockGraphSignInUsedDeviceCode) -ne $false) {
+        throw 'Cleanup without -UseDeviceCode did not use interactive sign-in.'
+    }
+
+    Reset-MockGraphState
+    Reset-MockGraphSignIn
+    Write-TestEnvironment
+    Write-TestManifest
     $env:W365_CLEANUP_CONFIRMED = 'true'
     $cleanupOutput = @(
         & "$scriptsRoot\Remove-W365Resources.ps1" -EnvironmentName $envName -EnvironmentFilePath $envFilePath -OwnershipManifestPath $manifestPath
