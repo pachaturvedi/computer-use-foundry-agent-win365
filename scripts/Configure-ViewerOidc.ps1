@@ -22,7 +22,8 @@ param(
     [guid]$OperatorObjectId = [guid]::Empty,
     [ValidateRange(1, 365)][int]$CredentialLifetimeDays = 90,
     [ValidateRange(1, 90)][int]$RotateBeforeDays = 14,
-    [switch]$UseDeviceCode
+    [switch]$UseDeviceCode,
+    [ValidateRange(1, 5)][int]$DeviceCodeMaxAttempts = 3
 )
 
 $ErrorActionPreference = 'Stop'
@@ -30,6 +31,7 @@ Set-StrictMode -Version Latest
 
 . (Join-Path $PSScriptRoot 'ViewerConfiguration.ps1')
 . (Join-Path $PSScriptRoot 'W365OwnershipManifest.ps1')
+. (Join-Path $PSScriptRoot 'GraphSignIn.ps1')
 Initialize-SampleScriptLogging -ScriptName $MyInvocation.MyCommand.Name -Parameters $PSBoundParameters
 
 foreach ($command in @('az', 'azd')) {
@@ -95,11 +97,15 @@ $connectArguments = @{
     NoWelcome = $true
 }
 if ($UseDeviceCode) {
-    $connectArguments.UseDeviceCode = $true
-    $connectArguments.InformationAction = 'Continue'
+    Write-W365DeviceCodeGuidance `
+        -Purpose 'to configure viewer sign-in' `
+        -DeviceCodeMaxAttempts $DeviceCodeMaxAttempts
 }
-Connect-MgGraph @connectArguments
-$context = Get-MgContext
+
+$context = Connect-W365GraphContext `
+    -ConnectParameters $connectArguments `
+    -UseDeviceCode:$UseDeviceCode `
+    -DeviceCodeMaxAttempts $DeviceCodeMaxAttempts
 if ($null -eq $context -or
     $context.TenantId -ne $tenantId.ToString() -or
     $context.AuthType -ne 'Delegated' -or
