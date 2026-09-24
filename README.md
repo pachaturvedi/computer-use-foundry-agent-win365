@@ -1,12 +1,16 @@
 # Computer use with Microsoft Foundry and Windows 365
 
-A Windows-first C#/.NET 10 sample where a Microsoft Foundry hosted agent uses
-Windows 365 tools through Agent 365 MCP to complete a bounded Cloud PC task.
+A Windows-first C#/.NET 10 sample that provisions the infrastructure to test a
+Microsoft Foundry hosted agent driving Windows 365 computer-use tools, through
+Agent 365 MCP, on a bounded Cloud PC task.
 
-The included scenario processes a sample invoice entirely through the Cloud PC
-desktop. The agent opens the invoice image in Microsoft Edge, reads the visible
-fields, writes a structured summary in Notepad, saves the file to Documents,
-verifies the saved result, and closes the Windows 365 session.
+To demonstrate the provisioned infra end to end, the sample ships one
+ready-made query: an invoice-processing run that the agent completes entirely
+through the Cloud PC desktop. The agent opens the invoice image in Microsoft
+Edge, reads the visible fields, writes a structured summary in Notepad, saves
+the file to Documents, verifies the saved result, and closes the Windows 365
+session. Once deployed, you can send the agent other prompts against the same
+infrastructure; the invoice run is a demo, not the only supported task.
 
 > **Preview sample:** Not a production multi-user service. Live use requires
 > Foundry/W365 onboarding, billing, pool capacity, tenant administration, and
@@ -14,7 +18,12 @@ verifies the saved result, and closes the Windows 365 session.
 
 ## What this sample does
 
-The invoice-processing run demonstrates the complete bounded desktop lifecycle:
+The sample provisions everything needed for a Foundry agent to control a
+Windows 365 Cloud PC for a bounded task: Foundry project and model, agent
+identity, private session state, W365 pool binding, and an optional live
+viewer. The included invoice-processing query is one sample demonstration of
+that infrastructure; you can invoke the deployed agent with a different prompt
+the same way. Running it demonstrates the complete bounded desktop lifecycle:
 
 1. Acquire one Windows 365 Cloud PC for one fresh task.
 2. Open the fixed sample invoice in Microsoft Edge:
@@ -55,6 +64,8 @@ cleanup flows.
 | Create a dedicated Foundry project and bind W365 | [Fresh deployment](#bring-up-a-fresh-environment) | Billable and tenant-changing |
 | Reuse an existing Foundry project | [Existing project deployment](docs/DEPLOYMENT.md#phase-1-deploy-bootstrap) | Validates and updates selected resources |
 | Configure live view and human handoff | [Viewer guide](docs/VIEWER.md) | ACA viewer is deployed by default; live activation is tenant-specific |
+| Remove everything this environment created | [Tear down](#tear-down-azd-down) | Deletes Azure and, when present, W365/Entra resources |
+| Something isn't working | [Troubleshooting](docs/DEPLOYMENT.md#troubleshooting) and [Live acceptance](docs/DEPLOYMENT.md#live-acceptance) | Read-only diagnostics |
 
 ## Before you start
 
@@ -100,6 +111,13 @@ required two internal phases because the first agent version must exist before
 its identity can receive state and W365 access. Live viewer activation occurs
 in the same run only when its tenant-specific inputs are available.
 
+> **Default authentication uses no secrets.** The default W365 credential
+> mode is `key_vault_certificate`: a non-exportable Key Vault certificate that
+> the agent and viewer sign with remotely through their own managed
+> identities. The private key never leaves Key Vault, and `azd up` never
+> prompts for a blueprint client secret. Secret-based `client_secret` mode is
+> an explicit legacy opt-in; see [Authentication](docs/AUTHENTICATION.md).
+
 Authenticate both CLIs to the same tenant and subscription:
 
 ```powershell
@@ -119,42 +137,28 @@ azd env new "<resource-prefix>-dev" `
 azd up --environment "<resource-prefix>-dev"
 ```
 
-The checked-in azd hooks perform both deployment phases. Wait for the final
-sample deployment table and scenario-specific `Next` section; Foundry may print
-generic service-level guidance after the bootstrap agent deploys, before W365
-and the optional viewer finish.
+`azd up` performs both phases automatically:
 
-The command deploys the Foundry bootstrap first. It then asks whether to reuse
-an existing W365 agent pool, create a new pool, or keep a Foundry-only
-deployment. New-pool setup uses the reviewed region and image defaults and asks
-for a billing-plan GUID only when one cannot be discovered from the tenant.
-It also asks whether to create a dedicated ACA managed environment (default),
-reuse an existing compatible environment, or skip the viewer. Non-secret
-choices are saved only in the selected azd environment.
+- provisions the Foundry project, model, and a disabled bootstrap agent;
+- asks whether to reuse an existing W365 agent pool, create one, or stay
+  Foundry-only, and whether to create/reuse an ACA viewer environment or skip
+  it (non-secret choices are saved to the selected azd environment only);
+- after approval and delegated Graph sign-in, provisions shared state, W365,
+  and the viewer, then redeploys the same agent name enabled.
 
-After approval and delegated Graph sign-in, the command discovers the exact
-Foundry principal, provisions shared state, creates or reuses a non-exportable
-Key Vault certificate and registers only its public bytes on that exact
-blueprint, provisions the selected viewer topology, configures W365, and
-redeploys the same agent name. It does not ask for a blueprint client secret.
-An existing environment that explicitly selected another credential mode keeps
-it.
+Wait for the final sample deployment table and scenario-specific `Next`
+section; Foundry may print generic service-level guidance before W365 and the
+optional viewer finish. The reviewed model default is `gpt-6-astra`
+(`GlobalStandard`, capacity `200`). Screen-share values for live viewer
+activation are collected interactively when missing, and are not required for
+agent-only desktop execution.
 
-The reviewed model defaults are `gpt-6-astra`, version `2026-09-03`,
-`GlobalStandard`, and capacity `200` (200K TPM). If approved screen-share
-values are already present in the selected azd environment or ignored local
-deployment profile, `azd up` uses them to activate the viewer. Otherwise it
-collects them during the same interactive provisioning-profile flow. A
-non-interactive run fails with the exact missing names unless the operator
-explicitly chooses `VIEWER_BOOTSTRAP_ONLY=true`. These approved W365 values are
-tenant onboarding inputs, not secrets and not derivable by this repository.
-Screen-share values are not required for agent-only desktop execution.
-
-See the [deployment guide](docs/DEPLOYMENT.md) for quota, cost, shared-project
-deployment, staged previews, opt-out settings, rollback, and teardown. See the
-[viewer guide](docs/VIEWER.md) for tenant-specific screen-share onboarding and
-human-handoff behavior, and [authentication](docs/AUTHENTICATION.md) for the
-Key Vault credential boundary and other explicitly selected modes.
+See the [deployment guide](docs/DEPLOYMENT.md) for quota, cost, credential
+modes, shared-project deployment, staged previews, opt-out settings, rollback,
+and teardown internals. See the [viewer guide](docs/VIEWER.md) for
+tenant-specific screen-share onboarding and human-handoff behavior, and
+[authentication](docs/AUTHENTICATION.md) for the Key Vault credential
+boundary and other explicitly selected modes.
 
 For a Foundry-only bootstrap:
 
@@ -167,6 +171,29 @@ Do not run `azd init` or `azd ai agent init` inside this clone. Use the
 [deployment guide](docs/DEPLOYMENT.md) when reusing a shared Foundry project,
 requiring separate previews and approvals, or using the optional guarded
 PowerShell wrapper for unattended execution and stricter cancellation handling.
+
+## Tear down (`azd down`)
+
+Remove this environment's tracked Azure infrastructure and, when present, the
+W365/Entra objects recorded in its ownership manifest, with the guarded
+wrapper:
+
+```powershell
+pwsh -NoProfile -File .\scripts\Invoke-AzdDown.ps1 `
+    -EnvironmentName "<resource-prefix>-dev" `
+    -UseDeviceCode `
+    -Purge `
+    -Force
+```
+
+Use this wrapper instead of raw `azd down`: it removes W365/Entra ownership
+first, then Azure infrastructure in reverse dependency order, and safely
+skips a layer that is already gone. It does not end W365 billing, retire a
+shared/pre-existing Foundry project, or remove a certificate-mode blueprint
+credential created outside the ownership manifest — confirm pool retirement in
+the Windows 365 portal and see [teardown](docs/DEPLOYMENT.md#teardown) for
+those additional steps, ownership-manifest details, shared-project cautions,
+and troubleshooting.
 
 ## Verify live behavior
 
