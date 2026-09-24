@@ -15,6 +15,13 @@ sequence:
 Use the staged path only when reusing a shared Foundry project or when separate
 preview and approval boundaries are required.
 
+> **No secrets by default.** The default W365 credential mode is
+> `key_vault_certificate` — a non-exportable Key Vault certificate signed
+> remotely by the agent's and viewer's own managed identities. `azd up` never
+> asks for or stores a blueprint client secret in this mode. See
+> [Key Vault certificate mode](#key-vault-certificate-mode) and
+> [Authentication](AUTHENTICATION.md) for the full credential-mode boundary.
+
 ## Prerequisites
 
 Run from Windows PowerShell 7.4 or later at the repository root.
@@ -150,6 +157,10 @@ prerequisite failure; for an abandoned sample-owned environment, use
 
 ### Existing Foundry project
 
+> **Advanced scenario.** Skip this unless a project owner has approved
+> deploying into a shared, already-existing Foundry project. Most deployments
+> should use [dedicated environment: recommended path](#dedicated-environment-recommended-path) above.
+
 Use this path only when the project owner has approved deployment into the
 shared project and identified a compatible existing model deployment.
 
@@ -226,6 +237,9 @@ and sample-owned resource group. Do not grant broad subscription roles to work
 around project data-plane failures.
 
 ### Staged dedicated deployment
+
+> **Advanced scenario.** Skip this unless separate preview, provision, and
+> publish approvals are required.
 
 Use this path when separate preview, provision, and publish approvals are
 required:
@@ -414,6 +428,9 @@ infrastructure deployment intentionally does not seed the Blob.
 
 ### Legacy `client_secret` opt-in
 
+> **Advanced scenario.** Skip this unless deliberately migrating to or
+> validating legacy `client_secret` mode.
+
 Only use this section to deliberately migrate or validate legacy
 `client_secret` mode. It is not part of the default certificate flow.
 Configure the hosted operator and legacy credential before W365 mutation:
@@ -439,6 +456,10 @@ secure prompt and stored in Key Vault; it is not persisted in source, JSON,
 logs, command history, or azd environment state.
 
 ### Managed-identity federation opt-in
+
+> **Advanced scenario, currently blocked.** The tested Foundry host cannot
+> complete this mode's Entra chained-federation boundary; do not select it for
+> a live deployment until that is resolved.
 
 Managed-identity mode requires explicit authorization for the exact discovered
 agent principal and remains blocked on the tested host:
@@ -851,7 +872,7 @@ retained failed environment.
 | Model validation or deployment fails | Confirm the exact deployment name, supported capabilities, SKU, quota, version, and region. No agent version is published until validation succeeds. |
 | Viewer managed-environment quota is exhausted | Explicitly select an approved existing ACA environment or request quota. The deployment never selects one automatically. |
 | Viewer remains in bootstrap mode | Obtain the approved screen-share values, complete OIDC/Key Vault setup in [Viewer](VIEWER.md), and rerun `azd up --environment "<azd-environment-name>"`. |
-| Hosted-agent redeployment remains pending | Configure the operator values in [Configure the operator and default credential mode](#configure-the-operator-and-default-credential-mode) and [Bind the hosted operator](#bind-the-hosted-operator), then rerun `azd up` for the same environment. Do not clear `W365_AGENT_REDEPLOY_PENDING` manually. |
+| Hosted-agent redeployment remains pending | Configure the operator values in [Phase 2: bind and enable](#phase-2-bind-and-enable) and [Bind the hosted operator](#bind-the-hosted-operator), then rerun `azd up` for the same environment. Do not clear `W365_AGENT_REDEPLOY_PENDING` manually. |
 | W365 setup is blocked | Follow the exact prerequisite or ownership error in [Windows 365 setup](W365-SETUP.md); do not bypass parent, consent, billing, or manifest checks. |
 | Agent deployment fails after W365 setup or viewer configuration changes | Fix the reported prerequisite, then rerun `azd up` for the same environment so the durable redeployment marker is reconciled. |
 | Invocation is disconnected or ambiguous | Do not replay. Inspect sanitized logs and follow [fail-closed recovery](ARCHITECTURE.md#fail-closed-recovery). |

@@ -18,7 +18,7 @@ credential mode, or requiring separate approval boundaries.
 | Pool | Choose an existing agent pool or prepare the billing plan, geography, image, and capacity needed to create one. |
 | Foundry identities | Record the exact blueprint app/client ID and agent object/principal ID from phase one. |
 | State | Provision the private `desktop-state` Blob and container-scoped agent RBAC. |
-| Credential mode | Explicitly select and prepare one mode from [Authentication](AUTHENTICATION.md). |
+| Credential mode | Default `key_vault_certificate` needs no secret; explicitly opt into another mode only if required, from [Authentication](AUTHENTICATION.md). |
 | Administrator | Activate the tenant roles and delegated consent required for blueprint, agent-user, grant, and pool operations. |
 | Tooling | Use Windows PowerShell 7.4+ with `Microsoft.Graph.Authentication`. |
 | Viewer | Live activation additionally requires its approved OIDC and screen-share settings. |
@@ -113,12 +113,16 @@ requires an explicit pool ID and, when reusing ACA, an explicit persisted
 `VIEWER_MANAGED_ENVIRONMENT_RESOURCE_ID`. Empty or ambiguous discovery fails
 closed.
 
-For the protected `-NoPrompt` workflow, the default `client_secret` credential
-mode normally requires two attempts for a fresh environment because the shared
-Key Vault does not exist before the first deployment attempt. Interactive
-execution can collect the secret during the first attempt. When a `-NoPrompt`
-attempt reports that the blueprint secret is missing, store the existing
-onboarding secret interactively:
+The default `key_vault_certificate` mode does not need a manually supplied
+secret, so the protected `-NoPrompt` workflow above normally completes in one
+attempt. Only when the environment has explicitly opted into legacy
+`client_secret` mode (see [Legacy `client_secret`
+opt-in](DEPLOYMENT.md#legacy-client_secret-opt-in)) does a fresh environment
+normally need two attempts, because the shared Key Vault does not exist before
+the first deployment attempt. Interactive execution can collect the secret
+during the first attempt. When a `-NoPrompt` attempt in `client_secret` mode
+reports that the blueprint secret is missing, store the existing onboarding
+secret interactively:
 
 ```powershell
 pwsh -NoProfile -File .\scripts\Set-ViewerSecrets.ps1 `
@@ -491,6 +495,10 @@ live compatibility.
 
 ## Optional viewer federation
 
+> **Advanced scenario, currently blocked at runtime.** Applies only to
+> `managed_identity_federation` mode; the default certificate mode does not
+> need this section.
+
 This section applies only when
 `W365_BLUEPRINT_CREDENTIAL_MODE=managed_identity_federation`. The default
 certificate mode does not require a viewer FIC: the viewer UAMI signs with the
@@ -519,6 +527,11 @@ sibling agents; it is not limited to screen sharing. Do not approve it for an
 untrusted viewer or a shared blueprint whose policy disallows that trust.
 
 ## Hosted runtime federation
+
+> **Advanced scenario, currently blocked.** Applies only to explicitly
+> approved `managed_identity_federation` mode, which the tested Responses
+> host cannot complete; the default certificate mode does not need this
+> section.
 
 This section applies only to explicitly approved
 `managed_identity_federation` mode:
