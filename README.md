@@ -26,8 +26,8 @@ that infrastructure; you can invoke the deployed agent with a different prompt
 the same way. Running it demonstrates the complete bounded desktop lifecycle:
 
 1. Acquire one Windows 365 Cloud PC for one fresh task.
-2. Open the fixed sample invoice in Microsoft Edge:
-   `https://invoicemgmt.blob.core.windows.net/invoices/Invoice_6.png`.
+2. Open a fixed sample invoice image (a URL supplied by the sample prompt) in
+   Microsoft Edge.
 3. Read the invoice visually from the desktop and extract the invoice number,
    vendor, addresses, dates, bill-to details, every line item, subtotal, tax,
    and total.
