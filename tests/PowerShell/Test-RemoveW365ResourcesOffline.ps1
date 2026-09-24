@@ -39,6 +39,51 @@ if (!$getAzdCommandAst) {
     throw "Unable to locate function 'Get-AzdCommand' in AzdCommand.ps1 for isolated testing."
 }
 
+$cleanupCollectionFunctionNames = @(
+    'Get-CleanupCollection'
+    'Assert-ReusedManifestDependenciesPresent'
+)
+$cleanupCollectionFunctionTexts = foreach ($functionName in $cleanupCollectionFunctionNames) {
+    $functionAst = $cleanupAst.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq $functionName
+    }, $true) | Select-Object -First 1
+    if (!$functionAst) {
+        throw "Unable to locate function '$functionName' in Remove-W365Resources.ps1 for isolated testing."
+    }
+    $functionAst.Extent.Text
+}
+$cleanupCollectionModule = New-Module -Name W365CleanupCollectionBoundary -ScriptBlock (
+    [scriptblock]::Create($cleanupCollectionFunctionTexts -join [Environment]::NewLine)
+)
+& $cleanupCollectionModule {
+    Assert-ReusedManifestDependenciesPresent `
+        -PermissionGrants $null `
+        -CurrentGrants @() `
+        -InheritablePermissions $null `
+        -CurrentInheritances @()
+}
+$nullEntryBlocked = $false
+try {
+    & $cleanupCollectionModule {
+        Assert-ReusedManifestDependenciesPresent `
+            -PermissionGrants ([object[]]@(, $null)) `
+            -CurrentGrants @() `
+            -InheritablePermissions @() `
+            -CurrentInheritances @()
+    }
+}
+catch {
+    $nullEntryBlocked = $_.Exception.Message -match 'Permission grant ownership collection contains a null entry at index 0'
+}
+finally {
+    Remove-Module $cleanupCollectionModule
+}
+if (!$nullEntryBlocked) {
+    throw 'Cleanup collection validation did not reject a null entry inside a non-empty ownership collection.'
+}
+
 $commandDiscoveryTempRoot = Join-Path ([IO.Path]::GetTempPath()) ("w365-azd-discovery-{0}" -f ([guid]::NewGuid()))
 $malformedAzdRoot = Join-Path $commandDiscoveryTempRoot 'malformed'
 $validAzdRoot = Join-Path $commandDiscoveryTempRoot 'valid'
@@ -698,6 +743,69 @@ try {
         throw 'Reused-inheritance preflight should block cleanup before any deletions run.'
     }
 
+    Reset-MockGraphState
+    Write-TestEnvironment
+    Write-TestManifest
+    & $module { $script:state.Grants = @() }
+    $emptyCurrentGrantsBlocked = $false
+    try {
+        & "$scriptsRoot\Remove-W365Resources.ps1" -EnvironmentName $envName -EnvironmentFilePath $envFilePath -OwnershipManifestPath $manifestPath -Confirm:$false | Out-Null
+    }
+    catch {
+        $emptyCurrentGrantsBlocked = $_.Exception.Message -match 'A reused permission grant .* is missing'
+    }
+    if (!$emptyCurrentGrantsBlocked) {
+        throw 'Cleanup should fail closed when a reused grant is recorded but the current grant collection is empty.'
+    }
+    $state = Get-MockGraphState
+    if ($state.Operations.Count -ne 0) {
+        throw 'An empty current grant collection should block reused-grant cleanup before any deletions run.'
+    }
+
+    Reset-MockGraphState
+    Write-TestEnvironment
+    Write-TestManifest
+    & $module { $script:state.Inheritances = @() }
+    $emptyCurrentInheritancesBlocked = $false
+    try {
+        & "$scriptsRoot\Remove-W365Resources.ps1" -EnvironmentName $envName -EnvironmentFilePath $envFilePath -OwnershipManifestPath $manifestPath -Confirm:$false | Out-Null
+    }
+    catch {
+        $emptyCurrentInheritancesBlocked = $_.Exception.Message -match 'A reused inheritance entry .* is missing'
+    }
+    if (!$emptyCurrentInheritancesBlocked) {
+        throw 'Cleanup should fail closed when a reused inheritance is recorded but the current inheritance collection is empty.'
+    }
+    $state = Get-MockGraphState
+    if ($state.Operations.Count -ne 0) {
+        throw 'An empty current inheritance collection should block cleanup before any deletions run.'
+    }
+
+    # Regression: Graph list endpoints may legitimately return no grants or inheritances, and empty
+    # manifest maps are valid when setup did not create or reuse either resource type. PowerShell
+    # collapses zero pipeline results at function boundaries, so teardown must normalize both null
+    # and empty arrays before ownership preflight instead of rejecting parameter binding.
+    Reset-MockGraphState
+    Write-TestEnvironment
+    Write-TestManifest
+    $emptyCollectionManifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json -AsHashtable
+    $emptyCollectionManifest.graph.permissionGrants = [ordered]@{}
+    $emptyCollectionManifest.graph.inheritablePermissions = [ordered]@{}
+    Set-Content -LiteralPath $manifestPath -Value (ConvertTo-Json $emptyCollectionManifest -Depth 60)
+    & $module {
+        $script:state.Grants = @()
+        $script:state.Inheritances = @()
+    }
+    & "$scriptsRoot\Remove-W365Resources.ps1" `
+        -EnvironmentName $envName `
+        -EnvironmentFilePath $envFilePath `
+        -OwnershipManifestPath $manifestPath `
+        -Confirm:$false | Out-Null
+    $state = Get-MockGraphState
+    if ($state.Operations -notcontains 'DELETE beta/deviceManagement/virtualEndpoint/cloudPcPools/55555555-5555-5555-5555-555555555555') {
+        throw 'Cleanup did not continue after valid empty grant and inheritance collections.'
+    }
+
     foreach ($invalidManifest in @(
         @{
             Label = 'invalid resource application ID'
@@ -882,7 +990,7 @@ try {
         }
     }
 
-    Write-Output 'Offline cleanup: protected approval, reverse-order deletion, idempotent rerun, shared-project guard, fail-closed partial cleanup, empty federated-credential map, and application-less viewer manifest passed.'
+    Write-Output 'Offline cleanup: protected approval, reverse-order deletion, idempotent rerun, shared-project guard, fail-closed partial cleanup, null and empty collection boundaries, empty federated-credential map, and application-less viewer manifest passed.'
 }
 finally {
     [Environment]::SetEnvironmentVariable('W365_CLEANUP_CONFIRMED', $previousCleanupApproval, 'Process')

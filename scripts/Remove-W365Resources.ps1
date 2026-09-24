@@ -115,10 +115,35 @@ function List-MapValues {
 
     return @($Map.Keys | Sort-Object | ForEach-Object { $Map[$_] })
 }
+function Get-CleanupCollection {
+    param(
+        [Parameter(Mandatory)]
+        [AllowNull()]
+        [AllowEmptyCollection()]
+        [object[]]$Items,
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string]$Label
+    )
+
+    if ($null -eq $Items -or $Items.Count -eq 0) {
+        return @()
+    }
+
+    for ($index = 0; $index -lt $Items.Count; $index++) {
+        if ($null -eq $Items[$index]) {
+            throw "$Label contains a null entry at index $index."
+        }
+    }
+
+    return @($Items)
+}
 function Connect-GraphForCleanup {
     param(
         [Parameter(Mandatory)][guid]$TenantId,
-        [Parameter(Mandatory)][string[]]$Scopes
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string[]]$Scopes
     )
 
     $requiredScopes = @($Scopes | Select-Object -Unique)
@@ -395,14 +420,31 @@ function Remove-ViewerArtifacts {
 }
 function Assert-ReusedManifestDependenciesPresent {
     param(
-        [Parameter(Mandatory)][object[]]$PermissionGrants,
-        [Parameter(Mandatory)][object[]]$CurrentGrants,
-        [Parameter(Mandatory)][object[]]$InheritablePermissions,
-        [Parameter(Mandatory)][object[]]$CurrentInheritances
+        [Parameter(Mandatory)]
+        [AllowNull()]
+        [AllowEmptyCollection()]
+        [object[]]$PermissionGrants,
+        [Parameter(Mandatory)]
+        [AllowNull()]
+        [AllowEmptyCollection()]
+        [object[]]$CurrentGrants,
+        [Parameter(Mandatory)]
+        [AllowNull()]
+        [AllowEmptyCollection()]
+        [object[]]$InheritablePermissions,
+        [Parameter(Mandatory)]
+        [AllowNull()]
+        [AllowEmptyCollection()]
+        [object[]]$CurrentInheritances
     )
 
+    $permissionGrantEntries = @(Get-CleanupCollection -Items $PermissionGrants -Label 'Permission grant ownership collection')
+    $currentGrantEntries = @(Get-CleanupCollection -Items $CurrentGrants -Label 'Current permission grant collection')
+    $inheritanceEntries = @(Get-CleanupCollection -Items $InheritablePermissions -Label 'Inheritable permission ownership collection')
+    $currentInheritanceEntries = @(Get-CleanupCollection -Items $CurrentInheritances -Label 'Current inheritable permission collection')
+
     $seenInheritanceResourceAppIds = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-    foreach ($inheritance in @($InheritablePermissions)) {
+    foreach ($inheritance in $inheritanceEntries) {
         $disposition = [string](Get-OptionalObjectValue -Object $inheritance -Name 'disposition')
         if ($disposition -notin @('created', 'reused')) {
             throw "Inheritance entry for $([string](Get-OptionalObjectValue -Object $inheritance -Name 'resourceAppId')) has unsupported disposition '$disposition'."
@@ -414,8 +456,8 @@ function Assert-ReusedManifestDependenciesPresent {
         }
     }
 
-    foreach ($grant in @($PermissionGrants | Where-Object { [string]$_.disposition -eq 'reused' })) {
-        $currentGrant = SingleOrNone @($CurrentGrants | Where-Object { $_.resourceId -eq $grant.resourceId }) "permission grant $($grant.resourceAppId)"
+    foreach ($grant in @($permissionGrantEntries | Where-Object { [string]$_.disposition -eq 'reused' })) {
+        $currentGrant = SingleOrNone @($currentGrantEntries | Where-Object { $_.resourceId -eq $grant.resourceId }) "permission grant $($grant.resourceAppId)"
         if (!$currentGrant) {
             throw "A reused permission grant for $($grant.resourceAppId) is missing, so cleanup cannot safely restore its previous scope."
         }
@@ -425,9 +467,9 @@ function Assert-ReusedManifestDependenciesPresent {
         }
     }
 
-    foreach ($inheritance in @($InheritablePermissions | Where-Object { [string]$_.disposition -eq 'reused' })) {
+    foreach ($inheritance in @($inheritanceEntries | Where-Object { [string]$_.disposition -eq 'reused' })) {
         $resourceAppId = Get-InheritablePermissionDeletionKey -ManifestEntry $inheritance
-        $currentInheritance = SingleOrNone @($CurrentInheritances | Where-Object {
+        $currentInheritance = SingleOrNone @($currentInheritanceEntries | Where-Object {
                 (Get-NormalizedGuidValue `
                     -Value ([string](Get-OptionalObjectValue -Object $_ -Name 'resourceAppId')) `
                     -Label 'Current inheritance resource application ID') -eq $resourceAppId
@@ -438,9 +480,9 @@ function Assert-ReusedManifestDependenciesPresent {
         Get-InheritablePermissionDeletionKey -ManifestEntry $inheritance -CurrentEntry $currentInheritance | Out-Null
     }
 
-    foreach ($inheritance in @($InheritablePermissions | Where-Object { [string]$_.disposition -eq 'created' })) {
+    foreach ($inheritance in @($inheritanceEntries | Where-Object { [string]$_.disposition -eq 'created' })) {
         $resourceAppId = Get-InheritablePermissionDeletionKey -ManifestEntry $inheritance
-        $currentInheritance = SingleOrNone @($CurrentInheritances | Where-Object {
+        $currentInheritance = SingleOrNone @($currentInheritanceEntries | Where-Object {
                 (Get-NormalizedGuidValue `
                     -Value ([string](Get-OptionalObjectValue -Object $_ -Name 'resourceAppId')) `
                     -Label 'Current inheritance resource application ID') -eq $resourceAppId
