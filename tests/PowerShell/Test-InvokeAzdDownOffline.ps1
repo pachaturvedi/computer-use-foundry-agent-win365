@@ -8,6 +8,55 @@ Set-StrictMode -Version Latest
 
 $repoRoot = Split-Path (Split-Path $PSScriptRoot)
 $scriptPath = Join-Path (Join-Path $repoRoot 'scripts') 'Invoke-AzdDown.ps1'
+$scriptText = Get-Content -LiteralPath $scriptPath -Raw
+$tokens = $null
+$parseErrors = $null
+$scriptAst = [System.Management.Automation.Language.Parser]::ParseInput(
+    $scriptText,
+    [ref]$tokens,
+    [ref]$parseErrors)
+if ($parseErrors.Count -gt 0) {
+    throw "Invoke-AzdDown.ps1 failed to parse: $($parseErrors[0].Message)"
+}
+
+$commandFunctionNames = @(
+    'Invoke-AzdDownCommand'
+    'Invoke-AzureCliCommand'
+)
+$commandFunctionTexts = foreach ($functionName in $commandFunctionNames) {
+    $functionAst = $scriptAst.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq $functionName
+    }, $true) | Select-Object -First 1
+    if (!$functionAst) {
+        throw "Unable to locate function '$functionName' in Invoke-AzdDown.ps1 for isolated testing."
+    }
+    $functionAst.Extent.Text
+}
+$commandBoundaryModule = New-Module -Name AzdDownCommandBoundary -ScriptBlock (
+    [scriptblock]::Create($commandFunctionTexts -join [Environment]::NewLine)
+)
+foreach ($functionName in $commandFunctionNames) {
+    foreach ($invalidArgumentKind in @('null', 'empty')) {
+        $argumentsRejected = $false
+        try {
+            & $commandBoundaryModule {
+                param($CommandFunctionName, $InvalidArgumentKind)
+                $invalidArguments = if ($InvalidArgumentKind -eq 'empty') { [string[]]@() } else { $null }
+                & $CommandFunctionName -ExecutablePath 'must-not-run' -Arguments $invalidArguments
+            } $functionName $invalidArgumentKind
+        }
+        catch {
+            $argumentsRejected = $_.Exception.Message -match "Cannot validate argument on parameter 'Arguments'"
+        }
+        if (!$argumentsRejected) {
+            throw "$functionName did not reject a $invalidArgumentKind command argument collection before process execution."
+        }
+    }
+}
+Remove-Module $commandBoundaryModule
+
 $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("invoke-azd-down-{0}" -f ([guid]::NewGuid()))
 $environmentFilePath = Join-Path $tempRoot '.env'
 $ownershipManifestPath = Join-Path $tempRoot 'missing-ownership.json'

@@ -123,7 +123,9 @@ function Resolve-AzdPath {
 function Invoke-AzdDownCommand {
     param(
         [Parameter(Mandatory)][string]$ExecutablePath,
-        [Parameter(Mandatory)][string[]]$Arguments
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string[]]$Arguments
     )
 
     Write-Host ('[{0:HH:mm:ss}] [COMMAND] azd {1}' -f [DateTimeOffset]::Now, ($Arguments -join ' '))
@@ -138,7 +140,9 @@ function Invoke-AzdDownCommand {
 function Invoke-AzureCliCommand {
     param(
         [Parameter(Mandatory)][string]$ExecutablePath,
-        [Parameter(Mandatory)][string[]]$Arguments
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string[]]$Arguments
     )
 
     $output = @(& $ExecutablePath @Arguments 2>&1)
