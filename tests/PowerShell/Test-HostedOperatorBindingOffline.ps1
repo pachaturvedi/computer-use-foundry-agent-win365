@@ -22,6 +22,7 @@ if (@($parseErrors).Count -gt 0) {
 
 $functionNames = @(
     'Get-HostedOperatorBindingFingerprint',
+    'Test-HostedAgentSmokeSucceeded',
     'Invoke-HostedAgentSmokeTest'
 )
 foreach ($functionName in $functionNames) {
@@ -44,10 +45,12 @@ $script:binding = 'pending'
 $script:version = '1'
 $script:invokeResults = @()
 $script:invokeCount = 0
+$script:invokeCommands = [Collections.Generic.List[string]]::new()
 $script:azdCalls = [Collections.Generic.List[string]]::new()
 $savedHostedAllowedUserId = $env:HOSTED_ALLOWED_USER_ID
 $SmokeInvoke = $true
 $SmokeInvokePrompt = 'offline smoke'
+$SmokeInvokeTimeoutSeconds = 120
 $ConfirmResourceChanges = $true
 $environmentName = 'sample-dev'
 
@@ -79,6 +82,7 @@ function Invoke-Azd {
 }
 
 function Invoke-TestAzd {
+    $script:invokeCommands.Add(($args -join ' '))
     $result = $script:invokeResults[$script:invokeCount]
     $script:invokeCount++
     $global:LASTEXITCODE = $result.ExitCode
@@ -94,6 +98,7 @@ function Reset-TestState {
     $script:version = '1'
     $script:invokeResults = @()
     $script:invokeCount = 0
+    $script:invokeCommands.Clear()
     $script:azdCalls.Clear()
     $env:HOSTED_ALLOWED_USER_ID = 'pending'
 }
@@ -114,6 +119,10 @@ try {
         $env:HOSTED_ALLOWED_USER_ID -ne $script:fingerprint -or
         $script:version -ne '2' -or
         $script:invokeCount -ne 2 -or
+        @($script:invokeCommands | Where-Object {
+                $_ -eq 'ai agent invoke win365-desktop-agent --version 1 --new-session --timeout 120 offline smoke' -or
+                $_ -eq 'ai agent invoke win365-desktop-agent --version 2 --new-session --timeout 120 offline smoke'
+            }).Count -ne 2 -or
         @($script:azdCalls | Where-Object { $_ -eq 'deploy win365-desktop-agent --no-prompt' }).Count -ne 1 -or
         @($script:azdCalls | Where-Object { $_ -eq 'ai agent doctor' }).Count -ne 1) {
         throw 'Pending operator binding was not persisted, refreshed, redeployed once, and retried successfully.'
@@ -211,6 +220,27 @@ try {
     if (!$repeatedBindingRejected -or
         @($script:azdCalls | Where-Object { $_ -eq 'deploy win365-desktop-agent --no-prompt' }).Count -ne 1) {
         throw 'Repeated operator binding did not stop after one redeployment.'
+    }
+
+    Reset-TestState
+    $script:invokeResults = @(
+        @{
+            ExitCode = 0
+            Output = @'
+Agent: win365-desktop-agent (remote)
+[win365-desktop-agent] desktop_state_error: No free W365 sessions are currently available.
+'@
+        }
+    )
+    $unexpectedResponseRejected = $false
+    try {
+        Invoke-HostedAgentSmokeTest
+    }
+    catch {
+        $unexpectedResponseRejected = $_.Exception.Message -match 'did not return the expected single-word OK'
+    }
+    if (!$unexpectedResponseRejected -or $script:azdCalls.Count -ne 0) {
+        throw 'An exit-zero application error was incorrectly accepted as a successful deployment smoke test.'
     }
 }
 finally {

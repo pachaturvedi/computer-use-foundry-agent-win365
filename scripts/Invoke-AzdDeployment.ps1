@@ -24,7 +24,9 @@ param(
     [switch]$ConfirmResourceChanges,
     [switch]$SkipPackage,
     [switch]$SmokeInvoke,
-    [string]$SmokeInvokePrompt = 'Smoke test only: reply with the single word OK. Do not open any application, acquire any desktop, or call any tool.'
+    [string]$SmokeInvokePrompt = 'Smoke test only: reply with the single word OK. Do not open any application, acquire any desktop, or call any tool.',
+    [ValidateRange(1, 1800)]
+    [int]$SmokeInvokeTimeoutSeconds = 120
 )
 
 $ErrorActionPreference = 'Stop'
@@ -411,6 +413,17 @@ function Get-HostedOperatorBindingFingerprint {
     return $fingerprint
 }
 
+function Test-HostedAgentSmokeSucceeded {
+    param([Parameter(Mandatory)][string]$InvocationOutput)
+
+    $trimmed = $InvocationOutput.Trim()
+    if ($trimmed -eq 'OK') {
+        return $true
+    }
+
+    return $trimmed -match '(?m)^\[win365-desktop-agent\]\s+OK\s*$'
+}
+
 function Invoke-HostedAgentSmokeTest {
     if (!$SmokeInvoke) {
         return
@@ -426,13 +439,19 @@ function Invoke-HostedAgentSmokeTest {
         $smokeArguments = @(
             'ai', 'agent', 'invoke', 'win365-desktop-agent',
             '--version', $agentVersion,
-            '--new-session', $SmokeInvokePrompt
+            '--new-session',
+            '--timeout', $SmokeInvokeTimeoutSeconds,
+            $SmokeInvokePrompt
         )
         Write-DeploymentEvent COMMAND "azd $($smokeArguments -join ' ')"
         $smokeOutput = (& $azd.Path @smokeArguments 2>&1 | Out-String)
-        $smokeOutput | Write-Host
         if ($LASTEXITCODE -eq 0) {
-            return
+            if (Test-HostedAgentSmokeSucceeded -InvocationOutput $smokeOutput) {
+                Write-DeploymentEvent RESULT 'Hosted-agent smoke invoke returned the expected OK response.'
+                return
+            }
+
+            throw "Hosted-agent smoke invoke reached the deployed container but did not return the expected single-word OK response. Check 'azd ai agent monitor win365-desktop-agent --tail 150' for application diagnostics."
         }
 
         if ($smokeOutput -match 'session_not_ready' -or $smokeOutput -match 'HTTP 424') {
