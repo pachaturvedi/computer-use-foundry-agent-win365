@@ -411,6 +411,28 @@ function Get-HostedOperatorBindingFingerprint {
     return $fingerprint
 }
 
+function Test-HostedAgentSmokeSucceeded {
+    param([Parameter(Mandatory)][string]$InvocationOutput)
+
+    $trimmed = $InvocationOutput.Trim()
+    if ($trimmed -eq 'OK') {
+        return $true
+    }
+
+    $agentResponses = @(
+        [regex]::Matches(
+            $InvocationOutput,
+            '(?m)^\[win365-desktop-agent\]\s+(?<payload>[^\r\n]+?)\s*$')
+    )
+    if ($agentResponses.Count -ne 1 -or
+        $agentResponses[0].Groups['payload'].Value -ne 'OK') {
+        return $false
+    }
+
+    return $InvocationOutput -notmatch
+        '(?im)^\s*(?:ERROR:|.*\b(?:desktop_state_error|operator_binding_required|w365_[a-z_]+_error)\b)'
+}
+
 function Invoke-HostedAgentSmokeTest {
     if (!$SmokeInvoke) {
         return
@@ -426,13 +448,19 @@ function Invoke-HostedAgentSmokeTest {
         $smokeArguments = @(
             'ai', 'agent', 'invoke', 'win365-desktop-agent',
             '--version', $agentVersion,
-            '--new-session', $SmokeInvokePrompt
+            '--new-session',
+            '--timeout', 120,
+            $SmokeInvokePrompt
         )
         Write-DeploymentEvent COMMAND "azd $($smokeArguments -join ' ')"
         $smokeOutput = (& $azd.Path @smokeArguments 2>&1 | Out-String)
-        $smokeOutput | Write-Host
         if ($LASTEXITCODE -eq 0) {
-            return
+            if (Test-HostedAgentSmokeSucceeded -InvocationOutput $smokeOutput) {
+                Write-DeploymentEvent RESULT 'Hosted-agent smoke invoke returned the expected OK response.'
+                return
+            }
+
+            throw "Hosted-agent smoke invoke reached the deployed container but did not return the expected single-word OK response. Check 'azd ai agent monitor win365-desktop-agent --tail 150' for application diagnostics."
         }
 
         if ($smokeOutput -match 'session_not_ready' -or $smokeOutput -match 'HTTP 424') {
@@ -441,8 +469,7 @@ function Invoke-HostedAgentSmokeTest {
 
         $bindingFingerprint = Get-HostedOperatorBindingFingerprint -InvocationOutput $smokeOutput
         if ([string]::IsNullOrWhiteSpace($bindingFingerprint)) {
-            Write-DeploymentEvent DECISION 'Smoke invoke reached the agent but was rejected for an application-level reason (not a readiness failure); the deployed container is healthy.'
-            return
+            throw "Hosted-agent smoke invoke failed without a valid operator-binding response. Check 'azd ai agent monitor win365-desktop-agent --tail 150' for application diagnostics."
         }
 
         if ($attempt -ne 1) {

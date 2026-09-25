@@ -22,6 +22,7 @@ if (@($parseErrors).Count -gt 0) {
 
 $functionNames = @(
     'Get-HostedOperatorBindingFingerprint',
+    'Test-HostedAgentSmokeSucceeded',
     'Invoke-HostedAgentSmokeTest'
 )
 foreach ($functionName in $functionNames) {
@@ -44,6 +45,7 @@ $script:binding = 'pending'
 $script:version = '1'
 $script:invokeResults = @()
 $script:invokeCount = 0
+$script:invokeCommands = [Collections.Generic.List[string]]::new()
 $script:azdCalls = [Collections.Generic.List[string]]::new()
 $savedHostedAllowedUserId = $env:HOSTED_ALLOWED_USER_ID
 $SmokeInvoke = $true
@@ -79,6 +81,7 @@ function Invoke-Azd {
 }
 
 function Invoke-TestAzd {
+    $script:invokeCommands.Add(($args -join ' '))
     $result = $script:invokeResults[$script:invokeCount]
     $script:invokeCount++
     $global:LASTEXITCODE = $result.ExitCode
@@ -94,6 +97,7 @@ function Reset-TestState {
     $script:version = '1'
     $script:invokeResults = @()
     $script:invokeCount = 0
+    $script:invokeCommands.Clear()
     $script:azdCalls.Clear()
     $env:HOSTED_ALLOWED_USER_ID = 'pending'
 }
@@ -114,6 +118,10 @@ try {
         $env:HOSTED_ALLOWED_USER_ID -ne $script:fingerprint -or
         $script:version -ne '2' -or
         $script:invokeCount -ne 2 -or
+        @($script:invokeCommands | Where-Object {
+                $_ -eq 'ai agent invoke win365-desktop-agent --version 1 --new-session --timeout 120 offline smoke' -or
+                $_ -eq 'ai agent invoke win365-desktop-agent --version 2 --new-session --timeout 120 offline smoke'
+            }).Count -ne 2 -or
         @($script:azdCalls | Where-Object { $_ -eq 'deploy win365-desktop-agent --no-prompt' }).Count -ne 1 -or
         @($script:azdCalls | Where-Object { $_ -eq 'ai agent doctor' }).Count -ne 1) {
         throw 'Pending operator binding was not persisted, refreshed, redeployed once, and retried successfully.'
@@ -183,9 +191,17 @@ try {
     $script:invokeResults = @(
         @{ ExitCode = 1; Output = '{"status":"failed"}' + "`n" + 'ERROR: HTTP 403 unrelated_application_error' }
     )
-    Invoke-HostedAgentSmokeTest
-    if ($script:binding -ne 'pending' -or $script:azdCalls.Count -ne 0) {
-        throw 'An unrelated application rejection incorrectly enrolled an operator.'
+    $unrelatedFailureRejected = $false
+    try {
+        Invoke-HostedAgentSmokeTest
+    }
+    catch {
+        $unrelatedFailureRejected = $_.Exception.Message -match 'failed without a valid operator-binding response'
+    }
+    if (!$unrelatedFailureRejected -or
+        $script:binding -ne 'pending' -or
+        $script:azdCalls.Count -ne 0) {
+        throw 'An unrelated application rejection was incorrectly accepted as healthy.'
     }
 
     Reset-TestState
@@ -211,6 +227,55 @@ try {
     if (!$repeatedBindingRejected -or
         @($script:azdCalls | Where-Object { $_ -eq 'deploy win365-desktop-agent --no-prompt' }).Count -ne 1) {
         throw 'Repeated operator binding did not stop after one redeployment.'
+    }
+
+    Reset-TestState
+    $script:invokeResults = @(
+        @{
+            ExitCode = 0
+            Output = @'
+Agent: win365-desktop-agent (remote)
+[win365-desktop-agent] desktop_state_error: No free W365 sessions are currently available.
+'@
+        }
+    )
+    $unexpectedResponseRejected = $false
+    try {
+        Invoke-HostedAgentSmokeTest
+    }
+    catch {
+        $unexpectedResponseRejected = $_.Exception.Message -match 'did not return the expected single-word OK'
+    }
+    if (!$unexpectedResponseRejected -or $script:azdCalls.Count -ne 0) {
+        throw 'An exit-zero application error was incorrectly accepted as a successful deployment smoke test.'
+    }
+
+    foreach ($case in @(
+        @{
+            Label = 'bare OK'
+            Output = 'OK'
+            Expected = $true
+        },
+        @{
+            Label = 'azd metadata with one exact agent OK'
+            Output = "Agent: win365-desktop-agent (remote)`nMessage: smoke`n[win365-desktop-agent] OK"
+            Expected = $true
+        },
+        @{
+            Label = 'agent OK plus application error'
+            Output = "[win365-desktop-agent] OK`n[win365-desktop-agent] desktop_state_error: no capacity"
+            Expected = $false
+        },
+        @{
+            Label = 'contradictory agent responses'
+            Output = "[win365-desktop-agent] NOT OK`n[win365-desktop-agent] OK"
+            Expected = $false
+        }
+    )) {
+        $actual = Test-HostedAgentSmokeSucceeded -InvocationOutput $case.Output
+        if ($actual -ne $case.Expected) {
+            throw "Smoke response validation failed for $($case.Label)."
+        }
     }
 }
 finally {

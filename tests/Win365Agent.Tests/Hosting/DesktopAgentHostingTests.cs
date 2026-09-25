@@ -7,6 +7,20 @@ namespace Win365Agent.Tests;
 public sealed class DesktopAgentHostingTests
 {
     [Fact]
+    public void AgentInstructionsHonorExplicitNoToolHealthChecks()
+    {
+        var noToolIndex = DesktopAgentHosting.AgentInstructions.IndexOf(
+            "reply directly without calling any tool",
+            StringComparison.Ordinal);
+        var openDesktopIndex = DesktopAgentHosting.AgentInstructions.IndexOf(
+            "Otherwise, start with open_desktop",
+            StringComparison.Ordinal);
+
+        Assert.True(noToolIndex >= 0);
+        Assert.True(openDesktopIndex > noToolIndex);
+    }
+
+    [Fact]
     public void LeaseTimeoutMapsToSafeNonRetryableModelError()
     {
         var error = DesktopAgentHosting.MapLockedState(
