@@ -15,8 +15,7 @@ foreach ($required in @(
     'function Assert-W365AgentCertificateKeyVaultAccessConfigured {',
     "'--version', `$agentVersion",
     "'--new-session'",
-    "'--timeout', `$SmokeInvokeTimeoutSeconds",
-    '[int]$SmokeInvokeTimeoutSeconds = 120'
+    "'--timeout', 120"
 )) {
     if ($script -notmatch [regex]::Escape($required)) {
         throw "Deployment wrapper is missing required W365 Key Vault access or version-pinning behavior '$required'."

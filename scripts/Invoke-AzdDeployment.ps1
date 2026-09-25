@@ -24,9 +24,7 @@ param(
     [switch]$ConfirmResourceChanges,
     [switch]$SkipPackage,
     [switch]$SmokeInvoke,
-    [string]$SmokeInvokePrompt = 'Smoke test only: reply with the single word OK. Do not open any application, acquire any desktop, or call any tool.',
-    [ValidateRange(1, 1800)]
-    [int]$SmokeInvokeTimeoutSeconds = 120
+    [string]$SmokeInvokePrompt = 'Smoke test only: reply with the single word OK. Do not open any application, acquire any desktop, or call any tool.'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -421,7 +419,18 @@ function Test-HostedAgentSmokeSucceeded {
         return $true
     }
 
-    return $trimmed -match '(?m)^\[win365-desktop-agent\]\s+OK\s*$'
+    $agentResponses = @(
+        [regex]::Matches(
+            $InvocationOutput,
+            '(?m)^\[win365-desktop-agent\]\s+(?<payload>[^\r\n]+?)\s*$')
+    )
+    if ($agentResponses.Count -ne 1 -or
+        $agentResponses[0].Groups['payload'].Value -ne 'OK') {
+        return $false
+    }
+
+    return $InvocationOutput -notmatch
+        '(?im)^\s*(?:ERROR:|.*\b(?:desktop_state_error|operator_binding_required|w365_[a-z_]+_error)\b)'
 }
 
 function Invoke-HostedAgentSmokeTest {
@@ -440,7 +449,7 @@ function Invoke-HostedAgentSmokeTest {
             'ai', 'agent', 'invoke', 'win365-desktop-agent',
             '--version', $agentVersion,
             '--new-session',
-            '--timeout', $SmokeInvokeTimeoutSeconds,
+            '--timeout', 120,
             $SmokeInvokePrompt
         )
         Write-DeploymentEvent COMMAND "azd $($smokeArguments -join ' ')"
@@ -460,8 +469,7 @@ function Invoke-HostedAgentSmokeTest {
 
         $bindingFingerprint = Get-HostedOperatorBindingFingerprint -InvocationOutput $smokeOutput
         if ([string]::IsNullOrWhiteSpace($bindingFingerprint)) {
-            Write-DeploymentEvent DECISION 'Smoke invoke reached the agent but was rejected for an application-level reason (not a readiness failure); the deployed container is healthy.'
-            return
+            throw "Hosted-agent smoke invoke failed without a valid operator-binding response. Check 'azd ai agent monitor win365-desktop-agent --tail 150' for application diagnostics."
         }
 
         if ($attempt -ne 1) {

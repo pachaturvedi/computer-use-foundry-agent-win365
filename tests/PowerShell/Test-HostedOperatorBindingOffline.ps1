@@ -50,7 +50,6 @@ $script:azdCalls = [Collections.Generic.List[string]]::new()
 $savedHostedAllowedUserId = $env:HOSTED_ALLOWED_USER_ID
 $SmokeInvoke = $true
 $SmokeInvokePrompt = 'offline smoke'
-$SmokeInvokeTimeoutSeconds = 120
 $ConfirmResourceChanges = $true
 $environmentName = 'sample-dev'
 
@@ -192,9 +191,17 @@ try {
     $script:invokeResults = @(
         @{ ExitCode = 1; Output = '{"status":"failed"}' + "`n" + 'ERROR: HTTP 403 unrelated_application_error' }
     )
-    Invoke-HostedAgentSmokeTest
-    if ($script:binding -ne 'pending' -or $script:azdCalls.Count -ne 0) {
-        throw 'An unrelated application rejection incorrectly enrolled an operator.'
+    $unrelatedFailureRejected = $false
+    try {
+        Invoke-HostedAgentSmokeTest
+    }
+    catch {
+        $unrelatedFailureRejected = $_.Exception.Message -match 'failed without a valid operator-binding response'
+    }
+    if (!$unrelatedFailureRejected -or
+        $script:binding -ne 'pending' -or
+        $script:azdCalls.Count -ne 0) {
+        throw 'An unrelated application rejection was incorrectly accepted as healthy.'
     }
 
     Reset-TestState
@@ -241,6 +248,34 @@ Agent: win365-desktop-agent (remote)
     }
     if (!$unexpectedResponseRejected -or $script:azdCalls.Count -ne 0) {
         throw 'An exit-zero application error was incorrectly accepted as a successful deployment smoke test.'
+    }
+
+    foreach ($case in @(
+        @{
+            Label = 'bare OK'
+            Output = 'OK'
+            Expected = $true
+        },
+        @{
+            Label = 'azd metadata with one exact agent OK'
+            Output = "Agent: win365-desktop-agent (remote)`nMessage: smoke`n[win365-desktop-agent] OK"
+            Expected = $true
+        },
+        @{
+            Label = 'agent OK plus application error'
+            Output = "[win365-desktop-agent] OK`n[win365-desktop-agent] desktop_state_error: no capacity"
+            Expected = $false
+        },
+        @{
+            Label = 'contradictory agent responses'
+            Output = "[win365-desktop-agent] NOT OK`n[win365-desktop-agent] OK"
+            Expected = $false
+        }
+    )) {
+        $actual = Test-HostedAgentSmokeSucceeded -InvocationOutput $case.Output
+        if ($actual -ne $case.Expected) {
+            throw "Smoke response validation failed for $($case.Label)."
+        }
     }
 }
 finally {
